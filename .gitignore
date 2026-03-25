@@ -40,6 +40,8 @@ dist/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
+CMakeCache.txt
+CMakeFiles/
 compile_commands.json
 CTestTestfile.cmake
 Testing/
@@ -60,7 +62,7 @@ _deps/
 
 .idea/
 
-.vscode/*
+.vscode
 !.vscode/extensions.json
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -76,3 +78,4 @@ logs/
 .DS_Store
 Thumbs.db
 Desktop.ini
+.github/copilot-instructions.md
