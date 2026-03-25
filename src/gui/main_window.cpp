@@ -917,102 +917,75 @@ private:
 
     void drawControlPanel() {
         ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(520.0f, 920.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(480.0f, 850.0f), ImGuiCond_FirstUseEver);
 
         ImGui::Begin("Control Panel");
 
-        drawInfoSection();
-        drawPerformanceSection();
-        drawGridSection();
-        drawToolsSection();
-        drawPresetsSection();
-        drawSimulationSection();
-        drawForceFieldsSection();
-        drawParticlePropertiesSection();
-        drawConstraintsSection();
-        drawDisplaySection();
-        drawAnalysisSection();
-        drawAccessibilitySection();
-        drawLogSection();
+        drawStatusHeader();
+
+        if (ImGui::BeginTabBar("ControlTabs", ImGuiTabBarFlags_None)) {
+            if (ImGui::BeginTabItem("Session")) {
+                drawSessionLifecycleSection();
+                drawPerformanceSection();
+                drawProfilesAndLogSection();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Display")) {
+                drawDisplayMappingSection();
+                drawOverlaysSection();
+                drawOpticsSection();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Environment")) {
+                drawGridSetupSection();
+                drawPhysicsSection();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Diagnostics")) {
+                drawAnalysisSection();
+                drawAccessibilitySection();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
 
         ImGui::End();
     }
 
-    void drawInfoSection() {
+    void drawStatusHeader() {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(15, 18, 26, 255));
+        ImGui::BeginChild("StatusHeader", ImVec2(0, 60), true);
+        
+        ImGui::Columns(2, nullptr, false);
+        ImGui::SetColumnWidth(0, 200.0f);
+
+        StatusBadge(runtime_.isRunning() ? "RUNNING" : "STOPPED", runtime_.isRunning());
+        ImGui::SameLine();
+        StatusBadge(runtime_.isPaused() ? "PAUSED" : "ACTIVE", !runtime_.isPaused());
+
+        if (viz_.hasCachedCheckpoint) {
+            ImGui::Text("Step: %llu", static_cast<unsigned long long>(viz_.cachedCheckpoint.stateSnapshot.header.stepIndex));
+        }
+
+        ImGui::NextColumn();
+        if (viz_.hasCachedCheckpoint) {
+            ImGui::Text("Grid: %ux%u", viz_.cachedCheckpoint.stateSnapshot.grid.width, viz_.cachedCheckpoint.stateSnapshot.grid.height);
+        }
+        if (viz_.lastRuntimeError[0] != '\0') {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Warning: Error detected!");
+        } else {
+            ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Engine Health: Nominal");
+        }
+
+        ImGui::Columns(1);
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+    }
+
+    void drawSessionLifecycleSection() {
         PushSectionTint(0);
-        if (ImGui::CollapsingHeader("Info", ImGuiTreeNodeFlags_DefaultOpen)) {
-            StatusBadge(runtime_.isRunning() ? "RUNNING" : "STOPPED", runtime_.isRunning());
-            ImGui::SameLine();
-            StatusBadge(runtime_.isPaused() ? "PAUSED" : "ACTIVE", !runtime_.isPaused());
-            ImGui::Text("Cockpit UI: ImGui + GLFW + OpenGL");
-            if (viz_.hasCachedCheckpoint) {
-                ImGui::Text("Snapshot step: %llu", static_cast<unsigned long long>(viz_.cachedCheckpoint.stateSnapshot.header.stepIndex));
-                ImGui::Text("Grid: %ux%u", viz_.cachedCheckpoint.stateSnapshot.grid.width, viz_.cachedCheckpoint.stateSnapshot.grid.height);
-            }
-        }
-        PopSectionTint();
-    }
-
-    void drawPerformanceSection() {
-        PushSectionTint(1);
-        if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-            ImGui::Text("Snapshot Hz target: %.1f", viz_.snapshotRefreshHz);
-            ImGui::Text("Adaptive sampling: %s", viz_.adaptiveSampling ? "on" : "off");
-            ImGui::Text("Snapshot copy time: %.2f ms", viz_.lastSnapshotDurationMs);
-            ImGui::Text("Frames since snapshot: %d", viz_.framesSinceSnapshot);
-            DelayedTooltip("Simulation stepping and snapshot refresh are decoupled for stability and performance.");
-        }
-        PopSectionTint();
-    }
-
-    void drawGridSection() {
-        PushSectionTint(2);
-        if (ImGui::CollapsingHeader("Runtime Configuration", ImGuiTreeNodeFlags_DefaultOpen)) {
-            int seed = static_cast<int>(std::min<std::uint64_t>(panel_.seed, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
-            if (NumericSliderPairInt("Seed", &seed, 0, kImGuiIntSafeMax)) {
-                panel_.seed = static_cast<std::uint64_t>(seed);
-            }
-
-            NumericSliderPairInt("Grid Width", &panel_.gridWidth, 1, 1024);
-            NumericSliderPairInt("Grid Height", &panel_.gridHeight, 1, 1024);
-
-            if (ImGui::BeginCombo("Tier", kTierOptions[panel_.tierIndex])) {
-                for (int i = 0; i < static_cast<int>(kTierOptions.size()); ++i) {
-                    const bool selected = (panel_.tierIndex == i);
-                    if (ImGui::Selectable(kTierOptions[i], selected)) {
-                        panel_.tierIndex = i;
-                    }
-                    if (selected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            if (ImGui::BeginCombo("Temporal", kTemporalOptions[panel_.temporalIndex])) {
-                for (int i = 0; i < static_cast<int>(kTemporalOptions.size()); ++i) {
-                    const bool selected = (panel_.temporalIndex == i);
-                    if (ImGui::Selectable(kTemporalOptions[i], selected)) {
-                        panel_.temporalIndex = i;
-                    }
-                    if (selected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            if (PrimaryButton("Apply Grid Config", ImVec2(-1.0f, 28.0f))) {
-                applyConfigFromPanel();
-            }
-        }
-        PopSectionTint();
-    }
-
-    void drawToolsSection() {
-        PushSectionTint(3);
-        if (ImGui::CollapsingHeader("Session Lifecycle", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Engine Lifecycle & Playback", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (PrimaryButton("Start", ImVec2(100, 28))) {
                 std::string message;
                 runtime_.start(message);
@@ -1038,21 +1011,84 @@ private:
                 requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Play);
             }
+
+            ImGui::Separator();
+
+            ImGui::Checkbox("Auto-run simulation", &viz_.autoRun);
+            if (viz_.autoRun) {
+                NumericSliderPairInt("Steps / tick", &viz_.autoStepsPerFrame, 1, 128);
+                if (PrimaryButton("Pause", ImVec2(80, 26))) {
+                    std::string message;
+                    runtime_.pause(message);
+                    appendLog(message);
+                    triggerOverlay(OverlayIcon::Pause);
+                }
+                ImGui::SameLine();
+                if (PrimaryButton("Resume", ImVec2(80, 26))) {
+                    std::string message;
+                    runtime_.resume(message);
+                    appendLog(message);
+                    requestSnapshotRefresh();
+                    triggerOverlay(OverlayIcon::Play);
+                }
+            } else {
+                NumericSliderPairInt("Step Count", &panel_.stepCount, 1, 1000000);
+                if (PrimaryButton("Run Step(s)", ImVec2(120, 26))) {
+                    std::string message;
+                    runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), message);
+                    appendLog(message);
+                    requestSnapshotRefresh();
+                }
+
+                ImGui::Separator();
+                int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
+                if (NumericSliderPairInt("Run Until", &runUntil, 0, kImGuiIntSafeMax)) {
+                    panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
+                }
+                if (PrimaryButton("Run Continuous", ImVec2(120, 26))) {
+                    std::string message;
+                    runtime_.runUntil(panel_.runUntilTarget, message);
+                    appendLog(message);
+                    requestSnapshotRefresh();
+                }
+            }
         }
         PopSectionTint();
     }
 
-    void drawPresetsSection() {
-        PushSectionTint(4);
-        if (ImGui::CollapsingHeader("Profiles and Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+    void drawPerformanceSection() {
+        PushSectionTint(1);
+        if (ImGui::CollapsingHeader("Performance & Sync", 0)) { // Closed by default
+            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+            ImGui::Text("Snapshot mapping time: %.2f ms", viz_.lastSnapshotDurationMs);
+            
+            NumericSliderPairInt("Simulation tick Hz", &viz_.simulationTickHz, 1, 240);
+            NumericSliderPair("Snapshot target Hz", &viz_.snapshotRefreshHz, 1.0f, 120.0f, "%.1f");
+
+            ImGui::Checkbox("Adaptive Render Sampling", &viz_.adaptiveSampling);
+            if (!viz_.adaptiveSampling) {
+                NumericSliderPairInt("Manual stride", &viz_.manualSamplingStride, 1, 64);
+            }
+            NumericSliderPairInt("Max rendered cells", &viz_.maxRenderedCells, 1000, 2000000);
+
+            if (PrimaryButton("Force Snapshot Refresh", ImVec2(-1.0f, 24.0f))) {
+                requestSnapshotRefresh();
+            }
+        }
+        PopSectionTint();
+    }
+
+    void drawProfilesAndLogSection() {
+        PushSectionTint(2);
+        if (ImGui::CollapsingHeader("Profiles & Events", 0)) { // Closed by default
             ImGui::InputText("Profile", panel_.profileName, sizeof(panel_.profileName));
-            if (PrimaryButton("Save Profile", ImVec2(120, 26))) {
+            if (PrimaryButton("Save", ImVec2(70, 26))) {
                 std::string message;
                 runtime_.saveProfile(panel_.profileName, message);
                 appendLog(message);
             }
             ImGui::SameLine();
-            if (PrimaryButton("Load Profile", ImVec2(120, 26))) {
+            if (PrimaryButton("Load", ImVec2(70, 26))) {
                 std::string message;
                 runtime_.loadProfile(panel_.profileName, message);
                 appendLog(message);
@@ -1061,118 +1097,29 @@ private:
                 requestSnapshotRefresh();
             }
             ImGui::SameLine();
-            if (PrimaryButton("List", ImVec2(80, 26))) {
+            if (PrimaryButton("List", ImVec2(70, 26))) {
                 std::string message;
                 runtime_.listProfiles(message);
                 appendLog(message);
             }
-        }
-        PopSectionTint();
-    }
-
-    void drawSimulationSection() {
-        PushSectionTint(5);
-        if (ImGui::CollapsingHeader("Stepping and Playback", ImGuiTreeNodeFlags_DefaultOpen)) {
-            NumericSliderPairInt("Step Count", &panel_.stepCount, 1, 1000000);
-
-            int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
-            if (NumericSliderPairInt("Run Until", &runUntil, 0, kImGuiIntSafeMax)) {
-                panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
-            }
-
-            if (PrimaryButton("Run Step", ImVec2(100, 26))) {
-                std::string message;
-                runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), message);
-                appendLog(message);
-                requestSnapshotRefresh();
-            }
-            ImGui::SameLine();
-            if (PrimaryButton("Run Until", ImVec2(100, 26))) {
-                std::string message;
-                runtime_.runUntil(panel_.runUntilTarget, message);
-                appendLog(message);
-                requestSnapshotRefresh();
-            }
-            ImGui::SameLine();
-            if (PrimaryButton("Pause", ImVec2(80, 26))) {
-                std::string message;
-                runtime_.pause(message);
-                appendLog(message);
-                triggerOverlay(OverlayIcon::Pause);
-            }
-            ImGui::SameLine();
-            if (PrimaryButton("Resume", ImVec2(80, 26))) {
-                std::string message;
-                runtime_.resume(message);
-                appendLog(message);
-                requestSnapshotRefresh();
-                triggerOverlay(OverlayIcon::Play);
-            }
-        }
-        PopSectionTint();
-    }
-
-    void drawForceFieldsSection() {
-        PushSectionTint(6);
-        if (ImGui::CollapsingHeader("Physics: Force Fields", ImGuiTreeNodeFlags_DefaultOpen)) {
-            NumericSliderPair("Force Scale", &panel_.forceFieldScale, 0.0f, 10.0f, "%.2f");
-            NumericSliderPair("Damping", &panel_.forceFieldDamping, 0.0f, 1.0f, "%.3f");
-        }
-        PopSectionTint();
-    }
-
-    void drawParticlePropertiesSection() {
-        PushSectionTint(7);
-        if (ImGui::CollapsingHeader("Physics: Particle Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
-            NumericSliderPair("Mobility", &panel_.particleMobility, 0.0f, 1.0f, "%.3f");
-            NumericSliderPair("Cohesion", &panel_.particleCohesion, 0.0f, 1.0f, "%.3f");
-        }
-        PopSectionTint();
-    }
-
-    void drawConstraintsSection() {
-        PushSectionTint(8);
-        if (ImGui::CollapsingHeader("Physics: Constraints", ImGuiTreeNodeFlags_DefaultOpen)) {
-            NumericSliderPair("Rigidity", &panel_.constraintRigidity, 0.0f, 1.0f, "%.3f");
-            NumericSliderPair("Tolerance", &panel_.constraintTolerance, 0.0f, 1.0f, "%.3f");
-        }
-        PopSectionTint();
-    }
-
-    void drawDisplaySection() {
-        PushSectionTint(9);
-        if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::TextUnformatted("Viewport Transform");
-            NumericSliderPair("Zoom", &visuals_.zoom, 0.1f, 5.0f, "%.2f");
-            DelayedTooltip("Zoom is applied while preserving simulation aspect ratio (no stretching).");
-            NumericSliderPair("Pan X (px)", &visuals_.panX, -2000.0f, 2000.0f, "%.1f");
-            NumericSliderPair("Pan Y (px)", &visuals_.panY, -2000.0f, 2000.0f, "%.1f");
-            NumericSliderPair("Brightness", &visuals_.brightness, 0.1f, 3.0f, "%.2f");
-            NumericSliderPair("Contrast", &visuals_.contrast, 0.1f, 3.0f, "%.2f");
-            NumericSliderPair("Gamma", &visuals_.gamma, 0.2f, 3.0f, "%.2f");
-            ImGui::Checkbox("Invert Colors", &visuals_.invertColors);
 
             ImGui::Separator();
-            ImGui::TextUnformatted("Grid and Boundary Overlays");
-            ImGui::Checkbox("Show Grid", &visuals_.showGrid);
-            if (visuals_.showGrid) {
-                NumericSliderPair("Grid Opacity", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f");
-                NumericSliderPair("Grid Thickness", &visuals_.gridLineThickness, 0.5f, 4.0f, "%.2f");
+            ImGui::Text("Event Log:");
+            ImGui::BeginChild("log_scroller", ImVec2(0, 180), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            for (const std::string& line : logs_) {
+                ImGui::TextUnformatted(line.c_str());
             }
-
-            ImGui::Checkbox("Show Boundary", &visuals_.showBoundary);
-            if (visuals_.showBoundary) {
-                NumericSliderPair("Boundary Opacity", &visuals_.boundaryOpacity, 0.0f, 1.0f, "%.2f");
-                NumericSliderPair("Boundary Thickness", &visuals_.boundaryThickness, 0.5f, 6.0f, "%.2f");
-                ImGui::Checkbox("Animate Boundary", &visuals_.boundaryAnimate);
-                if (accessibility_.reduceMotion) {
-                    visuals_.boundaryAnimate = false;
-                }
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+                ImGui::SetScrollHereY(1.0f);
             }
+            ImGui::EndChild();
+        }
+        PopSectionTint();
+    }
 
-            ImGui::Separator();
-            ImGui::TextUnformatted("Field Composition");
-
+    void drawDisplayMappingSection() {
+        PushSectionTint(3);
+        if (ImGui::CollapsingHeader("Continuum Field Mapping", ImGuiTreeNodeFlags_DefaultOpen)) {
             static constexpr std::array<const char*, 4> modeNames = {
                 "Single Field",
                 "Side-by-Side (Vertical)",
@@ -1184,42 +1131,9 @@ private:
                 viz_.mode = static_cast<DisplayMode>(std::clamp(mode, 0, static_cast<int>(modeNames.size()) - 1));
             }
 
-            static constexpr std::array<const char*, 3> normalizationNames = {
-                "Per-frame auto",
-                "Sticky per-field",
-                "Fixed manual range"
-            };
-            int normalization = static_cast<int>(viz_.normalizationMode);
-            if (ImGui::Combo("Normalization", &normalization, normalizationNames.data(), static_cast<int>(normalizationNames.size()))) {
-                viz_.normalizationMode = static_cast<NormalizationMode>(std::clamp(normalization, 0, static_cast<int>(normalizationNames.size()) - 1));
-            }
-
-            static constexpr std::array<const char*, 3> colorMapNames = {
-                "Turbo",
-                "Grayscale",
-                "Diverging"
-            };
-            int colorMap = static_cast<int>(viz_.colorMapMode);
-            if (ImGui::Combo("Color Map", &colorMap, colorMapNames.data(), static_cast<int>(colorMapNames.size()))) {
-                viz_.colorMapMode = static_cast<ColorMapMode>(std::clamp(colorMap, 0, static_cast<int>(colorMapNames.size()) - 1));
-            }
-
-            if (viz_.normalizationMode == NormalizationMode::FixedManual) {
-                NumericSliderPair("Fixed Min", &viz_.fixedRangeMin, -10.0f, 10.0f, "%.3f");
-                NumericSliderPair("Fixed Max", &viz_.fixedRangeMax, -10.0f, 10.0f, "%.3f");
-            }
-
-            if (PrimaryButton("Reset Sticky Ranges", ImVec2(170.0f, 24.0f))) {
-                viz_.stickyRanges.clear();
-            }
-            ImGui::SameLine();
-            ImGui::Checkbox("Show range details", &viz_.showRangeDetails);
-
             if (PrimaryButton("Refresh Field List", ImVec2(160.0f, 24.0f))) {
                 refreshFieldNames();
             }
-            ImGui::SameLine();
-            ImGui::Text("%d fields", static_cast<int>(viz_.fieldNames.size()));
 
             if (!viz_.fieldNames.empty()) {
                 clampVisualizationIndices();
@@ -1229,92 +1143,180 @@ private:
                         if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
                             viz_.primaryFieldIndex = i;
                         }
-                        if (selected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
                     }
                     ImGui::EndCombo();
                 }
 
-                if (ImGui::BeginCombo("Secondary Field", viz_.fieldNames[static_cast<std::size_t>(viz_.secondaryFieldIndex)].c_str())) {
-                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
-                        const bool selected = (viz_.secondaryFieldIndex == i);
-                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
-                            viz_.secondaryFieldIndex = i;
+                if (viz_.mode != DisplayMode::Single) {
+                    if (ImGui::BeginCombo("Secondary Field", viz_.fieldNames[static_cast<std::size_t>(viz_.secondaryFieldIndex)].c_str())) {
+                        for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                            const bool selected = (viz_.secondaryFieldIndex == i);
+                            if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
+                                viz_.secondaryFieldIndex = i;
+                            }
                         }
-                        if (selected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
+                        ImGui::EndCombo();
                     }
-                    ImGui::EndCombo();
                 }
 
-                if (ImGui::BeginCombo("Vector X", viz_.fieldNames[static_cast<std::size_t>(viz_.vectorXFieldIndex)].c_str())) {
-                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
-                        const bool selected = (viz_.vectorXFieldIndex == i);
-                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
-                            viz_.vectorXFieldIndex = i;
-                        }
-                        if (selected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-
-                if (ImGui::BeginCombo("Vector Y", viz_.fieldNames[static_cast<std::size_t>(viz_.vectorYFieldIndex)].c_str())) {
-                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
-                        const bool selected = (viz_.vectorYFieldIndex == i);
-                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
-                            viz_.vectorYFieldIndex = i;
-                        }
-                        if (selected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGui::EndCombo();
+                if (viz_.mode == DisplayMode::MixedOverlay) {
+                    NumericSliderPair("Overlay Blend", &viz_.secondaryBlend, 0.0f, 1.0f, "%.2f");
                 }
             }
 
             ImGui::Separator();
-            ImGui::TextUnformatted("Live Runtime Update Policy");
-            ImGui::Checkbox("Auto-run simulation", &viz_.autoRun);
-            NumericSliderPairInt("Steps / tick", &viz_.autoStepsPerFrame, 1, 128);
-            NumericSliderPairInt("Simulation tick Hz", &viz_.simulationTickHz, 1, 240);
-            NumericSliderPair("Snapshot refresh Hz", &viz_.snapshotRefreshHz, 1.0f, 120.0f, "%.1f");
-            if (PrimaryButton("Force Snapshot Refresh", ImVec2(190.0f, 24.0f))) {
-                requestSnapshotRefresh();
+            ImGui::TextUnformatted("Colorization & Ranges");
+
+            static constexpr std::array<const char*, 3> colorMapNames = {"Turbo", "Grayscale", "Diverging"};
+            int colorMap = static_cast<int>(viz_.colorMapMode);
+            if (ImGui::Combo("Color Palette", &colorMap, colorMapNames.data(), static_cast<int>(colorMapNames.size()))) {
+                viz_.colorMapMode = static_cast<ColorMapMode>(std::clamp(colorMap, 0, static_cast<int>(colorMapNames.size()) - 1));
             }
 
-            ImGui::Separator();
-            ImGui::TextUnformatted("Rendering Performance");
-            ImGui::Checkbox("Adaptive sampling", &viz_.adaptiveSampling);
-            NumericSliderPairInt("Manual sampling stride", &viz_.manualSamplingStride, 1, 64);
-            NumericSliderPairInt("Max rendered cells", &viz_.maxRenderedCells, 1000, 2000000);
+            static constexpr std::array<const char*, 3> normalizationNames = {"Per-frame Auto", "Sticky Limit (per-field)", "Fixed Manual Bounds"};
+            int normalization = static_cast<int>(viz_.normalizationMode);
+            if (ImGui::Combo("Normalization", &normalization, normalizationNames.data(), static_cast<int>(normalizationNames.size()))) {
+                viz_.normalizationMode = static_cast<NormalizationMode>(std::clamp(normalization, 0, static_cast<int>(normalizationNames.size()) - 1));
+            }
 
-            ImGui::Separator();
-            ImGui::TextUnformatted("Vector and Overlay Composition");
-            ImGui::Checkbox("Show cell grid", &viz_.showCellGrid);
-            ImGui::Checkbox("Show legend", &viz_.showLegend);
-            ImGui::Checkbox("Show vector field", &viz_.showVectorField);
-            ImGui::Checkbox("Show overlay entries", &viz_.showSparseOverlay);
-
-            NumericSliderPair("Mixed Blend", &viz_.secondaryBlend, 0.0f, 1.0f, "%.2f");
-            NumericSliderPairInt("Vector stride", &viz_.vectorStride, 1, 32);
-            NumericSliderPair("Vector scale", &viz_.vectorScale, 0.05f, 2.0f, "%.2f");
-
-            if (viz_.lastRuntimeError[0] != '\0') {
-                ImGui::Separator();
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.45f, 1.0f), "Runtime notice: %s", viz_.lastRuntimeError);
+            if (viz_.normalizationMode == NormalizationMode::StickyPerField) {
+                if (ImGui::Button("Reset Sticky Tracking", ImVec2(170.0f, 24.0f))) {
+                    viz_.stickyRanges.clear();
+                }
+                ImGui::SameLine();
+                ImGui::Checkbox("Debug range metrics", &viz_.showRangeDetails);
+            } else if (viz_.normalizationMode == NormalizationMode::FixedManual) {
+                NumericSliderPair("Range Min", &viz_.fixedRangeMin, -15.0f, 15.0f, "%.3f");
+                NumericSliderPair("Range Max", &viz_.fixedRangeMax, -15.0f, 15.0f, "%.3f");
             }
         }
         PopSectionTint();
     }
 
+    void drawOverlaysSection() {
+        PushSectionTint(4);
+        if (ImGui::CollapsingHeader("Vector & Spatial Overlays", 0)) { // Closed by default
+            ImGui::Checkbox("Show Domain Boundary", &visuals_.showBoundary);
+            if (visuals_.showBoundary) {
+                ImGui::Indent();
+                NumericSliderPair("Opacity", &visuals_.boundaryOpacity, 0.0f, 1.0f, "%.2f");
+                NumericSliderPair("Thickness", &visuals_.boundaryThickness, 0.5f, 6.0f, "%.2f");
+                ImGui::Checkbox("Animate Pulse", &visuals_.boundaryAnimate);
+                if (accessibility_.reduceMotion) { visuals_.boundaryAnimate = false; }
+                ImGui::Unindent();
+            }
+
+            ImGui::Checkbox("Overlay Cell Grid", &visuals_.showGrid);
+            if (visuals_.showGrid) {
+                viz_.showCellGrid = true;
+                ImGui::Indent();
+                NumericSliderPair("Grid Op", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f");
+                NumericSliderPair("Grid W", &visuals_.gridLineThickness, 0.5f, 4.0f, "%.2f");
+                ImGui::Unindent();
+            } else {
+                viz_.showCellGrid = false;
+            }
+
+            ImGui::Checkbox("Render Vector Fields", &viz_.showVectorField);
+            if (viz_.showVectorField && !viz_.fieldNames.empty()) {
+                ImGui::Indent();
+                clampVisualizationIndices();
+                if (ImGui::BeginCombo("Def. X", viz_.fieldNames[static_cast<std::size_t>(viz_.vectorXFieldIndex)].c_str())) {
+                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), viz_.vectorXFieldIndex == i)) { viz_.vectorXFieldIndex = i; }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::BeginCombo("Def. Y", viz_.fieldNames[static_cast<std::size_t>(viz_.vectorYFieldIndex)].c_str())) {
+                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), viz_.vectorYFieldIndex == i)) { viz_.vectorYFieldIndex = i; }
+                    }
+                    ImGui::EndCombo();
+                }
+                NumericSliderPairInt("Ray Stride", &viz_.vectorStride, 1, 32);
+                NumericSliderPair("Ray Scale", &viz_.vectorScale, 0.05f, 2.0f, "%.2f");
+                ImGui::Unindent();
+            }
+
+            ImGui::Separator();
+            ImGui::Checkbox("Show Value Legend", &viz_.showLegend);
+            ImGui::Checkbox("Render Sparse Objects", &viz_.showSparseOverlay);
+        }
+        PopSectionTint();
+    }
+
+    void drawOpticsSection() {
+        PushSectionTint(5);
+        if (ImGui::CollapsingHeader("Camera & Optics", 0)) { // Closed by default
+            NumericSliderPair("Zoom", &visuals_.zoom, 0.1f, 10.0f, "%.2f");
+            NumericSliderPair("Pan X", &visuals_.panX, -2000.0f, 2000.0f, "%.1f");
+            NumericSliderPair("Pan Y", &visuals_.panY, -2000.0f, 2000.0f, "%.1f");
+            ImGui::Separator();
+            NumericSliderPair("Brightness", &visuals_.brightness, 0.1f, 3.0f, "%.2f");
+            NumericSliderPair("Contrast", &visuals_.contrast, 0.1f, 3.0f, "%.2f");
+            NumericSliderPair("Gamma", &visuals_.gamma, 0.2f, 3.0f, "%.2f");
+            ImGui::Checkbox("Invert Colors", &visuals_.invertColors);
+        }
+        PopSectionTint();
+    }
+
+    void drawGridSetupSection() {
+        PushSectionTint(6);
+        if (ImGui::CollapsingHeader("Grid Matrix Registration", ImGuiTreeNodeFlags_DefaultOpen)) {
+            int seed = static_cast<int>(std::min<std::uint64_t>(panel_.seed, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
+            if (NumericSliderPairInt("Entropy Seed", &seed, 0, kImGuiIntSafeMax)) {
+                panel_.seed = static_cast<std::uint64_t>(seed);
+            }
+
+            NumericSliderPairInt("Width (Cols)", &panel_.gridWidth, 1, 1024);
+            NumericSliderPairInt("Height (Rows)", &panel_.gridHeight, 1, 1024);
+
+            if (ImGui::BeginCombo("Runtime Tier", kTierOptions[panel_.tierIndex])) {
+                for (int i = 0; i < static_cast<int>(kTierOptions.size()); ++i) {
+                    if (ImGui::Selectable(kTierOptions[i], panel_.tierIndex == i)) { panel_.tierIndex = i; }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (ImGui::BeginCombo("Temporal Mode", kTemporalOptions[panel_.temporalIndex])) {
+                for (int i = 0; i < static_cast<int>(kTemporalOptions.size()); ++i) {
+                    if (ImGui::Selectable(kTemporalOptions[i], panel_.temporalIndex == i)) { panel_.temporalIndex = i; }
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::Spacing();
+            if (PrimaryButton("Apply Configuration & Reset", ImVec2(-1.0f, 32.0f))) {
+                applyConfigFromPanel();
+            }
+        }
+        PopSectionTint();
+    }
+
+    void drawPhysicsSection() {
+        PushSectionTint(7);
+        if (ImGui::CollapsingHeader("Environmental Physics", 0)) { // Closed by default
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Continuum Force Models");
+            NumericSliderPair("Global Force Scale", &panel_.forceFieldScale, 0.0f, 10.0f, "%.2f");
+            NumericSliderPair("Kinetic Damping", &panel_.forceFieldDamping, 0.0f, 1.0f, "%.3f");
+            
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Particulate Interactions");
+            NumericSliderPair("Entity Mobility", &panel_.particleMobility, 0.0f, 1.0f, "%.3f");
+            NumericSliderPair("Cluster Cohesion", &panel_.particleCohesion, 0.0f, 1.0f, "%.3f");
+
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Numerical Bounds");
+            NumericSliderPair("Boundary Rigidity", &panel_.constraintRigidity, 0.0f, 1.0f, "%.3f");
+            NumericSliderPair("Solver Tolerance", &panel_.constraintTolerance, 0.0f, 1.0f, "%.3f");
+        }
+        PopSectionTint();
+    }
+
     void drawAnalysisSection() {
-        PushSectionTint(0);
-        if (ImGui::CollapsingHeader("Analysis and Diagnostics", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (PrimaryButton("Status", ImVec2(90, 26))) {
+        PushSectionTint(8);
+        if (ImGui::CollapsingHeader("Data Diagnostics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (PrimaryButton("Dump State", ImVec2(90, 26))) {
                 std::string message;
                 runtime_.status(message);
                 appendLog(message);
@@ -1326,21 +1328,25 @@ private:
                 appendLog(message);
             }
             ImGui::SameLine();
-            if (PrimaryButton("Fields", ImVec2(90, 26))) {
+            if (PrimaryButton("Index", ImVec2(90, 26))) {
                 std::string message;
                 runtime_.listFields(message);
                 appendLog(message);
             }
 
-            ImGui::InputText("Variable", panel_.summaryVariable, sizeof(panel_.summaryVariable));
-            if (PrimaryButton("Summary", ImVec2(120, 26))) {
+            ImGui::Spacing();
+            ImGui::InputText("Query Variable", panel_.summaryVariable, sizeof(panel_.summaryVariable));
+            if (PrimaryButton("Extract Summary", ImVec2(-1.0f, 26))) {
                 std::string message;
                 runtime_.summarizeField(panel_.summaryVariable, message);
                 appendLog(message);
             }
 
-            ImGui::InputText("Checkpoint", panel_.checkpointLabel, sizeof(panel_.checkpointLabel));
-            if (PrimaryButton("Create", ImVec2(90, 26))) {
+            ImGui::Separator();
+            ImGui::Text("Volume Checkpoints");
+            ImGui::InputText("Label", panel_.checkpointLabel, sizeof(panel_.checkpointLabel));
+            
+            if (PrimaryButton("Store", ImVec2(90, 26))) {
                 std::string message;
                 runtime_.createCheckpoint(panel_.checkpointLabel, message);
                 appendLog(message);
@@ -1362,8 +1368,8 @@ private:
     }
 
     void drawAccessibilitySection() {
-        PushSectionTint(1);
-        if (ImGui::CollapsingHeader("Accessibility", ImGuiTreeNodeFlags_DefaultOpen)) {
+        PushSectionTint(9);
+        if (ImGui::CollapsingHeader("Cockpit Accessibility", 0)) { // Closed by default
             bool styleChanged = false;
             bool rebuildFonts = false;
 
@@ -1383,19 +1389,6 @@ private:
             }
         }
         PopSectionTint();
-    }
-
-    void drawLogSection() {
-        if (ImGui::CollapsingHeader("Event Log", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::BeginChild("log_scroller", ImVec2(0, 180), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-            for (const std::string& line : logs_) {
-                ImGui::TextUnformatted(line.c_str());
-            }
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-                ImGui::SetScrollHereY(1.0f);
-            }
-            ImGui::EndChild();
-        }
     }
 
     void syncPanelFromConfig() {
