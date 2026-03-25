@@ -13,11 +13,18 @@
 
 #include <array>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <mutex>
+#include <unordered_map>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace ws::gui {
@@ -38,7 +45,7 @@ struct VisualParams {
     float gamma = 1.0f;
     bool invertColors = false;
 
-    bool showGrid = true;
+    bool showGrid = false;
     float gridOpacity = 0.35f;
     float gridLineThickness = 1.0f;
 
@@ -50,8 +57,8 @@ struct VisualParams {
 
 struct PanelState {
     std::uint64_t seed = 42;
-    int gridWidth = 32;
-    int gridHeight = 16;
+    int gridWidth = 128;
+    int gridHeight = 128;
     int tierIndex = 0;
     int temporalIndex = 0;
 
@@ -73,6 +80,63 @@ struct PanelState {
 struct OverlayState {
     float alpha = 0.0f;
     OverlayIcon icon = OverlayIcon::None;
+};
+
+enum class DisplayMode {
+    Single = 0,
+    SideBySideVertical = 1,
+    SideBySideHorizontal = 2,
+    MixedOverlay = 3
+};
+
+enum class NormalizationMode {
+    PerFrameAuto = 0,
+    StickyPerField = 1,
+    FixedManual = 2
+};
+
+enum class ColorMapMode {
+    Turbo = 0,
+    Grayscale = 1,
+    Diverging = 2
+};
+
+struct VisualizationState {
+    DisplayMode mode = DisplayMode::Single;
+    bool showCellGrid = false;
+    bool showLegend = true;
+    bool showVectorField = false;
+    bool showSparseOverlay = true;
+    bool autoRun = false;
+    int autoStepsPerFrame = 1;
+    int simulationTickHz = 30;
+    float snapshotRefreshHz = 12.0f;
+    bool adaptiveSampling = true;
+    int manualSamplingStride = 1;
+    int maxRenderedCells = 180000;
+    int vectorStride = 6;
+    float vectorScale = 0.45f;
+    float secondaryBlend = 0.45f;
+    NormalizationMode normalizationMode = NormalizationMode::StickyPerField;
+    ColorMapMode colorMapMode = ColorMapMode::Turbo;
+    float fixedRangeMin = 0.0f;
+    float fixedRangeMax = 1.0f;
+    bool showRangeDetails = true;
+
+    int primaryFieldIndex = 0;
+    int secondaryFieldIndex = 1;
+    int vectorXFieldIndex = 4;
+    int vectorYFieldIndex = 3;
+
+    std::vector<std::string> fieldNames;
+    RuntimeCheckpoint cachedCheckpoint{};
+    bool hasCachedCheckpoint = false;
+    double lastSnapshotTimeSec = -1.0;
+    bool snapshotDirty = true;
+    float lastSnapshotDurationMs = 0.0f;
+    int framesSinceSnapshot = 0;
+    char lastRuntimeError[256] = "";
+    std::unordered_map<std::string, std::pair<float, float>> stickyRanges;
 };
 
 constexpr std::array<const char*, 3> kTierOptions = {"A", "B", "C"};
@@ -136,6 +200,95 @@ void drawPlaybackOverlay(OverlayState& overlay, const bool reduceMotion, const f
     }
 }
 
+ImU32 colormapTurboLike(const float t01) {
+    const float t = std::clamp(t01, 0.0f, 1.0f);
+    const float r = std::clamp(1.5f * t, 0.0f, 1.0f);
+    const float g = std::clamp(1.5f * (1.0f - std::abs(2.0f * t - 1.0f)), 0.0f, 1.0f);
+    const float b = std::clamp(1.5f * (1.0f - t), 0.0f, 1.0f);
+    return IM_COL32(
+        static_cast<int>(r * 255.0f),
+        static_cast<int>(g * 255.0f),
+        static_cast<int>(b * 255.0f),
+        255);
+}
+
+ImU32 colormapGrayscale(const float t01) {
+    const float t = std::clamp(t01, 0.0f, 1.0f);
+    const int c = static_cast<int>(t * 255.0f);
+    return IM_COL32(c, c, c, 255);
+}
+
+ImU32 colormapDiverging(const float t01) {
+    const float t = std::clamp(t01, 0.0f, 1.0f);
+    const float k = (t - 0.5f) * 2.0f;
+    if (k >= 0.0f) {
+        const int r = static_cast<int>((0.4f + 0.6f * k) * 255.0f);
+        const int g = static_cast<int>((0.2f + 0.5f * (1.0f - k)) * 255.0f);
+        const int b = static_cast<int>((0.2f + 0.4f * (1.0f - k)) * 255.0f);
+        return IM_COL32(r, g, b, 255);
+    }
+
+    const float a = -k;
+    const int r = static_cast<int>((0.2f + 0.4f * (1.0f - a)) * 255.0f);
+    const int g = static_cast<int>((0.3f + 0.5f * (1.0f - a)) * 255.0f);
+    const int b = static_cast<int>((0.45f + 0.55f * a) * 255.0f);
+    return IM_COL32(r, g, b, 255);
+}
+
+float applyDisplayTransfer(float t, const VisualParams& visuals) {
+    float v = std::clamp(t, 0.0f, 1.0f);
+    v = (v - 0.5f) * visuals.contrast + 0.5f;
+    v *= visuals.brightness;
+    v = std::clamp(v, 0.0f, 1.0f);
+
+    const float gamma = std::max(0.05f, visuals.gamma);
+    v = std::pow(v, 1.0f / gamma);
+
+    if (visuals.invertColors) {
+        v = 1.0f - v;
+    }
+    return std::clamp(v, 0.0f, 1.0f);
+}
+
+std::vector<float> mergedFieldValues(const StateStoreSnapshot::FieldPayload& field, const bool includeSparseOverlay) {
+    const std::size_t n = field.values.size();
+    std::vector<float> merged(n, std::numeric_limits<float>::quiet_NaN());
+
+    for (std::size_t i = 0; i < n; ++i) {
+        if (i < field.validityMask.size() && field.validityMask[i] != 0u) {
+            merged[i] = field.values[i];
+        }
+    }
+
+    if (includeSparseOverlay) {
+        for (const auto& [idx, value] : field.sparseOverlay) {
+            if (idx < merged.size()) {
+                merged[static_cast<std::size_t>(idx)] = value;
+            }
+        }
+    }
+
+    return merged;
+}
+
+void minMaxFinite(const std::vector<float>& values, float& outMin, float& outMax) {
+    outMin = std::numeric_limits<float>::infinity();
+    outMax = -std::numeric_limits<float>::infinity();
+    for (const float value : values) {
+        if (std::isfinite(value)) {
+            outMin = std::min(outMin, value);
+            outMax = std::max(outMax, value);
+        }
+    }
+    if (!std::isfinite(outMin) || !std::isfinite(outMax)) {
+        outMin = 0.0f;
+        outMax = 1.0f;
+    }
+    if (std::abs(outMax - outMin) < 1e-12f) {
+        outMax = outMin + 1.0f;
+    }
+}
+
 class MainWindowImpl {
 public:
     int run() {
@@ -168,15 +321,28 @@ public:
         appendLog(startupMessage);
 
         syncPanelFromConfig();
+        refreshFieldNames();
+        requestSnapshotRefresh();
+        startSnapshotWorker();
+
+        double previousTimeSec = glfwGetTime();
 
         while (!glfwWindowShouldClose(window)) {
+            const double nowSec = glfwGetTime();
+            const float frameDt = static_cast<float>(nowSec - previousTimeSec);
+            previousTimeSec = nowSec;
+
             glfwPollEvents();
+
+            tickAutoRun(frameDt);
+            consumeSnapshotFromWorker();
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
 
             drawViewport();
+            drawSimulationCanvas();
             drawDockSpace();
             drawControlPanel();
             drawPlaybackOverlay(overlay_, accessibility_.reduceMotion, ImGui::GetIO().DeltaTime);
@@ -192,6 +358,8 @@ public:
             glfwSwapBuffers(window);
         }
 
+        stopSnapshotWorker();
+
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
@@ -202,6 +370,103 @@ public:
     }
 
 private:
+    struct ViewMapping {
+        ImVec2 viewportMin{};
+        ImVec2 viewportMax{};
+        ImVec2 contentMin{};
+        float cellW = 1.0f;
+        float cellH = 1.0f;
+        int samplingStride = 1;
+    };
+
+    [[nodiscard]] ViewMapping makeViewMapping(const ImVec2 min, const ImVec2 max, const GridSpec grid) const {
+        ViewMapping mapping;
+
+        const float margin = 4.0f;
+        const ImVec2 boundedMin(min.x + margin, min.y + margin);
+        const ImVec2 boundedMax(max.x - margin, max.y - margin);
+        const float boundedW = std::max(1.0f, boundedMax.x - boundedMin.x);
+        const float boundedH = std::max(1.0f, boundedMax.y - boundedMin.y);
+        const float targetAspect = static_cast<float>(grid.width) / static_cast<float>(grid.height);
+
+        float viewW = boundedW;
+        float viewH = boundedW / targetAspect;
+        if (viewH > boundedH) {
+            viewH = boundedH;
+            viewW = boundedH * targetAspect;
+        }
+
+        const ImVec2 viewCenter((boundedMin.x + boundedMax.x) * 0.5f, (boundedMin.y + boundedMax.y) * 0.5f);
+        mapping.viewportMin = ImVec2(viewCenter.x - viewW * 0.5f, viewCenter.y - viewH * 0.5f);
+        mapping.viewportMax = ImVec2(viewCenter.x + viewW * 0.5f, viewCenter.y + viewH * 0.5f);
+
+        const float zoom = std::max(0.05f, visuals_.zoom);
+        const float contentW = viewW * zoom;
+        const float contentH = viewH * zoom;
+        mapping.contentMin = ImVec2(
+            viewCenter.x - contentW * 0.5f + visuals_.panX,
+            viewCenter.y - contentH * 0.5f + visuals_.panY);
+
+        mapping.cellW = contentW / static_cast<float>(grid.width);
+        mapping.cellH = contentH / static_cast<float>(grid.height);
+
+        int stride = std::max(1, viz_.manualSamplingStride);
+        if (viz_.adaptiveSampling) {
+            const int pixelStrideX = static_cast<int>(std::ceil(std::max(1.0f, 1.0f / std::max(0.0001f, mapping.cellW))));
+            const int pixelStrideY = static_cast<int>(std::ceil(std::max(1.0f, 1.0f / std::max(0.0001f, mapping.cellH))));
+            stride = std::max(stride, std::max(pixelStrideX, pixelStrideY));
+        }
+
+        while ((static_cast<int>(grid.width) / stride) * (static_cast<int>(grid.height) / stride) > std::max(1000, viz_.maxRenderedCells)) {
+            ++stride;
+        }
+        mapping.samplingStride = std::max(1, stride);
+
+        return mapping;
+    }
+
+    [[nodiscard]] std::pair<float, float> resolveDisplayRange(
+        const std::string& fieldName,
+        const float localMin,
+        const float localMax) {
+        if (viz_.normalizationMode == NormalizationMode::FixedManual) {
+            const float lo = std::min(viz_.fixedRangeMin, viz_.fixedRangeMax);
+            const float hi = std::max(viz_.fixedRangeMin, viz_.fixedRangeMax);
+            return {lo, std::max(lo + 1e-6f, hi)};
+        }
+
+        if (viz_.normalizationMode == NormalizationMode::PerFrameAuto) {
+            return {localMin, localMax};
+        }
+
+        auto it = viz_.stickyRanges.find(fieldName);
+        if (it == viz_.stickyRanges.end()) {
+            viz_.stickyRanges.emplace(fieldName, std::make_pair(localMin, localMax));
+            return {localMin, localMax};
+        }
+
+        auto& range = it->second;
+        range.first = std::min(range.first, localMin);
+        range.second = std::max(range.second, localMax);
+        if (std::abs(range.second - range.first) < 1e-6f) {
+            range.second = range.first + 1.0f;
+        }
+        return range;
+    }
+
+    [[nodiscard]] ImU32 mapColor(const float normalizedValue) const {
+        const float t = applyDisplayTransfer(normalizedValue, visuals_);
+        switch (viz_.colorMapMode) {
+            case ColorMapMode::Grayscale:
+                return colormapGrayscale(t);
+            case ColorMapMode::Diverging:
+                return colormapDiverging(t);
+            case ColorMapMode::Turbo:
+            default:
+                return colormapTurboLike(t);
+        }
+    }
+
     void applyTheme(const bool rebuildFonts) {
         ImGuiStyle& style = ImGui::GetStyle();
         ThemeBootstrap::applyBaseTheme(style, accessibility_.uiScale);
@@ -226,6 +491,407 @@ private:
         const float c = std::clamp(b * 1.15f, 0.0f, 1.0f);
         glClearColor(r, g, c, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+    }
+
+    void drawSimulationCanvas() {
+        if (!viz_.hasCachedCheckpoint) {
+            return;
+        }
+
+        const auto& snapshot = viz_.cachedCheckpoint.stateSnapshot;
+        if (snapshot.grid.width == 0 || snapshot.grid.height == 0 || snapshot.fields.empty()) {
+            return;
+        }
+
+        clampVisualizationIndices();
+
+        ImDrawList* dl = ImGui::GetBackgroundDrawList();
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const ImVec2 canvasMin(0.0f, 0.0f);
+        const ImVec2 canvasMax(display.x, display.y);
+        if (canvasMax.x <= canvasMin.x + 8.0f || canvasMax.y <= canvasMin.y + 8.0f) {
+            return;
+        }
+
+        dl->AddRectFilled(canvasMin, canvasMax, IM_COL32(8, 10, 18, 255), 6.0f);
+
+        const auto& fields = snapshot.fields;
+        const auto& primaryField = fields[static_cast<std::size_t>(viz_.primaryFieldIndex)];
+        const auto& secondaryField = fields[static_cast<std::size_t>(viz_.secondaryFieldIndex)];
+
+        std::vector<float> primaryValues = mergedFieldValues(primaryField, viz_.showSparseOverlay);
+        std::vector<float> secondaryValues = mergedFieldValues(secondaryField, viz_.showSparseOverlay);
+
+        float pMin = 0.0f;
+        float pMax = 1.0f;
+        float sMin = 0.0f;
+        float sMax = 1.0f;
+        minMaxFinite(primaryValues, pMin, pMax);
+        minMaxFinite(secondaryValues, sMin, sMax);
+        const auto pRange = resolveDisplayRange(primaryField.spec.name, pMin, pMax);
+        const auto sRange = resolveDisplayRange(secondaryField.spec.name, sMin, sMax);
+        pMin = pRange.first;
+        pMax = pRange.second;
+        sMin = sRange.first;
+        sMax = sRange.second;
+
+        if (viz_.mode == DisplayMode::Single) {
+            drawScalarFieldPanel(*dl, canvasMin, canvasMax, snapshot.grid, primaryField.spec.name, primaryValues, pMin, pMax);
+        } else if (viz_.mode == DisplayMode::SideBySideVertical) {
+            const float midX = (canvasMin.x + canvasMax.x) * 0.5f;
+            drawScalarFieldPanel(*dl, canvasMin, ImVec2(midX - 3.0f, canvasMax.y), snapshot.grid, primaryField.spec.name, primaryValues, pMin, pMax);
+            drawScalarFieldPanel(*dl, ImVec2(midX + 3.0f, canvasMin.y), canvasMax, snapshot.grid, secondaryField.spec.name, secondaryValues, sMin, sMax);
+        } else if (viz_.mode == DisplayMode::SideBySideHorizontal) {
+            const float midY = (canvasMin.y + canvasMax.y) * 0.5f;
+            drawScalarFieldPanel(*dl, canvasMin, ImVec2(canvasMax.x, midY - 3.0f), snapshot.grid, primaryField.spec.name, primaryValues, pMin, pMax);
+            drawScalarFieldPanel(*dl, ImVec2(canvasMin.x, midY + 3.0f), canvasMax, snapshot.grid, secondaryField.spec.name, secondaryValues, sMin, sMax);
+        } else {
+            drawMixedPanel(*dl, canvasMin, canvasMax, snapshot.grid, primaryField.spec.name, secondaryField.spec.name, primaryValues, secondaryValues, pMin, pMax, sMin, sMax);
+        }
+
+        if (viz_.showVectorField) {
+            drawVectorOverlay(*dl, canvasMin, canvasMax, snapshot.grid);
+        }
+    }
+
+    void drawScalarFieldPanel(
+        ImDrawList& dl,
+        const ImVec2 min,
+        const ImVec2 max,
+        const GridSpec grid,
+        const std::string& title,
+        const std::vector<float>& values,
+        const float minV,
+        const float maxV) const {
+        const ViewMapping mapping = makeViewMapping(min, max, grid);
+        const float width = mapping.viewportMax.x - mapping.viewportMin.x;
+        const float height = mapping.viewportMax.y - mapping.viewportMin.y;
+        if (width <= 4.0f || height <= 4.0f || grid.width == 0 || grid.height == 0) {
+            return;
+        }
+
+        dl.AddRectFilled(mapping.viewportMin, mapping.viewportMax, IM_COL32(12, 14, 22, 255), 2.0f);
+        dl.PushClipRect(mapping.viewportMin, mapping.viewportMax, true);
+
+        const int stride = std::max(1, mapping.samplingStride);
+        for (std::uint32_t y = 0; y < grid.height; y += static_cast<std::uint32_t>(stride)) {
+            for (std::uint32_t x = 0; x < grid.width; x += static_cast<std::uint32_t>(stride)) {
+                const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(grid.width) + static_cast<std::size_t>(x);
+                const float value = idx < values.size() ? values[idx] : std::numeric_limits<float>::quiet_NaN();
+                ImU32 color = IM_COL32(18, 18, 28, 255);
+                if (std::isfinite(value)) {
+                    const float t = (value - minV) / (maxV - minV);
+                    color = mapColor(t);
+                }
+
+                const ImVec2 a(
+                    mapping.contentMin.x + mapping.cellW * static_cast<float>(x),
+                    mapping.contentMin.y + mapping.cellH * static_cast<float>(y));
+                const ImVec2 b(
+                    a.x + mapping.cellW * static_cast<float>(stride) + 0.75f,
+                    a.y + mapping.cellH * static_cast<float>(stride) + 0.75f);
+                dl.AddRectFilled(a, b, color);
+            }
+        }
+
+        if (visuals_.showGrid && viz_.showCellGrid && mapping.cellW * static_cast<float>(stride) >= 4.0f && mapping.cellH * static_cast<float>(stride) >= 4.0f) {
+            const int alpha = static_cast<int>(std::clamp(visuals_.gridOpacity, 0.0f, 1.0f) * 220.0f);
+            const float thickness = std::max(0.5f, visuals_.gridLineThickness);
+            for (std::uint32_t x = 0; x <= grid.width; x += static_cast<std::uint32_t>(stride)) {
+                const float px = mapping.contentMin.x + mapping.cellW * static_cast<float>(x);
+                dl.AddLine(ImVec2(px, mapping.viewportMin.y), ImVec2(px, mapping.viewportMax.y), IM_COL32(26, 30, 40, alpha), thickness);
+            }
+            for (std::uint32_t y = 0; y <= grid.height; y += static_cast<std::uint32_t>(stride)) {
+                const float py = mapping.contentMin.y + mapping.cellH * static_cast<float>(y);
+                dl.AddLine(ImVec2(mapping.viewportMin.x, py), ImVec2(mapping.viewportMax.x, py), IM_COL32(26, 30, 40, alpha), thickness);
+            }
+        }
+
+        dl.PopClipRect();
+
+        if (visuals_.showBoundary) {
+            const int alpha = static_cast<int>(std::clamp(visuals_.boundaryOpacity, 0.0f, 1.0f) * 255.0f);
+            const float thickness = std::max(0.5f, visuals_.boundaryThickness);
+            dl.AddRect(mapping.viewportMin, mapping.viewportMax, IM_COL32(90, 105, 140, alpha), 2.0f, 0, thickness);
+        }
+        dl.AddText(ImVec2(min.x + 8.0f, min.y + 8.0f), IM_COL32(240, 245, 255, 255), title.c_str());
+
+        if (viz_.showLegend) {
+            const std::string legend = "min=" + std::to_string(minV) + "  max=" + std::to_string(maxV);
+            dl.AddText(ImVec2(min.x + 8.0f, min.y + 26.0f), IM_COL32(210, 220, 245, 255), legend.c_str());
+            if (viz_.showRangeDetails) {
+                const char* modeText =
+                    (viz_.normalizationMode == NormalizationMode::PerFrameAuto) ? "range=frame" :
+                    (viz_.normalizationMode == NormalizationMode::StickyPerField) ? "range=sticky" :
+                    "range=fixed";
+                dl.AddText(ImVec2(min.x + 8.0f, min.y + 44.0f), IM_COL32(180, 200, 240, 230), modeText);
+            }
+        }
+    }
+
+    void drawMixedPanel(
+        ImDrawList& dl,
+        const ImVec2 min,
+        const ImVec2 max,
+        const GridSpec grid,
+        const std::string& pName,
+        const std::string& sName,
+        const std::vector<float>& primary,
+        const std::vector<float>& secondary,
+        const float pMin,
+        const float pMax,
+        const float sMin,
+        const float sMax) const {
+        const ViewMapping mapping = makeViewMapping(min, max, grid);
+        const int stride = std::max(1, mapping.samplingStride);
+
+        dl.AddRectFilled(mapping.viewportMin, mapping.viewportMax, IM_COL32(12, 14, 22, 255), 2.0f);
+        dl.PushClipRect(mapping.viewportMin, mapping.viewportMax, true);
+
+        for (std::uint32_t y = 0; y < grid.height; y += static_cast<std::uint32_t>(stride)) {
+            for (std::uint32_t x = 0; x < grid.width; x += static_cast<std::uint32_t>(stride)) {
+                const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(grid.width) + static_cast<std::size_t>(x);
+                const float pv = idx < primary.size() ? primary[idx] : std::numeric_limits<float>::quiet_NaN();
+                const float sv = idx < secondary.size() ? secondary[idx] : std::numeric_limits<float>::quiet_NaN();
+
+                const float p = std::isfinite(pv) ? std::clamp((pv - pMin) / (pMax - pMin), 0.0f, 1.0f) : 0.0f;
+                const float s = std::isfinite(sv) ? std::clamp((sv - sMin) / (sMax - sMin), 0.0f, 1.0f) : 0.0f;
+
+                const float pTone = applyDisplayTransfer(p, visuals_);
+                const float sTone = applyDisplayTransfer(s, visuals_);
+
+                const float mixA = std::clamp(viz_.secondaryBlend, 0.0f, 1.0f);
+                const int r = static_cast<int>((1.0f - mixA) * pTone * 255.0f + mixA * sTone * 90.0f);
+                const int g = static_cast<int>((1.0f - mixA) * (0.4f + 0.6f * pTone) * 255.0f + mixA * (0.5f + 0.5f * sTone) * 180.0f);
+                const int b = static_cast<int>((1.0f - mixA) * (1.0f - pTone) * 220.0f + mixA * sTone * 255.0f);
+
+                const ImVec2 a(
+                    mapping.contentMin.x + mapping.cellW * static_cast<float>(x),
+                    mapping.contentMin.y + mapping.cellH * static_cast<float>(y));
+                const ImVec2 bRect(
+                    a.x + mapping.cellW * static_cast<float>(stride) + 0.75f,
+                    a.y + mapping.cellH * static_cast<float>(stride) + 0.75f);
+                dl.AddRectFilled(a, bRect, IM_COL32(r, g, b, 255));
+            }
+        }
+
+        dl.PopClipRect();
+
+        if (visuals_.showBoundary) {
+            const int alpha = static_cast<int>(std::clamp(visuals_.boundaryOpacity, 0.0f, 1.0f) * 255.0f);
+            const float thickness = std::max(0.5f, visuals_.boundaryThickness);
+            dl.AddRect(mapping.viewportMin, mapping.viewportMax, IM_COL32(90, 105, 140, alpha), 2.0f, 0, thickness);
+        }
+        const std::string title = "Mixed: " + pName + " + " + sName;
+        dl.AddText(ImVec2(min.x + 8.0f, min.y + 8.0f), IM_COL32(240, 245, 255, 255), title.c_str());
+    }
+
+    void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max, const GridSpec grid) const {
+        const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
+        if (fields.empty()) {
+            return;
+        }
+
+        const auto& xField = fields[static_cast<std::size_t>(viz_.vectorXFieldIndex)];
+        const auto& yField = fields[static_cast<std::size_t>(viz_.vectorYFieldIndex)];
+        std::vector<float> xValues = mergedFieldValues(xField, viz_.showSparseOverlay);
+        std::vector<float> yValues = mergedFieldValues(yField, viz_.showSparseOverlay);
+
+        float xMin = 0.0f;
+        float xMax = 1.0f;
+        float yMin = 0.0f;
+        float yMax = 1.0f;
+        minMaxFinite(xValues, xMin, xMax);
+        minMaxFinite(yValues, yMin, yMax);
+
+        const ViewMapping mapping = makeViewMapping(min, max, grid);
+        const int stride = std::max(std::max(1, viz_.vectorStride), mapping.samplingStride);
+
+        dl.PushClipRect(mapping.viewportMin, mapping.viewportMax, true);
+
+        for (std::uint32_t y = 0; y < grid.height; y += static_cast<std::uint32_t>(stride)) {
+            for (std::uint32_t x = 0; x < grid.width; x += static_cast<std::uint32_t>(stride)) {
+                const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(grid.width) + static_cast<std::size_t>(x);
+                if (idx >= xValues.size() || idx >= yValues.size()) {
+                    continue;
+                }
+                if (!std::isfinite(xValues[idx]) || !std::isfinite(yValues[idx])) {
+                    continue;
+                }
+
+                const float nx = ((xValues[idx] - xMin) / (xMax - xMin) - 0.5f) * 2.0f;
+                const float ny = ((yValues[idx] - yMin) / (yMax - yMin) - 0.5f) * 2.0f;
+
+                const ImVec2 center(
+                    mapping.contentMin.x + (static_cast<float>(x) + 0.5f) * mapping.cellW,
+                    mapping.contentMin.y + (static_cast<float>(y) + 0.5f) * mapping.cellH);
+                const float len = std::min(mapping.cellW, mapping.cellH) * static_cast<float>(stride) * viz_.vectorScale;
+                const ImVec2 tip(center.x + nx * len, center.y + ny * len);
+                dl.AddLine(center, tip, IM_COL32(235, 235, 120, 220), 1.4f);
+            }
+        }
+
+        dl.PopClipRect();
+    }
+
+    void clampVisualizationIndices() {
+        if (viz_.fieldNames.empty()) {
+            viz_.primaryFieldIndex = 0;
+            viz_.secondaryFieldIndex = 0;
+            viz_.vectorXFieldIndex = 0;
+            viz_.vectorYFieldIndex = 0;
+            return;
+        }
+
+        const int maxIndex = static_cast<int>(viz_.fieldNames.size()) - 1;
+        viz_.primaryFieldIndex = std::clamp(viz_.primaryFieldIndex, 0, maxIndex);
+        viz_.secondaryFieldIndex = std::clamp(viz_.secondaryFieldIndex, 0, maxIndex);
+        viz_.vectorXFieldIndex = std::clamp(viz_.vectorXFieldIndex, 0, maxIndex);
+        viz_.vectorYFieldIndex = std::clamp(viz_.vectorYFieldIndex, 0, maxIndex);
+    }
+
+    void refreshFieldNames() {
+        std::string message;
+        std::vector<std::string> names;
+        if (runtime_.fieldNames(names, message) && !names.empty()) {
+            viz_.fieldNames = std::move(names);
+            viz_.stickyRanges.clear();
+            clampVisualizationIndices();
+        } else if (!message.empty()) {
+            std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", message.c_str());
+        }
+    }
+
+    void requestSnapshotRefresh() {
+        snapshotRequestPending_.store(true);
+        viz_.snapshotDirty = true;
+    }
+
+    void startSnapshotWorker() {
+        stopSnapshotWorker();
+
+        snapshotRefreshHzAtomic_.store(std::max(1.0f, viz_.snapshotRefreshHz));
+        snapshotWorkerRunning_.store(true);
+        snapshotRequestPending_.store(true);
+        snapshotWorker_ = std::thread([this]() { snapshotWorkerLoop(); });
+    }
+
+    void stopSnapshotWorker() {
+        snapshotWorkerRunning_.store(false);
+        if (snapshotWorker_.joinable()) {
+            snapshotWorker_.join();
+        }
+    }
+
+    void snapshotWorkerLoop() {
+        using clock = std::chrono::steady_clock;
+        auto nextCapture = clock::now();
+
+        while (snapshotWorkerRunning_.load()) {
+            const float hz = std::max(1.0f, snapshotRefreshHzAtomic_.load());
+            const auto period = std::chrono::duration_cast<clock::duration>(
+                std::chrono::duration<double>(1.0 / static_cast<double>(hz)));
+
+            const auto now = clock::now();
+            const bool forced = snapshotRequestPending_.exchange(false);
+            if (!forced && now < nextCapture) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
+            }
+
+            RuntimeCheckpoint checkpoint;
+            std::string message;
+            const auto captureStart = clock::now();
+            const bool ok = runtime_.captureCheckpoint(checkpoint, message);
+            const float durationMs = static_cast<float>(std::chrono::duration<double, std::milli>(clock::now() - captureStart).count());
+
+            if (ok) {
+                const int currentFront = snapshotFrontIndex_.load();
+                const int back = 1 - currentFront;
+                {
+                    const std::lock_guard<std::mutex> lock(snapshotBufferMutex_);
+                    snapshotBuffers_[static_cast<std::size_t>(back)] = std::move(checkpoint);
+                    snapshotBufferValid_[static_cast<std::size_t>(back)] = true;
+                }
+                snapshotFrontIndex_.store(back);
+                snapshotGeneration_.fetch_add(1);
+                snapshotDurationMsAtomic_.store(durationMs);
+                {
+                    const std::lock_guard<std::mutex> lock(snapshotErrorMutex_);
+                    snapshotWorkerError_.clear();
+                }
+            } else if (!message.empty()) {
+                const std::lock_guard<std::mutex> lock(snapshotErrorMutex_);
+                snapshotWorkerError_ = message;
+            }
+
+            nextCapture = clock::now() + period;
+        }
+    }
+
+    void consumeSnapshotFromWorker() {
+        snapshotRefreshHzAtomic_.store(std::max(1.0f, viz_.snapshotRefreshHz));
+
+        const int generation = snapshotGeneration_.load();
+        if (generation == consumedSnapshotGeneration_) {
+            ++viz_.framesSinceSnapshot;
+        } else {
+            const int front = snapshotFrontIndex_.load();
+            RuntimeCheckpoint checkpoint;
+            bool hasFrame = false;
+            {
+                const std::lock_guard<std::mutex> lock(snapshotBufferMutex_);
+                if (snapshotBufferValid_[static_cast<std::size_t>(front)]) {
+                    checkpoint = snapshotBuffers_[static_cast<std::size_t>(front)];
+                    hasFrame = true;
+                }
+            }
+
+            if (hasFrame) {
+                viz_.cachedCheckpoint = std::move(checkpoint);
+                viz_.hasCachedCheckpoint = true;
+                viz_.snapshotDirty = false;
+                viz_.lastSnapshotTimeSec = glfwGetTime();
+                viz_.lastSnapshotDurationMs = snapshotDurationMsAtomic_.load();
+                viz_.framesSinceSnapshot = 0;
+            }
+
+            consumedSnapshotGeneration_ = generation;
+        }
+
+        std::string error;
+        {
+            const std::lock_guard<std::mutex> lock(snapshotErrorMutex_);
+            error = snapshotWorkerError_;
+        }
+        if (!error.empty()) {
+            std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", error.c_str());
+        } else {
+            viz_.lastRuntimeError[0] = '\0';
+        }
+    }
+
+    void tickAutoRun(const float frameDt) {
+        if (!viz_.autoRun || !runtime_.isRunning() || runtime_.isPaused()) {
+            return;
+        }
+
+        autoRunStepBudget_ += static_cast<double>(std::max(1, viz_.simulationTickHz)) * static_cast<double>(std::max(0.0f, frameDt));
+        const int batch = static_cast<int>(std::floor(autoRunStepBudget_));
+        if (batch <= 0) {
+            return;
+        }
+
+        autoRunStepBudget_ -= static_cast<double>(batch);
+
+        std::string message;
+        if (!runtime_.step(static_cast<std::uint32_t>(std::max(1, viz_.autoStepsPerFrame * batch)), message)) {
+            viz_.autoRun = false;
+            appendLog(message.empty() ? "auto_run_failed" : message);
+            std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", message.c_str());
+            return;
+        }
+        requestSnapshotRefresh();
     }
 
     void drawDockSpace() {
@@ -278,7 +944,11 @@ private:
             StatusBadge(runtime_.isRunning() ? "RUNNING" : "STOPPED", runtime_.isRunning());
             ImGui::SameLine();
             StatusBadge(runtime_.isPaused() ? "PAUSED" : "ACTIVE", !runtime_.isPaused());
-            ImGui::Text("Cockpit UI: ImGui + GLFW + OpenGL 4.5");
+            ImGui::Text("Cockpit UI: ImGui + GLFW + OpenGL");
+            if (viz_.hasCachedCheckpoint) {
+                ImGui::Text("Snapshot step: %llu", static_cast<unsigned long long>(viz_.cachedCheckpoint.stateSnapshot.header.stepIndex));
+                ImGui::Text("Grid: %ux%u", viz_.cachedCheckpoint.stateSnapshot.grid.width, viz_.cachedCheckpoint.stateSnapshot.grid.height);
+            }
         }
         PopSectionTint();
     }
@@ -287,14 +957,18 @@ private:
         PushSectionTint(1);
         if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-            DelayedTooltip("Immediate-mode pipeline metrics.");
+            ImGui::Text("Snapshot Hz target: %.1f", viz_.snapshotRefreshHz);
+            ImGui::Text("Adaptive sampling: %s", viz_.adaptiveSampling ? "on" : "off");
+            ImGui::Text("Snapshot copy time: %.2f ms", viz_.lastSnapshotDurationMs);
+            ImGui::Text("Frames since snapshot: %d", viz_.framesSinceSnapshot);
+            DelayedTooltip("Simulation stepping and snapshot refresh are decoupled for stability and performance.");
         }
         PopSectionTint();
     }
 
     void drawGridSection() {
         PushSectionTint(2);
-        if (ImGui::CollapsingHeader("Grid", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Runtime Configuration", ImGuiTreeNodeFlags_DefaultOpen)) {
             int seed = static_cast<int>(std::min<std::uint64_t>(panel_.seed, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
             if (NumericSliderPairInt("Seed", &seed, 0, kImGuiIntSafeMax)) {
                 panel_.seed = static_cast<std::uint64_t>(seed);
@@ -338,11 +1012,13 @@ private:
 
     void drawToolsSection() {
         PushSectionTint(3);
-        if (ImGui::CollapsingHeader("Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Session Lifecycle", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (PrimaryButton("Start", ImVec2(100, 28))) {
                 std::string message;
                 runtime_.start(message);
                 appendLog(message);
+                refreshFieldNames();
+                requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Play);
             }
             ImGui::SameLine();
@@ -350,6 +1026,7 @@ private:
                 std::string message;
                 runtime_.stop(message);
                 appendLog(message);
+                requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Pause);
             }
             ImGui::SameLine();
@@ -357,6 +1034,8 @@ private:
                 std::string message;
                 runtime_.restart(message);
                 appendLog(message);
+                refreshFieldNames();
+                requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Play);
             }
         }
@@ -365,7 +1044,7 @@ private:
 
     void drawPresetsSection() {
         PushSectionTint(4);
-        if (ImGui::CollapsingHeader("Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Profiles and Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::InputText("Profile", panel_.profileName, sizeof(panel_.profileName));
             if (PrimaryButton("Save Profile", ImVec2(120, 26))) {
                 std::string message;
@@ -378,6 +1057,8 @@ private:
                 runtime_.loadProfile(panel_.profileName, message);
                 appendLog(message);
                 syncPanelFromConfig();
+                refreshFieldNames();
+                requestSnapshotRefresh();
             }
             ImGui::SameLine();
             if (PrimaryButton("List", ImVec2(80, 26))) {
@@ -391,7 +1072,7 @@ private:
 
     void drawSimulationSection() {
         PushSectionTint(5);
-        if (ImGui::CollapsingHeader("Simulation", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Stepping and Playback", ImGuiTreeNodeFlags_DefaultOpen)) {
             NumericSliderPairInt("Step Count", &panel_.stepCount, 1, 1000000);
 
             int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
@@ -403,12 +1084,14 @@ private:
                 std::string message;
                 runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), message);
                 appendLog(message);
+                requestSnapshotRefresh();
             }
             ImGui::SameLine();
             if (PrimaryButton("Run Until", ImVec2(100, 26))) {
                 std::string message;
                 runtime_.runUntil(panel_.runUntilTarget, message);
                 appendLog(message);
+                requestSnapshotRefresh();
             }
             ImGui::SameLine();
             if (PrimaryButton("Pause", ImVec2(80, 26))) {
@@ -422,6 +1105,7 @@ private:
                 std::string message;
                 runtime_.resume(message);
                 appendLog(message);
+                requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Play);
             }
         }
@@ -430,7 +1114,7 @@ private:
 
     void drawForceFieldsSection() {
         PushSectionTint(6);
-        if (ImGui::CollapsingHeader("Force Fields", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Physics: Force Fields", ImGuiTreeNodeFlags_DefaultOpen)) {
             NumericSliderPair("Force Scale", &panel_.forceFieldScale, 0.0f, 10.0f, "%.2f");
             NumericSliderPair("Damping", &panel_.forceFieldDamping, 0.0f, 1.0f, "%.3f");
         }
@@ -439,7 +1123,7 @@ private:
 
     void drawParticlePropertiesSection() {
         PushSectionTint(7);
-        if (ImGui::CollapsingHeader("Particle Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Physics: Particle Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
             NumericSliderPair("Mobility", &panel_.particleMobility, 0.0f, 1.0f, "%.3f");
             NumericSliderPair("Cohesion", &panel_.particleCohesion, 0.0f, 1.0f, "%.3f");
         }
@@ -448,7 +1132,7 @@ private:
 
     void drawConstraintsSection() {
         PushSectionTint(8);
-        if (ImGui::CollapsingHeader("Constraints", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Physics: Constraints", ImGuiTreeNodeFlags_DefaultOpen)) {
             NumericSliderPair("Rigidity", &panel_.constraintRigidity, 0.0f, 1.0f, "%.3f");
             NumericSliderPair("Tolerance", &panel_.constraintTolerance, 0.0f, 1.0f, "%.3f");
         }
@@ -458,15 +1142,18 @@ private:
     void drawDisplaySection() {
         PushSectionTint(9);
         if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextUnformatted("Viewport Transform");
             NumericSliderPair("Zoom", &visuals_.zoom, 0.1f, 5.0f, "%.2f");
-            NumericSliderPair("Pan X", &visuals_.panX, -1000.0f, 1000.0f, "%.1f");
-            NumericSliderPair("Pan Y", &visuals_.panY, -1000.0f, 1000.0f, "%.1f");
+            DelayedTooltip("Zoom is applied while preserving simulation aspect ratio (no stretching).");
+            NumericSliderPair("Pan X (px)", &visuals_.panX, -2000.0f, 2000.0f, "%.1f");
+            NumericSliderPair("Pan Y (px)", &visuals_.panY, -2000.0f, 2000.0f, "%.1f");
             NumericSliderPair("Brightness", &visuals_.brightness, 0.1f, 3.0f, "%.2f");
             NumericSliderPair("Contrast", &visuals_.contrast, 0.1f, 3.0f, "%.2f");
             NumericSliderPair("Gamma", &visuals_.gamma, 0.2f, 3.0f, "%.2f");
             ImGui::Checkbox("Invert Colors", &visuals_.invertColors);
 
             ImGui::Separator();
+            ImGui::TextUnformatted("Grid and Boundary Overlays");
             ImGui::Checkbox("Show Grid", &visuals_.showGrid);
             if (visuals_.showGrid) {
                 NumericSliderPair("Grid Opacity", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f");
@@ -482,13 +1169,151 @@ private:
                     visuals_.boundaryAnimate = false;
                 }
             }
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Field Composition");
+
+            static constexpr std::array<const char*, 4> modeNames = {
+                "Single Field",
+                "Side-by-Side (Vertical)",
+                "Side-by-Side (Horizontal)",
+                "Mixed Overlay"
+            };
+            int mode = static_cast<int>(viz_.mode);
+            if (ImGui::Combo("Display Mode", &mode, modeNames.data(), static_cast<int>(modeNames.size()))) {
+                viz_.mode = static_cast<DisplayMode>(std::clamp(mode, 0, static_cast<int>(modeNames.size()) - 1));
+            }
+
+            static constexpr std::array<const char*, 3> normalizationNames = {
+                "Per-frame auto",
+                "Sticky per-field",
+                "Fixed manual range"
+            };
+            int normalization = static_cast<int>(viz_.normalizationMode);
+            if (ImGui::Combo("Normalization", &normalization, normalizationNames.data(), static_cast<int>(normalizationNames.size()))) {
+                viz_.normalizationMode = static_cast<NormalizationMode>(std::clamp(normalization, 0, static_cast<int>(normalizationNames.size()) - 1));
+            }
+
+            static constexpr std::array<const char*, 3> colorMapNames = {
+                "Turbo",
+                "Grayscale",
+                "Diverging"
+            };
+            int colorMap = static_cast<int>(viz_.colorMapMode);
+            if (ImGui::Combo("Color Map", &colorMap, colorMapNames.data(), static_cast<int>(colorMapNames.size()))) {
+                viz_.colorMapMode = static_cast<ColorMapMode>(std::clamp(colorMap, 0, static_cast<int>(colorMapNames.size()) - 1));
+            }
+
+            if (viz_.normalizationMode == NormalizationMode::FixedManual) {
+                NumericSliderPair("Fixed Min", &viz_.fixedRangeMin, -10.0f, 10.0f, "%.3f");
+                NumericSliderPair("Fixed Max", &viz_.fixedRangeMax, -10.0f, 10.0f, "%.3f");
+            }
+
+            if (PrimaryButton("Reset Sticky Ranges", ImVec2(170.0f, 24.0f))) {
+                viz_.stickyRanges.clear();
+            }
+            ImGui::SameLine();
+            ImGui::Checkbox("Show range details", &viz_.showRangeDetails);
+
+            if (PrimaryButton("Refresh Field List", ImVec2(160.0f, 24.0f))) {
+                refreshFieldNames();
+            }
+            ImGui::SameLine();
+            ImGui::Text("%d fields", static_cast<int>(viz_.fieldNames.size()));
+
+            if (!viz_.fieldNames.empty()) {
+                clampVisualizationIndices();
+                if (ImGui::BeginCombo("Primary Field", viz_.fieldNames[static_cast<std::size_t>(viz_.primaryFieldIndex)].c_str())) {
+                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        const bool selected = (viz_.primaryFieldIndex == i);
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
+                            viz_.primaryFieldIndex = i;
+                        }
+                        if (selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                if (ImGui::BeginCombo("Secondary Field", viz_.fieldNames[static_cast<std::size_t>(viz_.secondaryFieldIndex)].c_str())) {
+                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        const bool selected = (viz_.secondaryFieldIndex == i);
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
+                            viz_.secondaryFieldIndex = i;
+                        }
+                        if (selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                if (ImGui::BeginCombo("Vector X", viz_.fieldNames[static_cast<std::size_t>(viz_.vectorXFieldIndex)].c_str())) {
+                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        const bool selected = (viz_.vectorXFieldIndex == i);
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
+                            viz_.vectorXFieldIndex = i;
+                        }
+                        if (selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                if (ImGui::BeginCombo("Vector Y", viz_.fieldNames[static_cast<std::size_t>(viz_.vectorYFieldIndex)].c_str())) {
+                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        const bool selected = (viz_.vectorYFieldIndex == i);
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
+                            viz_.vectorYFieldIndex = i;
+                        }
+                        if (selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Live Runtime Update Policy");
+            ImGui::Checkbox("Auto-run simulation", &viz_.autoRun);
+            NumericSliderPairInt("Steps / tick", &viz_.autoStepsPerFrame, 1, 128);
+            NumericSliderPairInt("Simulation tick Hz", &viz_.simulationTickHz, 1, 240);
+            NumericSliderPair("Snapshot refresh Hz", &viz_.snapshotRefreshHz, 1.0f, 120.0f, "%.1f");
+            if (PrimaryButton("Force Snapshot Refresh", ImVec2(190.0f, 24.0f))) {
+                requestSnapshotRefresh();
+            }
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Rendering Performance");
+            ImGui::Checkbox("Adaptive sampling", &viz_.adaptiveSampling);
+            NumericSliderPairInt("Manual sampling stride", &viz_.manualSamplingStride, 1, 64);
+            NumericSliderPairInt("Max rendered cells", &viz_.maxRenderedCells, 1000, 2000000);
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Vector and Overlay Composition");
+            ImGui::Checkbox("Show cell grid", &viz_.showCellGrid);
+            ImGui::Checkbox("Show legend", &viz_.showLegend);
+            ImGui::Checkbox("Show vector field", &viz_.showVectorField);
+            ImGui::Checkbox("Show overlay entries", &viz_.showSparseOverlay);
+
+            NumericSliderPair("Mixed Blend", &viz_.secondaryBlend, 0.0f, 1.0f, "%.2f");
+            NumericSliderPairInt("Vector stride", &viz_.vectorStride, 1, 32);
+            NumericSliderPair("Vector scale", &viz_.vectorScale, 0.05f, 2.0f, "%.2f");
+
+            if (viz_.lastRuntimeError[0] != '\0') {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.45f, 1.0f), "Runtime notice: %s", viz_.lastRuntimeError);
+            }
         }
         PopSectionTint();
     }
 
     void drawAnalysisSection() {
         PushSectionTint(0);
-        if (ImGui::CollapsingHeader("Analysis", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Analysis and Diagnostics", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (PrimaryButton("Status", ImVec2(90, 26))) {
                 std::string message;
                 runtime_.status(message);
@@ -602,6 +1427,7 @@ private:
                << " tier=" << toString(config.tier)
                << " temporal=" << app::temporalPolicyToString(config.temporalPolicy);
         appendLog(output.str());
+        requestSnapshotRefresh();
     }
 
     void triggerOverlay(const OverlayIcon icon) {
@@ -621,8 +1447,25 @@ private:
     AccessibilityConfig accessibility_{};
     PanelState panel_{};
     VisualParams visuals_{};
+    VisualizationState viz_{};
     OverlayState overlay_{};
     std::vector<std::string> logs_;
+
+    std::thread snapshotWorker_;
+    std::atomic<bool> snapshotWorkerRunning_{false};
+    std::atomic<bool> snapshotRequestPending_{true};
+    std::atomic<float> snapshotRefreshHzAtomic_{12.0f};
+    std::atomic<float> snapshotDurationMsAtomic_{0.0f};
+    std::atomic<int> snapshotFrontIndex_{0};
+    std::atomic<int> snapshotGeneration_{0};
+    int consumedSnapshotGeneration_ = 0;
+    std::array<RuntimeCheckpoint, 2> snapshotBuffers_{};
+    std::array<bool, 2> snapshotBufferValid_{false, false};
+    std::mutex snapshotBufferMutex_;
+    std::mutex snapshotErrorMutex_;
+    std::string snapshotWorkerError_;
+
+    double autoRunStepBudget_ = 0.0;
     RuntimeService runtime_;
 };
 

@@ -12,7 +12,7 @@ namespace ws::app {
 
 struct LaunchConfig {
     std::uint64_t seed = 42;
-    GridSpec grid{32, 16};
+    GridSpec grid{128, 128};
     ModelTier tier = ModelTier::A;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
 };

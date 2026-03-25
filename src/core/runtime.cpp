@@ -3,6 +3,7 @@
 #include "ws/core/determinism.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <random>
@@ -93,11 +94,69 @@ void Runtime::start() {
         DeterministicRngFactory rngFactory(config_.seed);
         auto bootstrapStream = rngFactory.createStream("runtime.seed.bootstrap_marker");
         std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
+        std::uniform_real_distribution<float> signedNoise(-1.0f, 1.0f);
         {
-            StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {"seed_probe"});
+            StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {
+                "terrain_elevation_h",
+                "surface_water_w",
+                "temperature_T",
+                "humidity_q",
+                "wind_u",
+                "climate_index_c",
+                "fertility_phi",
+                "vegetation_v",
+                "resource_stock_r",
+                "event_signal_e",
+                "event_water_delta",
+                "event_temperature_delta",
+                "bootstrap_marker",
+                "seed_probe"});
+
+            const float centerX = static_cast<float>(config_.grid.width - 1) * 0.5f;
+            const float centerY = static_cast<float>(config_.grid.height - 1) * 0.5f;
+            const float invW = 1.0f / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.width - 1));
+            const float invH = 1.0f / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.height - 1));
+
             for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
                 for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
-                    seedWriter.setScalar("seed_probe", Cell{x, y}, distribution(bootstrapStream));
+                    const float nx = static_cast<float>(x) * invW;
+                    const float ny = static_cast<float>(y) * invH;
+
+                    const float dx = static_cast<float>(x) - centerX;
+                    const float dy = static_cast<float>(y) - centerY;
+                    const float radius = std::sqrt((dx * dx) + (dy * dy)) /
+                        std::max(1.0f, std::sqrt(centerX * centerX + centerY * centerY));
+
+                    const float waveA = std::sin(6.2831853f * nx) * std::cos(6.2831853f * ny);
+                    const float waveB = std::sin(12.5663706f * (nx + ny));
+                    const float randomU = distribution(bootstrapStream);
+                    const float randomSigned = signedNoise(bootstrapStream);
+
+                    const float elevation = 0.35f + 0.35f * waveA + 0.20f * waveB - 0.30f * radius + 0.10f * randomSigned;
+                    const float water = std::clamp(0.75f - elevation + 0.10f * randomSigned, 0.0f, 1.0f);
+                    const float temperature = std::clamp(0.30f + 0.60f * (1.0f - ny) + 0.12f * waveA + 0.06f * randomSigned, 0.0f, 1.0f);
+                    const float humidity = std::clamp(0.35f + 0.45f * water + 0.15f * std::sin(9.0f * nx), 0.0f, 1.0f);
+                    const float wind = std::clamp(0.5f + 0.45f * std::sin(6.2831853f * ny) - 0.20f * std::cos(6.2831853f * nx), 0.0f, 1.0f);
+                    const float climate = std::clamp(0.5f * (temperature + humidity), 0.0f, 1.0f);
+                    const float fertility = std::clamp(0.30f + 0.50f * (1.0f - std::abs(elevation - 0.35f)) + 0.10f * randomSigned, 0.0f, 1.0f);
+                    const float vegetation = std::clamp(0.25f + 0.55f * fertility * humidity, 0.0f, 1.0f);
+                    const float resources = std::clamp(0.20f + 0.50f * vegetation + 0.20f * water + 0.10f * randomU, 0.0f, 1.0f);
+                    const float eventSignal = std::clamp(0.5f + 0.45f * std::sin(15.0f * radius + 4.0f * nx), 0.0f, 1.0f);
+
+                    seedWriter.setScalar("terrain_elevation_h", Cell{x, y}, elevation);
+                    seedWriter.setScalar("surface_water_w", Cell{x, y}, water);
+                    seedWriter.setScalar("temperature_T", Cell{x, y}, temperature);
+                    seedWriter.setScalar("humidity_q", Cell{x, y}, humidity);
+                    seedWriter.setScalar("wind_u", Cell{x, y}, wind);
+                    seedWriter.setScalar("climate_index_c", Cell{x, y}, climate);
+                    seedWriter.setScalar("fertility_phi", Cell{x, y}, fertility);
+                    seedWriter.setScalar("vegetation_v", Cell{x, y}, vegetation);
+                    seedWriter.setScalar("resource_stock_r", Cell{x, y}, resources);
+                    seedWriter.setScalar("event_signal_e", Cell{x, y}, eventSignal);
+                    seedWriter.setScalar("event_water_delta", Cell{x, y}, 0.0f);
+                    seedWriter.setScalar("event_temperature_delta", Cell{x, y}, 0.0f);
+                    seedWriter.setScalar("bootstrap_marker", Cell{x, y}, randomU);
+                    seedWriter.setScalar("seed_probe", Cell{x, y}, randomU);
                 }
             }
         }

@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,8 @@ public:
     bool metrics(std::string& message) const;
     bool listFields(std::string& message) const;
     bool summarizeField(const std::string& variableName, std::string& message) const;
+    bool captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message) const;
+    bool fieldNames(std::vector<std::string>& names, std::string& message) const;
 
     bool createCheckpoint(const std::string& label, std::string& message);
     bool restoreCheckpoint(const std::string& label, std::string& message);
@@ -50,6 +53,7 @@ private:
     std::unique_ptr<Runtime> runtime_;
     std::map<std::string, RuntimeCheckpoint, std::less<>> checkpoints_;
     app::ProfileStore profileStore_{};
+    mutable std::recursive_mutex mutex_;
 };
 
 } // namespace ws::gui

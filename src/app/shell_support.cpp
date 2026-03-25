@@ -124,9 +124,9 @@ RuntimeConfig makeRuntimeConfig(const LaunchConfig& launchConfig) {
 
 const std::vector<LaunchPreset>& allPresets() {
     static const std::vector<LaunchPreset> presets = {
-        {"baseline", LaunchConfig{42, GridSpec{32, 16}, ModelTier::A, TemporalPolicy::UniformA}, "Balanced default deterministic setup"},
-        {"phased_b", LaunchConfig{777, GridSpec{48, 24}, ModelTier::B, TemporalPolicy::PhasedB}, "Intermediate coupling with phased policy"},
-        {"dense_c", LaunchConfig{2026, GridSpec{64, 32}, ModelTier::C, TemporalPolicy::MultiRateC}, "Advanced coupling stress-oriented profile"}
+        {"baseline", LaunchConfig{42, GridSpec{128, 128}, ModelTier::A, TemporalPolicy::UniformA}, "Balanced default deterministic setup (square high-context grid)"},
+        {"phased_b", LaunchConfig{777, GridSpec{160, 160}, ModelTier::B, TemporalPolicy::PhasedB}, "Intermediate coupling with phased policy"},
+        {"dense_c", LaunchConfig{2026, GridSpec{192, 192}, ModelTier::C, TemporalPolicy::MultiRateC}, "Advanced coupling stress-oriented profile"}
     };
     return presets;
 }
