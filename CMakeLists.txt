@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(ws_core
     src/core/profile_resolver.cpp
     src/core/interactions.cpp
+    src/core/observability.cpp
+    src/core/replay.cpp
     src/core/run_signature.cpp
     src/core/scheduler.cpp
     src/core/state_store.cpp
@@ -52,3 +54,8 @@ add_executable(advanced_coupling_test tests/advanced_coupling.cpp)
 target_link_libraries(advanced_coupling_test PRIVATE ws_core)
 
 add_test(NAME advanced_coupling_test COMMAND advanced_coupling_test)
+
+add_executable(control_replay_test tests/control_replay.cpp)
+target_link_libraries(control_replay_test PRIVATE ws_core)
+
+add_test(NAME control_replay_test COMMAND control_replay_test)

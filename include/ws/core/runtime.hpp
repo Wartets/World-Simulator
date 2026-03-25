@@ -1,12 +1,14 @@
 #pragma once
 
 #include "ws/core/interactions.hpp"
+#include "ws/core/observability.hpp"
 #include "ws/core/profile.hpp"
 #include "ws/core/run_signature.hpp"
 #include "ws/core/scheduler.hpp"
 #include "ws/core/state_store.hpp"
 
 #include <deque>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -40,6 +42,12 @@ struct RuntimeEvent {
     std::vector<ScalarWritePatch> scalarPatches;
 };
 
+struct RuntimeEventRecord {
+    std::uint64_t stepIndex = 0;
+    std::uint64_t ordinalInStep = 0;
+    RuntimeEvent event;
+};
+
 struct RuntimeSnapshot {
     RunSignature runSignature;
     std::uint64_t stateHash = 0;
@@ -71,21 +79,38 @@ public:
     explicit Runtime(RuntimeConfig config);
 
     void registerSubsystem(std::shared_ptr<ISubsystem> subsystem);
+    void selectProfile(ProfileResolverInput profileInput);
+    void updateGuardrailPolicy(NumericGuardrailPolicy guardrailPolicy);
     void start();
+    void pause();
+    void resume();
     void step();
+    void controlledStep(std::uint32_t stepCount);
     void stop();
     void queueInput(RuntimeInputFrame inputFrame);
     void enqueueEvent(RuntimeEvent event);
     [[nodiscard]] RuntimeCheckpoint createCheckpoint(const std::string& label) const;
     void loadCheckpoint(const RuntimeCheckpoint& checkpoint);
+    void resetToCheckpoint(const RuntimeCheckpoint& checkpoint);
 
     [[nodiscard]] RuntimeStatus status() const noexcept { return status_; }
+    [[nodiscard]] bool paused() const noexcept { return paused_; }
     [[nodiscard]] const RuntimeSnapshot& snapshot() const noexcept { return snapshot_; }
     [[nodiscard]] const StepDiagnostics& lastStepDiagnostics() const noexcept { return lastStepDiagnostics_; }
+    [[nodiscard]] const std::vector<RuntimeEventRecord>& eventChronology() const noexcept { return eventChronology_; }
+    [[nodiscard]] const std::vector<TraceRecord>& traceRecords() const noexcept { return observability_.records(); }
+    [[nodiscard]] RuntimeMetrics metrics() const noexcept { return observability_.metrics(); }
     [[nodiscard]] const AdmissionReport& admissionReport() const;
 
 private:
     void allocateCanonicalFields();
+    void stepImpl(bool controlledByRuntimeControl);
+    void trace(
+        TraceChannel channel,
+        std::string name,
+        std::string detail,
+        std::uint64_t payloadFingerprint = 0,
+        std::uint64_t stepIndexOverride = std::numeric_limits<std::uint64_t>::max());
     [[nodiscard]] std::uint64_t applyInputFrame(const RuntimeInputFrame& inputFrame);
     [[nodiscard]] std::uint64_t applyEvent(const RuntimeEvent& event, std::uint64_t eventOrdinal);
     [[nodiscard]] static std::vector<std::string> collectWritableVariables(const std::vector<ScalarWritePatch>& patches);
@@ -100,9 +125,14 @@ private:
     ModelProfile resolvedProfile_;
     StateStore stateStore_;
     Scheduler scheduler_;
+    NumericGuardrailPolicy runtimeGuardrailPolicy_{};
     RuntimeSnapshot snapshot_;
+    bool paused_ = false;
+    std::uint64_t traceSequence_ = 0;
     std::deque<RuntimeInputFrame> pendingInputs_;
     std::deque<RuntimeEvent> pendingEvents_;
+    std::vector<RuntimeEventRecord> eventChronology_;
+    ObservabilityPipeline observability_;
     StepDiagnostics lastStepDiagnostics_{};
 };
 

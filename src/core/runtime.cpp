@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <utility>
@@ -21,6 +22,7 @@ std::string tierToString(const ModelTier tier) {
 Runtime::Runtime(RuntimeConfig config)
     : config_(std::move(config)),
     stateStore_(config_.grid, config_.boundaryMode, config_.topologyBackend, config_.memoryLayoutPolicy),
+    runtimeGuardrailPolicy_(config_.guardrailPolicy),
       snapshot_{RunSignature(
                     0,
                     "placeholder",
@@ -46,6 +48,27 @@ void Runtime::registerSubsystem(std::shared_ptr<ISubsystem> subsystem) {
     scheduler_.registerSubsystem(std::move(subsystem));
 }
 
+void Runtime::selectProfile(ProfileResolverInput profileInput) {
+    if (status_ != RuntimeStatus::Created && status_ != RuntimeStatus::Terminated) {
+        throw std::runtime_error("Profile selection is only allowed in Created or Terminated state");
+    }
+    config_.profileInput = std::move(profileInput);
+    trace(
+        TraceChannel::Configuration,
+        "runtime.config.profile_selected",
+        "profile resolver input updated",
+        DeterministicHash::hashPod(config_.profileInput.requestedSubsystemTiers.size()));
+}
+
+void Runtime::updateGuardrailPolicy(NumericGuardrailPolicy guardrailPolicy) {
+    runtimeGuardrailPolicy_ = std::move(guardrailPolicy);
+    trace(
+        TraceChannel::Configuration,
+        "runtime.config.guardrails_updated",
+        "numeric guardrail policy updated",
+        DeterministicHash::hashPod(runtimeGuardrailPolicy_.maxAbsDeltaPerStep));
+}
+
 void Runtime::start() {
     if (status_ != RuntimeStatus::Created) {
         throw std::runtime_error("Runtime start can only be called from Created state");
@@ -53,6 +76,7 @@ void Runtime::start() {
 
     try {
         resolvedProfile_ = profileResolver_.resolve(config_.profileInput);
+        paused_ = false;
 
         admissionReport_ = interactionCoordinator_.buildAdmissionReport(
             resolvedProfile_,
@@ -109,6 +133,13 @@ void Runtime::start() {
             .activeSubsystemSetHash = subsystemHash,
             .profile = resolvedProfile_});
 
+        trace(
+            TraceChannel::Configuration,
+            "runtime.start",
+            "runtime admitted and started",
+            admissionReport_.fingerprint,
+            0);
+
         header.status = RuntimeStatus::Running;
         stateStore_.setHeader(header);
         snapshot_.stateHeader = stateStore_.header();
@@ -133,6 +164,51 @@ void Runtime::step() {
     if (status_ != RuntimeStatus::Running) {
         throw std::runtime_error("Runtime step requires Running state");
     }
+    if (paused_) {
+        throw std::runtime_error("Runtime is paused; use control surface stepping");
+    }
+
+    stepImpl(false);
+}
+
+void Runtime::pause() {
+    if (status_ != RuntimeStatus::Running) {
+        throw std::runtime_error("Runtime pause requires Running state");
+    }
+    paused_ = true;
+    trace(TraceChannel::Control, "control.pause", "runtime paused");
+}
+
+void Runtime::resume() {
+    if (status_ != RuntimeStatus::Running) {
+        throw std::runtime_error("Runtime resume requires Running state");
+    }
+    paused_ = false;
+    trace(TraceChannel::Control, "control.resume", "runtime resumed");
+}
+
+void Runtime::controlledStep(const std::uint32_t stepCount) {
+    if (status_ != RuntimeStatus::Running) {
+        throw std::runtime_error("Controlled stepping requires Running state");
+    }
+    if (stepCount == 0) {
+        return;
+    }
+
+    trace(
+        TraceChannel::Control,
+        "control.step",
+        "runtime controlled stepping",
+        DeterministicHash::hashPod(stepCount));
+    for (std::uint32_t i = 0; i < stepCount; ++i) {
+        stepImpl(true);
+    }
+}
+
+void Runtime::stepImpl(const bool controlledByRuntimeControl) {
+    if (status_ != RuntimeStatus::Running) {
+        throw std::runtime_error("Runtime step requires Running state");
+    }
 
     StepDiagnostics diagnostics;
     diagnostics.orderingLog.push_back("pipeline:input_ingest");
@@ -145,9 +221,14 @@ void Runtime::step() {
     diagnostics.orderingLog.push_back("pipeline:event_queue_apply");
     std::uint64_t eventOrdinal = 0;
     while (!pendingEvents_.empty()) {
-        diagnostics.eventPatchesApplied += applyEvent(pendingEvents_.front(), eventOrdinal);
+        RuntimeEvent event = pendingEvents_.front();
+        diagnostics.eventPatchesApplied += applyEvent(event, eventOrdinal);
         diagnostics.eventsApplied += 1;
         pendingEvents_.pop_front();
+        eventChronology_.push_back(RuntimeEventRecord{
+            stateStore_.header().stepIndex,
+            eventOrdinal,
+            std::move(event)});
         eventOrdinal += 1;
     }
 
@@ -155,7 +236,7 @@ void Runtime::step() {
         stateStore_,
         resolvedProfile_,
         config_.temporalPolicy,
-        config_.guardrailPolicy,
+        runtimeGuardrailPolicy_,
         stateStore_.header().stepIndex);
     scheduler_.validateObservedDataFlow();
 
@@ -183,11 +264,25 @@ void Runtime::step() {
         resolvedProfile_.fingerprint(),
         "runtime_step")
                                  .payloadBytes;
+
+    trace(
+        TraceChannel::Scheduler,
+        "runtime.step.commit",
+        controlledByRuntimeControl ? "controlled_step" : "free_step",
+        snapshot_.stateHash,
+        header.stepIndex);
 }
 
 void Runtime::queueInput(RuntimeInputFrame inputFrame) {
     if (status_ != RuntimeStatus::Running) {
         throw std::runtime_error("Runtime input queue requires Running state");
+    }
+    for (const auto& patch : inputFrame.scalarPatches) {
+        trace(
+            TraceChannel::Input,
+            "runtime.input.patch.queued",
+            "input patch queued for variable=" + patch.variableName,
+            DeterministicHash::hashString(patch.variableName));
     }
     pendingInputs_.push_back(std::move(inputFrame));
 }
@@ -196,6 +291,11 @@ void Runtime::enqueueEvent(RuntimeEvent event) {
     if (status_ != RuntimeStatus::Running) {
         throw std::runtime_error("Runtime event queue requires Running state");
     }
+    trace(
+        TraceChannel::Event,
+        "runtime.event.queued",
+        "runtime event queued name=" + event.eventName,
+        DeterministicHash::hashString(event.eventName));
     pendingEvents_.push_back(std::move(event));
 }
 
@@ -221,6 +321,7 @@ void Runtime::stop() {
         resolvedProfile_.fingerprint(),
         "runtime_stop")
                                  .payloadBytes;
+    trace(TraceChannel::Control, "runtime.stop", "runtime terminated", snapshot_.stateHash);
     status_ = RuntimeStatus::Terminated;
 }
 
@@ -230,13 +331,14 @@ RuntimeCheckpoint Runtime::createCheckpoint(const std::string& label) const {
     }
 
     const std::uint64_t profileFingerprint = resolvedProfile_.fingerprint();
-    return RuntimeCheckpoint{
+    RuntimeCheckpoint checkpoint{
         snapshot_.runSignature,
         profileFingerprint,
         stateStore_.createSnapshot(
             snapshot_.runSignature.identityHash(),
             profileFingerprint,
             label)};
+    return checkpoint;
 }
 
 void Runtime::loadCheckpoint(const RuntimeCheckpoint& checkpoint) {
@@ -261,6 +363,25 @@ void Runtime::loadCheckpoint(const RuntimeCheckpoint& checkpoint) {
     snapshot_.stateHash = stateStore_.stateHash();
     snapshot_.reproducibilityClass = admissionReport_.reproducibilityClass;
     snapshot_.payloadBytes = checkpoint.stateSnapshot.payloadBytes;
+
+    trace(
+        TraceChannel::Replay,
+        "runtime.checkpoint.loaded",
+        "checkpoint loaded label=" + checkpoint.stateSnapshot.checkpointLabel,
+        checkpoint.stateSnapshot.stateHash,
+        checkpoint.stateSnapshot.header.stepIndex);
+}
+
+void Runtime::resetToCheckpoint(const RuntimeCheckpoint& checkpoint) {
+    trace(
+        TraceChannel::Control,
+        "control.reset",
+        "runtime reset requested",
+        checkpoint.stateSnapshot.stateHash,
+        checkpoint.stateSnapshot.header.stepIndex);
+    loadCheckpoint(checkpoint);
+    pendingInputs_.clear();
+    pendingEvents_.clear();
 }
 
 void Runtime::allocateCanonicalFields() {
@@ -319,6 +440,13 @@ std::uint64_t Runtime::applyEvent(const RuntimeEvent& event, const std::uint64_t
         eventWriter.setScalar(patch.variableName, patch.cell, patch.value);
     }
 
+    trace(
+        TraceChannel::Event,
+        "runtime.event.applied",
+        owner,
+        DeterministicHash::hashPod(eventOrdinal),
+        stateStore_.header().stepIndex);
+
     return static_cast<std::uint64_t>(event.scalarPatches.size());
 }
 
@@ -350,6 +478,27 @@ const AdmissionReport& Runtime::admissionReport() const {
         throw std::runtime_error("Runtime admission report is not available before successful start");
     }
     return admissionReport_;
+}
+
+void Runtime::trace(
+    const TraceChannel channel,
+    std::string name,
+    std::string detail,
+    const std::uint64_t payloadFingerprint,
+    const std::uint64_t stepIndexOverride) {
+    const std::uint64_t stepIndex =
+        (stepIndexOverride == std::numeric_limits<std::uint64_t>::max())
+            ? stateStore_.header().stepIndex
+            : stepIndexOverride;
+    observability_.record(TraceRecord{
+        traceSequence_++,
+        snapshot_.runSignature.identityHash(),
+        resolvedProfile_.fingerprint(),
+        stepIndex,
+        channel,
+        std::move(name),
+        std::move(detail),
+        payloadFingerprint});
 }
 
 } // namespace ws
