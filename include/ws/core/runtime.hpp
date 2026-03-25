@@ -5,6 +5,7 @@
 #include "ws/core/scheduler.hpp"
 #include "ws/core/state_store.hpp"
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,7 +20,23 @@ struct RuntimeConfig {
     MemoryLayoutPolicy memoryLayoutPolicy{};
     UnitRegime unitRegime = UnitRegime::Normalized;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
+    NumericGuardrailPolicy guardrailPolicy{};
     ProfileResolverInput profileInput{};
+};
+
+struct ScalarWritePatch {
+    std::string variableName;
+    Cell cell;
+    float value = 0.0f;
+};
+
+struct RuntimeInputFrame {
+    std::vector<ScalarWritePatch> scalarPatches;
+};
+
+struct RuntimeEvent {
+    std::string eventName;
+    std::vector<ScalarWritePatch> scalarPatches;
 };
 
 struct RuntimeSnapshot {
@@ -54,14 +71,20 @@ public:
     void start();
     void step();
     void stop();
+    void queueInput(RuntimeInputFrame inputFrame);
+    void enqueueEvent(RuntimeEvent event);
     [[nodiscard]] RuntimeCheckpoint createCheckpoint(const std::string& label) const;
     void loadCheckpoint(const RuntimeCheckpoint& checkpoint);
 
     [[nodiscard]] RuntimeStatus status() const noexcept { return status_; }
     [[nodiscard]] const RuntimeSnapshot& snapshot() const noexcept { return snapshot_; }
+    [[nodiscard]] const StepDiagnostics& lastStepDiagnostics() const noexcept { return lastStepDiagnostics_; }
 
 private:
     void allocateCanonicalFields();
+    [[nodiscard]] std::uint64_t applyInputFrame(const RuntimeInputFrame& inputFrame);
+    [[nodiscard]] std::uint64_t applyEvent(const RuntimeEvent& event, std::uint64_t eventOrdinal);
+    [[nodiscard]] static std::vector<std::string> collectWritableVariables(const std::vector<ScalarWritePatch>& patches);
     [[nodiscard]] static std::string stableHashForStringSet(const std::vector<std::string>& orderedValues);
 
     RuntimeConfig config_;
@@ -72,6 +95,9 @@ private:
     StateStore stateStore_;
     Scheduler scheduler_;
     RuntimeSnapshot snapshot_;
+    std::deque<RuntimeInputFrame> pendingInputs_;
+    std::deque<RuntimeEvent> pendingEvents_;
+    StepDiagnostics lastStepDiagnostics_{};
 };
 
 } // namespace ws

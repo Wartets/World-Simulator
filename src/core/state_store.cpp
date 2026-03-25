@@ -1,6 +1,7 @@
 #include "ws/core/state_store.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 
@@ -157,6 +158,19 @@ bool StateStore::hasField(const std::string& name) const noexcept {
     return scalarFields_.find(name) != scalarFields_.end();
 }
 
+std::vector<std::string> StateStore::variableNames() const {
+    std::vector<std::string> names;
+    names.reserve(variableOrder_.size());
+    for (const auto& variable : variableOrder_) {
+        names.push_back(variable.name);
+    }
+    return names;
+}
+
+std::uint64_t StateStore::logicalCellCount(const std::string& name) const {
+    return fieldForRead(name).logicalCellCount;
+}
+
 const std::vector<float>& StateStore::scalarField(const std::string& name) const {
     return fieldForRead(name).values;
 }
@@ -227,6 +241,17 @@ std::uint64_t StateStore::indexOf(const CellSigned cell) const {
     return indexOf(resolveBoundary(cell));
 }
 
+Cell StateStore::cellFromIndex(const std::uint64_t index) const {
+    const std::uint64_t totalCells = grid_.cellCount();
+    if (index >= totalCells) {
+        throw std::out_of_range("Cell index out of range");
+    }
+
+    const std::uint32_t x = static_cast<std::uint32_t>(index % grid_.width);
+    const std::uint32_t y = static_cast<std::uint32_t>(index / grid_.width);
+    return Cell{x, y};
+}
+
 StateStore::ScalarFieldStorage& StateStore::fieldForWrite(const std::string& variableName) {
     auto iterator = scalarFields_.find(variableName);
     if (iterator == scalarFields_.end()) {
@@ -244,6 +269,9 @@ const StateStore::ScalarFieldStorage& StateStore::fieldForRead(const std::string
 }
 
 void StateStore::setScalarInternal(const std::string& variableName, const Cell cell, const float value) {
+    if (!std::isfinite(value)) {
+        throw std::runtime_error("StateStore rejected non-finite scalar write for variable: " + variableName);
+    }
     auto& field = fieldForWrite(variableName);
     const std::uint64_t idx = indexOf(cell);
     field.values.at(static_cast<std::size_t>(idx)) = value;
@@ -251,6 +279,9 @@ void StateStore::setScalarInternal(const std::string& variableName, const Cell c
 }
 
 void StateStore::fillScalarInternal(const std::string& variableName, const float value) {
+    if (!std::isfinite(value)) {
+        throw std::runtime_error("StateStore rejected non-finite scalar fill for variable: " + variableName);
+    }
     auto& field = fieldForWrite(variableName);
     const auto logicalCount = static_cast<std::size_t>(field.logicalCellCount);
 
@@ -259,6 +290,9 @@ void StateStore::fillScalarInternal(const std::string& variableName, const float
 }
 
 void StateStore::setOverlayScalarInternal(const std::string& variableName, const Cell cell, const float value) {
+    if (!std::isfinite(value)) {
+        throw std::runtime_error("StateStore rejected non-finite overlay write for variable: " + variableName);
+    }
     auto& field = fieldForWrite(variableName);
     const std::uint64_t idx = indexOf(cell);
     field.sparseOverlay.insert_or_assign(idx, value);

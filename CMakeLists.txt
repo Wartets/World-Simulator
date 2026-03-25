@@ -30,3 +30,8 @@ add_executable(state_store_engine_test tests/state_store_engine.cpp)
 target_link_libraries(state_store_engine_test PRIVATE ws_core)
 
 add_test(NAME state_store_engine_test COMMAND state_store_engine_test)
+
+add_executable(simulation_loop_test tests/simulation_loop.cpp)
+target_link_libraries(simulation_loop_test PRIVATE ws_core)
+
+add_test(NAME simulation_loop_test COMMAND simulation_loop_test)

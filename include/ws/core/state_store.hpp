@@ -77,6 +77,8 @@ public:
 
     void allocateScalarField(const VariableSpec& spec);
     [[nodiscard]] bool hasField(const std::string& name) const noexcept;
+    [[nodiscard]] std::vector<std::string> variableNames() const;
+    [[nodiscard]] std::uint64_t logicalCellCount(const std::string& name) const;
     [[nodiscard]] const std::vector<float>& scalarField(const std::string& name) const;
     [[nodiscard]] std::optional<float> trySampleScalar(const std::string& name, CellSigned cell) const;
     [[nodiscard]] std::vector<FieldStorageMetadata> fieldMetadata() const;
@@ -84,6 +86,7 @@ public:
 
     [[nodiscard]] std::uint64_t indexOf(Cell cell) const;
     [[nodiscard]] std::uint64_t indexOf(CellSigned cell) const;
+    [[nodiscard]] Cell cellFromIndex(std::uint64_t index) const;
     [[nodiscard]] Cell resolveBoundary(CellSigned cell) const;
     [[nodiscard]] const GridSpec& grid() const noexcept { return grid_; }
     [[nodiscard]] BoundaryMode boundaryMode() const noexcept { return boundaryMode_; }
