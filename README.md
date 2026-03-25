@@ -14,14 +14,21 @@ The executable now starts an interactive runtime session and stays open until yo
 
 For a native graphical interface on Windows, launch `build/world_sim_gui.exe`.
 
-The GUI keeps the modular shell backend intact and exposes a layered control surface aligned to the architecture docs:
+The GUI uses an ImGui-based **single-cockpit control panel** over a full OpenGL viewport.
 
-- **Session** tab: seed/grid editing, apply config, start/stop/restart
-- **Profile** tab: tier and temporal policy selection, profile save/load/list
-- **Simulation** tab: controlled stepping, run-until, pause/resume
-- **Analysis** tab: status/metrics/field listing, variable summaries, checkpoint controls
+Core cockpit sections include:
 
-The lower log panel records every operation with deterministic hashes and diagnostics output.
+- Info and Performance status badges
+- Grid/configuration controls (seed, grid dimensions, tier, temporal policy)
+- Session tools (start/stop/restart)
+- Presets/profile operations (save/load/list)
+- Simulation controls (step, run-until, pause/resume)
+- Physics-adapted controls (Force Fields, Particle Properties, Constraints)
+- Display tuning (zoom/pan/brightness/contrast/gamma/grid/boundary)
+- Analysis and checkpoint workflow
+- Accessibility controls (UI scale, font size, high contrast, keyboard navigation, focus indicators, reduced motion)
+
+The in-panel event log records operation outputs, including deterministic hashes and diagnostics.
 
 ### Core interactive commands
 

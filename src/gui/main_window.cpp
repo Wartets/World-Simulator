@@ -1,12 +1,21 @@
 #include "ws/gui/main_window.hpp"
 
-#include "ws/app/shell_support.hpp"
 #include "ws/gui/runtime_service.hpp"
+#include "ws/gui/theme_bootstrap.hpp"
+#include "ws/gui/ui_components.hpp"
 
-#include <windows.h>
-#include <commctrl.h>
+#include <GL/gl.h>
+#include <GLFW/glfw3.h>
+
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_opengl3.h>
 
 #include <array>
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -14,483 +23,606 @@
 namespace ws::gui {
 namespace {
 
-constexpr const char* kWindowClass = "WorldSimGuiWindow";
-
-enum ControlId : int {
-    IdTab = 100,
-    IdLog = 101,
-
-    IdSessionStart = 200,
-    IdSessionStop = 201,
-    IdSessionRestart = 202,
-    IdSeedEdit = 203,
-    IdGridWEdit = 204,
-    IdGridHEdit = 205,
-    IdApplyConfig = 206,
-
-    IdTierCombo = 300,
-    IdTemporalCombo = 301,
-    IdProfileNameEdit = 302,
-    IdProfileSave = 303,
-    IdProfileLoad = 304,
-    IdProfileList = 305,
-
-    IdStepCountEdit = 400,
-    IdStepRun = 401,
-    IdRunUntilEdit = 402,
-    IdRunUntil = 403,
-    IdPause = 404,
-    IdResume = 405,
-
-    IdStatus = 500,
-    IdMetrics = 501,
-    IdFields = 502,
-    IdSummaryVarEdit = 503,
-    IdSummary = 504,
-    IdCheckpointLabelEdit = 505,
-    IdCheckpointCreate = 506,
-    IdCheckpointRestore = 507,
-    IdCheckpointList = 508
+enum class OverlayIcon {
+    None,
+    Play,
+    Pause
 };
 
-struct ControlBinding {
-    HWND handle = nullptr;
-    int tabIndex = 0;
+struct VisualParams {
+    float zoom = 1.0f;
+    float panX = 0.0f;
+    float panY = 0.0f;
+    float brightness = 1.0f;
+    float contrast = 1.0f;
+    float gamma = 1.0f;
+    bool invertColors = false;
+
+    bool showGrid = true;
+    float gridOpacity = 0.35f;
+    float gridLineThickness = 1.0f;
+
+    bool showBoundary = true;
+    float boundaryOpacity = 0.85f;
+    float boundaryThickness = 1.2f;
+    bool boundaryAnimate = true;
 };
 
-std::string getWindowText(HWND hwnd) {
-    const int length = GetWindowTextLengthA(hwnd);
-    if (length <= 0) {
-        return {};
+struct PanelState {
+    std::uint64_t seed = 42;
+    int gridWidth = 32;
+    int gridHeight = 16;
+    int tierIndex = 0;
+    int temporalIndex = 0;
+
+    int stepCount = 1;
+    std::uint64_t runUntilTarget = 100;
+
+    float forceFieldScale = 1.0f;
+    float forceFieldDamping = 0.15f;
+    float particleMobility = 0.6f;
+    float particleCohesion = 0.2f;
+    float constraintRigidity = 0.5f;
+    float constraintTolerance = 0.1f;
+
+    char profileName[128] = "baseline";
+    char summaryVariable[128] = "temperature_t";
+    char checkpointLabel[128] = "quick";
+};
+
+struct OverlayState {
+    float alpha = 0.0f;
+    OverlayIcon icon = OverlayIcon::None;
+};
+
+constexpr std::array<const char*, 3> kTierOptions = {"A", "B", "C"};
+constexpr std::array<const char*, 3> kTemporalOptions = {"uniform", "phased", "multirate"};
+constexpr int kImGuiIntSafeMax = std::numeric_limits<int>::max() / 2;
+
+GLFWwindow* createGlfwWindowWithFallback() {
+    struct VersionProfile {
+        int major;
+        int minor;
+    };
+
+    constexpr std::array<VersionProfile, 3> profiles = {
+        VersionProfile{4, 5},
+        VersionProfile{4, 1},
+        VersionProfile{3, 3}
+    };
+
+    for (const auto& profile : profiles) {
+        glfwDefaultWindowHints();
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, profile.major);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, profile.minor);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        GLFWwindow* window = glfwCreateWindow(1600, 960, "World Simulator - Control Cockpit", nullptr, nullptr);
+        if (window != nullptr) {
+            return window;
+        }
     }
 
-    std::string value;
-    value.resize(static_cast<std::size_t>(length));
-    GetWindowTextA(hwnd, value.data(), length + 1);
-    return value;
+    return nullptr;
 }
 
-void setWindowText(HWND hwnd, const std::string& value) {
-    SetWindowTextA(hwnd, value.c_str());
+void drawPlaybackOverlay(OverlayState& overlay, const bool reduceMotion, const float deltaTime) {
+    if (reduceMotion) {
+        overlay.alpha = 0.0f;
+        return;
+    }
+
+    overlay.alpha = std::max(0.0f, overlay.alpha - (1.2f * deltaTime));
+    if (overlay.alpha <= 0.0f || overlay.icon == OverlayIcon::None) {
+        return;
+    }
+
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImVec2 display = ImGui::GetIO().DisplaySize;
+    const ImVec2 center(display.x - 44.0f, 44.0f);
+    const float radius = 22.0f;
+    const int alpha = static_cast<int>(overlay.alpha * 255.0f);
+    dl->AddCircleFilled(center, radius, IM_COL32(35, 45, 70, alpha));
+    dl->AddCircle(center, radius, IM_COL32(130, 170, 255, alpha), 24, 2.0f);
+
+    if (overlay.icon == OverlayIcon::Play) {
+        dl->AddTriangleFilled(
+            ImVec2(center.x - 6.0f, center.y - 8.0f),
+            ImVec2(center.x - 6.0f, center.y + 8.0f),
+            ImVec2(center.x + 9.0f, center.y),
+            IM_COL32(240, 245, 255, alpha));
+    } else if (overlay.icon == OverlayIcon::Pause) {
+        dl->AddRectFilled(ImVec2(center.x - 8.0f, center.y - 8.0f), ImVec2(center.x - 2.0f, center.y + 8.0f), IM_COL32(240, 245, 255, alpha));
+        dl->AddRectFilled(ImVec2(center.x + 2.0f, center.y - 8.0f), ImVec2(center.x + 8.0f, center.y + 8.0f), IM_COL32(240, 245, 255, alpha));
+    }
 }
 
 class MainWindowImpl {
 public:
     int run() {
-        INITCOMMONCONTROLSEX initCommonControls{};
-        initCommonControls.dwSize = sizeof(INITCOMMONCONTROLSEX);
-        initCommonControls.dwICC = ICC_TAB_CLASSES;
-        InitCommonControlsEx(&initCommonControls);
-
-        HINSTANCE instance = GetModuleHandleA(nullptr);
-        WNDCLASSA windowClass{};
-        windowClass.lpfnWndProc = &MainWindowImpl::WindowProc;
-        windowClass.hInstance = instance;
-        windowClass.lpszClassName = kWindowClass;
-        windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-
-        RegisterClassA(&windowClass);
-
-        hwnd_ = CreateWindowExA(
-            0,
-            kWindowClass,
-            "World Simulator - Graphical Control Surface",
-            WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            1180,
-            760,
-            nullptr,
-            nullptr,
-            instance,
-            this);
-
-        if (!hwnd_) {
+        if (glfwInit() != GLFW_TRUE) {
             return 1;
         }
 
-        ShowWindow(hwnd_, SW_SHOW);
-        UpdateWindow(hwnd_);
+        GLFWwindow* window = createGlfwWindowWithFallback();
+        if (!window) {
+            glfwTerminate();
+            return 1;
+        }
+
+        glfwMakeContextCurrent(window);
+        glfwSwapInterval(1);
+
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+
+        ThemeBootstrap::applyBaseTheme(ImGui::GetStyle(), accessibility_.uiScale);
+        ThemeBootstrap::configureFont(io, accessibility_.fontSizePx);
+        ThemeBootstrap::applyAccessibility(io, ImGui::GetStyle(), accessibility_);
+
+        ImGui_ImplGlfw_InitForOpenGL(window, true);
+        ImGui_ImplOpenGL3_Init("#version 450");
 
         std::string startupMessage;
         runtime_.start(startupMessage);
         appendLog(startupMessage);
-        refreshConfigControls();
 
-        MSG msg{};
-        while (GetMessageA(&msg, nullptr, 0, 0) > 0) {
-            TranslateMessage(&msg);
-            DispatchMessageA(&msg);
+        syncPanelFromConfig();
+
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+
+            drawViewport();
+            drawDockSpace();
+            drawControlPanel();
+            drawPlaybackOverlay(overlay_, accessibility_.reduceMotion, ImGui::GetIO().DeltaTime);
+
+            ImGui::Render();
+
+            int framebufferWidth = 0;
+            int framebufferHeight = 0;
+            glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+            glViewport(0, 0, framebufferWidth, framebufferHeight);
+
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            glfwSwapBuffers(window);
         }
 
-        return static_cast<int>(msg.wParam);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+
+        return 0;
     }
 
 private:
-    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-        if (message == WM_NCCREATE) {
-            const auto* cs = reinterpret_cast<CREATESTRUCTA*>(lParam);
-            auto* self = static_cast<MainWindowImpl*>(cs->lpCreateParams);
-            SetWindowLongPtrA(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-            self->hwnd_ = hwnd;
-        }
-
-        auto* self = reinterpret_cast<MainWindowImpl*>(GetWindowLongPtrA(hwnd, GWLP_USERDATA));
-        if (!self) {
-            return DefWindowProcA(hwnd, message, wParam, lParam);
-        }
-
-        switch (message) {
-            case WM_CREATE:
-                self->createControls();
-                return 0;
-            case WM_SIZE:
-                self->layoutControls(LOWORD(lParam), HIWORD(lParam));
-                return 0;
-            case WM_NOTIFY:
-                self->handleNotify(reinterpret_cast<LPNMHDR>(lParam));
-                return 0;
-            case WM_COMMAND:
-                self->handleCommand(LOWORD(wParam));
-                return 0;
-            case WM_CLOSE:
-                DestroyWindow(hwnd);
-                return 0;
-            case WM_DESTROY:
-                PostQuitMessage(0);
-                return 0;
-            default:
-                return DefWindowProcA(hwnd, message, wParam, lParam);
+    void applyTheme(const bool rebuildFonts) {
+        ImGuiStyle& style = ImGui::GetStyle();
+        ThemeBootstrap::applyBaseTheme(style, accessibility_.uiScale);
+        ThemeBootstrap::applyAccessibility(ImGui::GetIO(), style, accessibility_);
+        if (rebuildFonts) {
+            ThemeBootstrap::configureFont(ImGui::GetIO(), accessibility_.fontSizePx);
+            ImGui_ImplOpenGL3_DestroyFontsTexture();
+            ImGui::GetIO().Fonts->Build();
+            ImGui_ImplOpenGL3_CreateFontsTexture();
         }
     }
 
-    void createControls() {
-        tab_ = CreateWindowExA(0, WC_TABCONTROLA, "", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-            10, 10, 740, 260, hwnd_, reinterpret_cast<HMENU>(IdTab), nullptr, nullptr);
-
-        std::array<const char*, 4> tabNames = {
-            "Session",
-            "Profile",
-            "Simulation",
-            "Analysis"
-        };
-
-        for (const auto* name : tabNames) {
-            TCITEMA item{};
-            item.mask = TCIF_TEXT;
-            item.pszText = const_cast<char*>(name);
-            TabCtrl_InsertItem(tab_, TabCtrl_GetItemCount(tab_), &item);
+    void drawViewport() {
+        float base = 0.05f * visuals_.brightness;
+        float b = std::clamp(base * visuals_.contrast, 0.0f, 1.0f);
+        if (visuals_.invertColors) {
+            b = 1.0f - b;
         }
 
-        log_ = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", "",
-            WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
-            10, 280, 1140, 430, hwnd_, reinterpret_cast<HMENU>(IdLog), nullptr, nullptr);
-
-        createSessionTabControls();
-        createProfileTabControls();
-        createSimulationTabControls();
-        createAnalysisTabControls();
-        updateTabVisibility();
+        const float r = std::clamp(b * 0.90f, 0.0f, 1.0f);
+        const float g = std::clamp(b * 0.95f, 0.0f, 1.0f);
+        const float c = std::clamp(b * 1.15f, 0.0f, 1.0f);
+        glClearColor(r, g, c, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
     }
 
-    HWND createTabControl(
-        int tabIndex,
-        const char* className,
-        const char* text,
-        DWORD style,
-        int x,
-        int y,
-        int width,
-        int height,
-        int controlId) {
-        RECT rc{};
-        GetClientRect(tab_, &rc);
-        const int controlX = rc.left + x;
-        const int controlY = rc.top + y;
+    void drawDockSpace() {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->Pos);
+        ImGui::SetNextWindowSize(viewport->Size);
 
-        HWND control = CreateWindowExA(
-            0,
-            className,
-            text,
-            WS_CHILD | style,
-            controlX,
-            controlY,
-            width,
-            height,
-            hwnd_,
-            reinterpret_cast<HMENU>(controlId),
-            nullptr,
-            nullptr);
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoBringToFrontOnFocus |
+            ImGuiWindowFlags_NoNavFocus |
+            ImGuiWindowFlags_NoBackground;
 
-        tabControls_.push_back(ControlBinding{control, tabIndex});
-        return control;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::Begin("DockSpaceHost", nullptr, flags);
+        ImGui::PopStyleVar(3);
+        ImGui::End();
     }
 
-    void createSessionTabControls() {
-        createTabControl(0, "STATIC", "Seed", WS_VISIBLE, 24, 42, 80, 22, -1);
-        seedEdit_ = createTabControl(0, "EDIT", "42", WS_VISIBLE | WS_BORDER, 110, 40, 110, 24, IdSeedEdit);
+    void drawControlPanel() {
+        ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(520.0f, 920.0f), ImGuiCond_FirstUseEver);
 
-        createTabControl(0, "STATIC", "Grid W", WS_VISIBLE, 240, 42, 80, 22, -1);
-        gridWEdit_ = createTabControl(0, "EDIT", "32", WS_VISIBLE | WS_BORDER, 300, 40, 80, 24, IdGridWEdit);
+        ImGui::Begin("Control Panel");
 
-        createTabControl(0, "STATIC", "Grid H", WS_VISIBLE, 400, 42, 80, 22, -1);
-        gridHEdit_ = createTabControl(0, "EDIT", "16", WS_VISIBLE | WS_BORDER, 460, 40, 80, 24, IdGridHEdit);
+        drawInfoSection();
+        drawPerformanceSection();
+        drawGridSection();
+        drawToolsSection();
+        drawPresetsSection();
+        drawSimulationSection();
+        drawForceFieldsSection();
+        drawParticlePropertiesSection();
+        drawConstraintsSection();
+        drawDisplaySection();
+        drawAnalysisSection();
+        drawAccessibilitySection();
+        drawLogSection();
 
-        createTabControl(0, "BUTTON", "Apply Config", WS_VISIBLE | BS_PUSHBUTTON, 570, 38, 120, 28, IdApplyConfig);
-
-        createTabControl(0, "BUTTON", "Start", WS_VISIBLE | BS_PUSHBUTTON, 110, 88, 110, 28, IdSessionStart);
-        createTabControl(0, "BUTTON", "Stop", WS_VISIBLE | BS_PUSHBUTTON, 240, 88, 110, 28, IdSessionStop);
-        createTabControl(0, "BUTTON", "Restart", WS_VISIBLE | BS_PUSHBUTTON, 370, 88, 110, 28, IdSessionRestart);
+        ImGui::End();
     }
 
-    void createProfileTabControls() {
-        createTabControl(1, "STATIC", "Tier", WS_VISIBLE, 24, 42, 80, 22, -1);
-        tierCombo_ = createTabControl(1, "COMBOBOX", "", WS_VISIBLE | WS_BORDER | CBS_DROPDOWNLIST, 110, 40, 130, 200, IdTierCombo);
-        SendMessageA(tierCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("A"));
-        SendMessageA(tierCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("B"));
-        SendMessageA(tierCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("C"));
-
-        createTabControl(1, "STATIC", "Temporal", WS_VISIBLE, 270, 42, 80, 22, -1);
-        temporalCombo_ = createTabControl(1, "COMBOBOX", "", WS_VISIBLE | WS_BORDER | CBS_DROPDOWNLIST, 350, 40, 180, 220, IdTemporalCombo);
-        SendMessageA(temporalCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("uniform"));
-        SendMessageA(temporalCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("phased"));
-        SendMessageA(temporalCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("multirate"));
-
-        createTabControl(1, "STATIC", "Profile Name", WS_VISIBLE, 24, 90, 100, 22, -1);
-        profileNameEdit_ = createTabControl(1, "EDIT", "baseline", WS_VISIBLE | WS_BORDER, 130, 88, 220, 24, IdProfileNameEdit);
-
-        createTabControl(1, "BUTTON", "Save", WS_VISIBLE | BS_PUSHBUTTON, 370, 86, 80, 28, IdProfileSave);
-        createTabControl(1, "BUTTON", "Load", WS_VISIBLE | BS_PUSHBUTTON, 460, 86, 80, 28, IdProfileLoad);
-        createTabControl(1, "BUTTON", "List", WS_VISIBLE | BS_PUSHBUTTON, 550, 86, 80, 28, IdProfileList);
+    void drawInfoSection() {
+        PushSectionTint(0);
+        if (ImGui::CollapsingHeader("Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+            StatusBadge(runtime_.isRunning() ? "RUNNING" : "STOPPED", runtime_.isRunning());
+            ImGui::SameLine();
+            StatusBadge(runtime_.isPaused() ? "PAUSED" : "ACTIVE", !runtime_.isPaused());
+            ImGui::Text("Cockpit UI: ImGui + GLFW + OpenGL 4.5");
+        }
+        PopSectionTint();
     }
 
-    void createSimulationTabControls() {
-        createTabControl(2, "STATIC", "Step Count", WS_VISIBLE, 24, 42, 100, 22, -1);
-        stepCountEdit_ = createTabControl(2, "EDIT", "1", WS_VISIBLE | WS_BORDER, 130, 40, 100, 24, IdStepCountEdit);
-        createTabControl(2, "BUTTON", "Run Step", WS_VISIBLE | BS_PUSHBUTTON, 250, 38, 110, 28, IdStepRun);
-
-        createTabControl(2, "STATIC", "Run Until", WS_VISIBLE, 24, 90, 100, 22, -1);
-        runUntilEdit_ = createTabControl(2, "EDIT", "100", WS_VISIBLE | WS_BORDER, 130, 88, 100, 24, IdRunUntilEdit);
-        createTabControl(2, "BUTTON", "Run Until", WS_VISIBLE | BS_PUSHBUTTON, 250, 86, 110, 28, IdRunUntil);
-
-        createTabControl(2, "BUTTON", "Pause", WS_VISIBLE | BS_PUSHBUTTON, 390, 38, 100, 28, IdPause);
-        createTabControl(2, "BUTTON", "Resume", WS_VISIBLE | BS_PUSHBUTTON, 390, 86, 100, 28, IdResume);
+    void drawPerformanceSection() {
+        PushSectionTint(1);
+        if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+            DelayedTooltip("Immediate-mode pipeline metrics.");
+        }
+        PopSectionTint();
     }
 
-    void createAnalysisTabControls() {
-        createTabControl(3, "BUTTON", "Status", WS_VISIBLE | BS_PUSHBUTTON, 24, 38, 100, 28, IdStatus);
-        createTabControl(3, "BUTTON", "Metrics", WS_VISIBLE | BS_PUSHBUTTON, 140, 38, 100, 28, IdMetrics);
-        createTabControl(3, "BUTTON", "Fields", WS_VISIBLE | BS_PUSHBUTTON, 256, 38, 100, 28, IdFields);
+    void drawGridSection() {
+        PushSectionTint(2);
+        if (ImGui::CollapsingHeader("Grid", ImGuiTreeNodeFlags_DefaultOpen)) {
+            int seed = static_cast<int>(std::min<std::uint64_t>(panel_.seed, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
+            if (NumericSliderPairInt("Seed", &seed, 0, kImGuiIntSafeMax)) {
+                panel_.seed = static_cast<std::uint64_t>(seed);
+            }
 
-        createTabControl(3, "STATIC", "Variable", WS_VISIBLE, 24, 86, 80, 22, -1);
-        summaryVarEdit_ = createTabControl(3, "EDIT", "temperature_t", WS_VISIBLE | WS_BORDER, 110, 84, 180, 24, IdSummaryVarEdit);
-        createTabControl(3, "BUTTON", "Summary", WS_VISIBLE | BS_PUSHBUTTON, 308, 82, 100, 28, IdSummary);
+            NumericSliderPairInt("Grid Width", &panel_.gridWidth, 1, 1024);
+            NumericSliderPairInt("Grid Height", &panel_.gridHeight, 1, 1024);
 
-        createTabControl(3, "STATIC", "Checkpoint", WS_VISIBLE, 24, 130, 80, 22, -1);
-        checkpointLabelEdit_ = createTabControl(3, "EDIT", "quick", WS_VISIBLE | WS_BORDER, 110, 128, 180, 24, IdCheckpointLabelEdit);
-        createTabControl(3, "BUTTON", "Create", WS_VISIBLE | BS_PUSHBUTTON, 308, 126, 100, 28, IdCheckpointCreate);
-        createTabControl(3, "BUTTON", "Restore", WS_VISIBLE | BS_PUSHBUTTON, 424, 126, 100, 28, IdCheckpointRestore);
-        createTabControl(3, "BUTTON", "List", WS_VISIBLE | BS_PUSHBUTTON, 540, 126, 100, 28, IdCheckpointList);
+            if (ImGui::BeginCombo("Tier", kTierOptions[panel_.tierIndex])) {
+                for (int i = 0; i < static_cast<int>(kTierOptions.size()); ++i) {
+                    const bool selected = (panel_.tierIndex == i);
+                    if (ImGui::Selectable(kTierOptions[i], selected)) {
+                        panel_.tierIndex = i;
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (ImGui::BeginCombo("Temporal", kTemporalOptions[panel_.temporalIndex])) {
+                for (int i = 0; i < static_cast<int>(kTemporalOptions.size()); ++i) {
+                    const bool selected = (panel_.temporalIndex == i);
+                    if (ImGui::Selectable(kTemporalOptions[i], selected)) {
+                        panel_.temporalIndex = i;
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (PrimaryButton("Apply Grid Config", ImVec2(-1.0f, 28.0f))) {
+                applyConfigFromPanel();
+            }
+        }
+        PopSectionTint();
     }
 
-    void layoutControls(const int width, const int height) {
-        const int margin = 10;
-        const int tabHeight = 260;
-        MoveWindow(tab_, margin, margin, width - (2 * margin), tabHeight, TRUE);
-        MoveWindow(log_, margin, tabHeight + (2 * margin), width - (2 * margin), height - tabHeight - (3 * margin), TRUE);
+    void drawToolsSection() {
+        PushSectionTint(3);
+        if (ImGui::CollapsingHeader("Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (PrimaryButton("Start", ImVec2(100, 28))) {
+                std::string message;
+                runtime_.start(message);
+                appendLog(message);
+                triggerOverlay(OverlayIcon::Play);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Stop", ImVec2(100, 28))) {
+                std::string message;
+                runtime_.stop(message);
+                appendLog(message);
+                triggerOverlay(OverlayIcon::Pause);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Restart", ImVec2(100, 28))) {
+                std::string message;
+                runtime_.restart(message);
+                appendLog(message);
+                triggerOverlay(OverlayIcon::Play);
+            }
+        }
+        PopSectionTint();
+    }
 
-        const int currentTab = TabCtrl_GetCurSel(tab_);
-        for (const auto& binding : tabControls_) {
-            ShowWindow(binding.handle, binding.tabIndex == currentTab ? SW_SHOW : SW_HIDE);
+    void drawPresetsSection() {
+        PushSectionTint(4);
+        if (ImGui::CollapsingHeader("Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::InputText("Profile", panel_.profileName, sizeof(panel_.profileName));
+            if (PrimaryButton("Save Profile", ImVec2(120, 26))) {
+                std::string message;
+                runtime_.saveProfile(panel_.profileName, message);
+                appendLog(message);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Load Profile", ImVec2(120, 26))) {
+                std::string message;
+                runtime_.loadProfile(panel_.profileName, message);
+                appendLog(message);
+                syncPanelFromConfig();
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("List", ImVec2(80, 26))) {
+                std::string message;
+                runtime_.listProfiles(message);
+                appendLog(message);
+            }
+        }
+        PopSectionTint();
+    }
+
+    void drawSimulationSection() {
+        PushSectionTint(5);
+        if (ImGui::CollapsingHeader("Simulation", ImGuiTreeNodeFlags_DefaultOpen)) {
+            NumericSliderPairInt("Step Count", &panel_.stepCount, 1, 1000000);
+
+            int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
+            if (NumericSliderPairInt("Run Until", &runUntil, 0, kImGuiIntSafeMax)) {
+                panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
+            }
+
+            if (PrimaryButton("Run Step", ImVec2(100, 26))) {
+                std::string message;
+                runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), message);
+                appendLog(message);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Run Until", ImVec2(100, 26))) {
+                std::string message;
+                runtime_.runUntil(panel_.runUntilTarget, message);
+                appendLog(message);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Pause", ImVec2(80, 26))) {
+                std::string message;
+                runtime_.pause(message);
+                appendLog(message);
+                triggerOverlay(OverlayIcon::Pause);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Resume", ImVec2(80, 26))) {
+                std::string message;
+                runtime_.resume(message);
+                appendLog(message);
+                triggerOverlay(OverlayIcon::Play);
+            }
+        }
+        PopSectionTint();
+    }
+
+    void drawForceFieldsSection() {
+        PushSectionTint(6);
+        if (ImGui::CollapsingHeader("Force Fields", ImGuiTreeNodeFlags_DefaultOpen)) {
+            NumericSliderPair("Force Scale", &panel_.forceFieldScale, 0.0f, 10.0f, "%.2f");
+            NumericSliderPair("Damping", &panel_.forceFieldDamping, 0.0f, 1.0f, "%.3f");
+        }
+        PopSectionTint();
+    }
+
+    void drawParticlePropertiesSection() {
+        PushSectionTint(7);
+        if (ImGui::CollapsingHeader("Particle Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+            NumericSliderPair("Mobility", &panel_.particleMobility, 0.0f, 1.0f, "%.3f");
+            NumericSliderPair("Cohesion", &panel_.particleCohesion, 0.0f, 1.0f, "%.3f");
+        }
+        PopSectionTint();
+    }
+
+    void drawConstraintsSection() {
+        PushSectionTint(8);
+        if (ImGui::CollapsingHeader("Constraints", ImGuiTreeNodeFlags_DefaultOpen)) {
+            NumericSliderPair("Rigidity", &panel_.constraintRigidity, 0.0f, 1.0f, "%.3f");
+            NumericSliderPair("Tolerance", &panel_.constraintTolerance, 0.0f, 1.0f, "%.3f");
+        }
+        PopSectionTint();
+    }
+
+    void drawDisplaySection() {
+        PushSectionTint(9);
+        if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
+            NumericSliderPair("Zoom", &visuals_.zoom, 0.1f, 5.0f, "%.2f");
+            NumericSliderPair("Pan X", &visuals_.panX, -1000.0f, 1000.0f, "%.1f");
+            NumericSliderPair("Pan Y", &visuals_.panY, -1000.0f, 1000.0f, "%.1f");
+            NumericSliderPair("Brightness", &visuals_.brightness, 0.1f, 3.0f, "%.2f");
+            NumericSliderPair("Contrast", &visuals_.contrast, 0.1f, 3.0f, "%.2f");
+            NumericSliderPair("Gamma", &visuals_.gamma, 0.2f, 3.0f, "%.2f");
+            ImGui::Checkbox("Invert Colors", &visuals_.invertColors);
+
+            ImGui::Separator();
+            ImGui::Checkbox("Show Grid", &visuals_.showGrid);
+            if (visuals_.showGrid) {
+                NumericSliderPair("Grid Opacity", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f");
+                NumericSliderPair("Grid Thickness", &visuals_.gridLineThickness, 0.5f, 4.0f, "%.2f");
+            }
+
+            ImGui::Checkbox("Show Boundary", &visuals_.showBoundary);
+            if (visuals_.showBoundary) {
+                NumericSliderPair("Boundary Opacity", &visuals_.boundaryOpacity, 0.0f, 1.0f, "%.2f");
+                NumericSliderPair("Boundary Thickness", &visuals_.boundaryThickness, 0.5f, 6.0f, "%.2f");
+                ImGui::Checkbox("Animate Boundary", &visuals_.boundaryAnimate);
+                if (accessibility_.reduceMotion) {
+                    visuals_.boundaryAnimate = false;
+                }
+            }
+        }
+        PopSectionTint();
+    }
+
+    void drawAnalysisSection() {
+        PushSectionTint(0);
+        if (ImGui::CollapsingHeader("Analysis", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (PrimaryButton("Status", ImVec2(90, 26))) {
+                std::string message;
+                runtime_.status(message);
+                appendLog(message);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Metrics", ImVec2(90, 26))) {
+                std::string message;
+                runtime_.metrics(message);
+                appendLog(message);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Fields", ImVec2(90, 26))) {
+                std::string message;
+                runtime_.listFields(message);
+                appendLog(message);
+            }
+
+            ImGui::InputText("Variable", panel_.summaryVariable, sizeof(panel_.summaryVariable));
+            if (PrimaryButton("Summary", ImVec2(120, 26))) {
+                std::string message;
+                runtime_.summarizeField(panel_.summaryVariable, message);
+                appendLog(message);
+            }
+
+            ImGui::InputText("Checkpoint", panel_.checkpointLabel, sizeof(panel_.checkpointLabel));
+            if (PrimaryButton("Create", ImVec2(90, 26))) {
+                std::string message;
+                runtime_.createCheckpoint(panel_.checkpointLabel, message);
+                appendLog(message);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("Restore", ImVec2(90, 26))) {
+                std::string message;
+                runtime_.restoreCheckpoint(panel_.checkpointLabel, message);
+                appendLog(message);
+            }
+            ImGui::SameLine();
+            if (PrimaryButton("List", ImVec2(90, 26))) {
+                std::string message;
+                runtime_.listCheckpoints(message);
+                appendLog(message);
+            }
+        }
+        PopSectionTint();
+    }
+
+    void drawAccessibilitySection() {
+        PushSectionTint(1);
+        if (ImGui::CollapsingHeader("Accessibility", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool styleChanged = false;
+            bool rebuildFonts = false;
+
+            styleChanged |= NumericSliderPair("UI Scale", &accessibility_.uiScale, 0.75f, 3.0f, "%.2f");
+            if (NumericSliderPair("Font Size", &accessibility_.fontSizePx, 10.0f, 32.0f, "%.1f")) {
+                styleChanged = true;
+                rebuildFonts = true;
+            }
+
+            styleChanged |= ImGui::Checkbox("High Contrast", &accessibility_.highContrast);
+            styleChanged |= ImGui::Checkbox("Keyboard Navigation", &accessibility_.keyboardNav);
+            styleChanged |= ImGui::Checkbox("Focus Indicators", &accessibility_.focusIndicators);
+            ImGui::Checkbox("Reduce Motion", &accessibility_.reduceMotion);
+
+            if (styleChanged) {
+                applyTheme(rebuildFonts);
+            }
+        }
+        PopSectionTint();
+    }
+
+    void drawLogSection() {
+        if (ImGui::CollapsingHeader("Event Log", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::BeginChild("log_scroller", ImVec2(0, 180), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            for (const std::string& line : logs_) {
+                ImGui::TextUnformatted(line.c_str());
+            }
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+                ImGui::SetScrollHereY(1.0f);
+            }
+            ImGui::EndChild();
         }
     }
 
-    void updateTabVisibility() {
-        if (!tab_) {
-            return;
-        }
-
-        const int currentTab = TabCtrl_GetCurSel(tab_);
-        for (const auto& binding : tabControls_) {
-            ShowWindow(binding.handle, binding.tabIndex == currentTab ? SW_SHOW : SW_HIDE);
-        }
-    }
-
-    void handleNotify(const LPNMHDR notifyHeader) {
-        if (!notifyHeader || notifyHeader->idFrom != IdTab) {
-            return;
-        }
-
-        if (notifyHeader->code == TCN_SELCHANGE) {
-            updateTabVisibility();
-        }
-    }
-
-    void appendLog(const std::string& line) {
-        std::string existing = getWindowText(log_);
-        if (!existing.empty()) {
-            existing.append("\r\n");
-        }
-        existing.append(line);
-        setWindowText(log_, existing);
-        SendMessageA(log_, EM_LINESCROLL, 0, 0x7FFFFFFF);
-    }
-
-    void refreshConfigControls() {
+    void syncPanelFromConfig() {
         const auto& config = runtime_.config();
-
-        setWindowText(seedEdit_, std::to_string(config.seed));
-        setWindowText(gridWEdit_, std::to_string(config.grid.width));
-        setWindowText(gridHEdit_, std::to_string(config.grid.height));
-
-        const int tierIndex =
-            (config.tier == ModelTier::A) ? 0 :
-            (config.tier == ModelTier::B) ? 1 : 2;
-        SendMessageA(tierCombo_, CB_SETCURSEL, static_cast<WPARAM>(tierIndex), 0);
+        panel_.seed = config.seed;
+        panel_.gridWidth = static_cast<int>(config.grid.width);
+        panel_.gridHeight = static_cast<int>(config.grid.height);
+        panel_.tierIndex = (config.tier == ModelTier::A) ? 0 : (config.tier == ModelTier::B) ? 1 : 2;
 
         const std::string temporal = app::temporalPolicyToString(config.temporalPolicy);
-        const int temporalIndex = (temporal == "uniform") ? 0 : (temporal == "phased") ? 1 : 2;
-        SendMessageA(temporalCombo_, CB_SETCURSEL, static_cast<WPARAM>(temporalIndex), 0);
+        panel_.temporalIndex = (temporal == "uniform") ? 0 : (temporal == "phased") ? 1 : 2;
     }
 
-    void applyConfigFromControls() {
+    void applyConfigFromPanel() {
         app::LaunchConfig config = runtime_.config();
-
-        const auto seed = app::parseU64(getWindowText(seedEdit_));
-        const auto gridW = app::parseU32(getWindowText(gridWEdit_));
-        const auto gridH = app::parseU32(getWindowText(gridHEdit_));
-        if (!seed.has_value() || !gridW.has_value() || !gridH.has_value() || *gridW == 0 || *gridH == 0) {
-            appendLog("config_apply_failed invalid numeric values");
-            return;
-        }
-
-        config.seed = *seed;
-        config.grid = GridSpec{*gridW, *gridH};
-
-        char tierBuffer[16]{};
-        const int tierSelection = static_cast<int>(SendMessageA(tierCombo_, CB_GETCURSEL, 0, 0));
-        SendMessageA(tierCombo_, CB_GETLBTEXT, static_cast<WPARAM>(tierSelection), reinterpret_cast<LPARAM>(tierBuffer));
-        const auto tier = app::parseTier(tierBuffer);
-        if (tier.has_value()) {
-            config.tier = *tier;
-        }
-
-        char temporalBuffer[32]{};
-        const int temporalSelection = static_cast<int>(SendMessageA(temporalCombo_, CB_GETCURSEL, 0, 0));
-        SendMessageA(temporalCombo_, CB_GETLBTEXT, static_cast<WPARAM>(temporalSelection), reinterpret_cast<LPARAM>(temporalBuffer));
-        const auto temporal = app::parseTemporalPolicy(temporalBuffer);
-        if (temporal.has_value()) {
-            config.temporalPolicy = *temporal;
+        config.seed = panel_.seed;
+        config.grid = GridSpec{static_cast<std::uint32_t>(std::max(1, panel_.gridWidth)), static_cast<std::uint32_t>(std::max(1, panel_.gridHeight))};
+        config.tier = (panel_.tierIndex == 0) ? ModelTier::A : (panel_.tierIndex == 1) ? ModelTier::B : ModelTier::C;
+        const auto parsedTemporal = app::parseTemporalPolicy(kTemporalOptions[panel_.temporalIndex]);
+        if (parsedTemporal.has_value()) {
+            config.temporalPolicy = *parsedTemporal;
         }
 
         runtime_.setConfig(config);
 
-        std::ostringstream message;
-        message << "config_applied seed=" << config.seed
-                << " grid=" << config.grid.width << 'x' << config.grid.height
-                << " tier=" << toString(config.tier)
-                << " temporal=" << app::temporalPolicyToString(config.temporalPolicy);
-        appendLog(message.str());
+        std::ostringstream output;
+        output << "config_applied seed=" << config.seed
+               << " grid=" << config.grid.width << 'x' << config.grid.height
+               << " tier=" << toString(config.tier)
+               << " temporal=" << app::temporalPolicyToString(config.temporalPolicy);
+        appendLog(output.str());
     }
 
-    void handleCommand(const int commandId) {
-        std::string message;
+    void triggerOverlay(const OverlayIcon icon) {
+        overlay_.icon = icon;
+        overlay_.alpha = 1.0f;
+    }
 
-        switch (commandId) {
-            case IdApplyConfig:
-                applyConfigFromControls();
-                return;
-            case IdSessionStart:
-                runtime_.start(message);
-                break;
-            case IdSessionStop:
-                runtime_.stop(message);
-                break;
-            case IdSessionRestart:
-                runtime_.restart(message);
-                break;
-            case IdProfileSave:
-                runtime_.saveProfile(getWindowText(profileNameEdit_), message);
-                break;
-            case IdProfileLoad:
-                runtime_.loadProfile(getWindowText(profileNameEdit_), message);
-                refreshConfigControls();
-                break;
-            case IdProfileList:
-                runtime_.listProfiles(message);
-                break;
-            case IdStepRun: {
-                const auto count = app::parseU32(getWindowText(stepCountEdit_));
-                if (!count.has_value() || *count == 0) {
-                    message = "invalid step count";
-                } else {
-                    runtime_.step(*count, message);
-                }
-                break;
-            }
-            case IdRunUntil: {
-                const auto target = app::parseU64(getWindowText(runUntilEdit_));
-                if (!target.has_value()) {
-                    message = "invalid run-until target";
-                } else {
-                    runtime_.runUntil(*target, message);
-                }
-                break;
-            }
-            case IdPause:
-                runtime_.pause(message);
-                break;
-            case IdResume:
-                runtime_.resume(message);
-                break;
-            case IdStatus:
-                runtime_.status(message);
-                break;
-            case IdMetrics:
-                runtime_.metrics(message);
-                break;
-            case IdFields:
-                runtime_.listFields(message);
-                break;
-            case IdSummary:
-                runtime_.summarizeField(getWindowText(summaryVarEdit_), message);
-                break;
-            case IdCheckpointCreate:
-                runtime_.createCheckpoint(getWindowText(checkpointLabelEdit_), message);
-                break;
-            case IdCheckpointRestore:
-                runtime_.restoreCheckpoint(getWindowText(checkpointLabelEdit_), message);
-                break;
-            case IdCheckpointList:
-                runtime_.listCheckpoints(message);
-                break;
-            default:
-                return;
+    void appendLog(const std::string& line) {
+        if (!line.empty()) {
+            logs_.push_back(line);
         }
-
-        appendLog(message);
+        if (logs_.size() > 1000) {
+            logs_.erase(logs_.begin(), logs_.begin() + static_cast<std::ptrdiff_t>(logs_.size() - 1000));
+        }
     }
 
-    HWND hwnd_ = nullptr;
-    HWND tab_ = nullptr;
-    HWND log_ = nullptr;
-
-    HWND seedEdit_ = nullptr;
-    HWND gridWEdit_ = nullptr;
-    HWND gridHEdit_ = nullptr;
-
-    HWND tierCombo_ = nullptr;
-    HWND temporalCombo_ = nullptr;
-    HWND profileNameEdit_ = nullptr;
-
-    HWND stepCountEdit_ = nullptr;
-    HWND runUntilEdit_ = nullptr;
-
-    HWND summaryVarEdit_ = nullptr;
-    HWND checkpointLabelEdit_ = nullptr;
-
-    std::vector<ControlBinding> tabControls_;
+    AccessibilityConfig accessibility_{};
+    PanelState panel_{};
+    VisualParams visuals_{};
+    OverlayState overlay_{};
+    std::vector<std::string> logs_;
     RuntimeService runtime_;
 };
 
