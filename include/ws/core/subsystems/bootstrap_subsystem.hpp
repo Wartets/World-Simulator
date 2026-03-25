@@ -7,9 +7,10 @@ namespace ws {
 class BootstrapSubsystem final : public ISubsystem {
 public:
     [[nodiscard]] std::string name() const override;
+    [[nodiscard]] std::vector<std::string> declaredReadSet() const override;
     [[nodiscard]] std::vector<std::string> declaredWriteSet() const override;
-    void initialize(StateStore::WriteSession& writeSession, const ModelProfile& profile) override;
-    void step(StateStore::WriteSession& writeSession, const ModelProfile& profile, std::uint64_t stepIndex) override;
+    void initialize(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile) override;
+    void step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, std::uint64_t stepIndex) override;
 };
 
 } // namespace ws

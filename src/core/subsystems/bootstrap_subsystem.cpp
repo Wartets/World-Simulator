@@ -8,11 +8,15 @@ std::string BootstrapSubsystem::name() const {
     return "bootstrap";
 }
 
+std::vector<std::string> BootstrapSubsystem::declaredReadSet() const {
+    return {};
+}
+
 std::vector<std::string> BootstrapSubsystem::declaredWriteSet() const {
     return {"bootstrap_marker", "temperature_T", "humidity_q"};
 }
 
-void BootstrapSubsystem::initialize(StateStore::WriteSession& writeSession, const ModelProfile& profile) {
+void BootstrapSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
     const auto iterator = profile.subsystemTiers.find("generation");
     if (iterator == profile.subsystemTiers.end()) {
         throw std::runtime_error("BootstrapSubsystem expected generation tier in profile");
@@ -37,7 +41,7 @@ void BootstrapSubsystem::initialize(StateStore::WriteSession& writeSession, cons
     }
 }
 
-void BootstrapSubsystem::step(StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t stepIndex) {
+void BootstrapSubsystem::step(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t stepIndex) {
     const auto iterator = profile.subsystemTiers.find("generation");
     if (iterator == profile.subsystemTiers.end()) {
         throw std::runtime_error("BootstrapSubsystem expected generation tier in profile");

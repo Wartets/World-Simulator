@@ -51,12 +51,18 @@ void Runtime::start() {
         throw std::runtime_error("Runtime start can only be called from Created state");
     }
 
-    if (config_.temporalPolicy == TemporalPolicy::MultiRateC) {
-        throw std::runtime_error("Runtime TemporalPolicy::MultiRateC is excluded from Phase 3 scope");
-    }
-
     try {
         resolvedProfile_ = profileResolver_.resolve(config_.profileInput);
+
+        admissionReport_ = interactionCoordinator_.buildAdmissionReport(
+            resolvedProfile_,
+            config_.temporalPolicy,
+            scheduler_.registeredSubsystems());
+        if (!admissionReport_.admitted) {
+            throw std::runtime_error("Profile admission failed: " + admissionReport_.diagnosticsText());
+        }
+        scheduler_.setAdmissionReport(admissionReport_);
+
         allocateCanonicalFields();
 
         DeterministicRngFactory rngFactory(config_.seed);
@@ -88,7 +94,9 @@ void Runtime::start() {
         }
 
         const std::string initializationHash = std::to_string(DeterministicHash::hashString(profileDigestData));
-        const std::string eventTimelineHash = std::to_string(DeterministicHash::hashString("baseline:no-events"));
+        const std::string eventTimelineHash = std::to_string(DeterministicHash::hashString(
+            "baseline:no-events;interaction_graph=" + std::to_string(DeterministicHash::hashString(admissionReport_.serializedGraph)) +
+            ";admission_fingerprint=" + std::to_string(admissionReport_.fingerprint)));
 
         snapshot_.runSignature = runSignatureService_.create(RunIdentityInput{
             .globalSeed = config_.seed,
@@ -105,6 +113,7 @@ void Runtime::start() {
         stateStore_.setHeader(header);
         snapshot_.stateHeader = stateStore_.header();
         snapshot_.stateHash = stateStore_.stateHash();
+        snapshot_.reproducibilityClass = admissionReport_.reproducibilityClass;
         snapshot_.payloadBytes = stateStore_.createSnapshot(
             snapshot_.runSignature.identityHash(),
             resolvedProfile_.fingerprint(),
@@ -148,6 +157,7 @@ void Runtime::step() {
         config_.temporalPolicy,
         config_.guardrailPolicy,
         stateStore_.header().stepIndex);
+    scheduler_.validateObservedDataFlow();
 
     diagnostics.orderingLog.insert(
         diagnostics.orderingLog.end(),
@@ -155,6 +165,8 @@ void Runtime::step() {
         schedulerDiagnostics.orderingLog.end());
     diagnostics.stabilityAlerts = std::move(schedulerDiagnostics.stabilityAlerts);
     diagnostics.constraintViolations = std::move(schedulerDiagnostics.constraintViolations);
+    diagnostics.reproducibilityClass = schedulerDiagnostics.reproducibilityClass;
+    diagnostics.stability = schedulerDiagnostics.stability;
     lastStepDiagnostics_ = std::move(diagnostics);
 
     StateHeader header = stateStore_.header();
@@ -164,6 +176,8 @@ void Runtime::step() {
 
     snapshot_.stateHeader = header;
     snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.reproducibilityClass = lastStepDiagnostics_.reproducibilityClass;
+    snapshot_.stabilityDiagnostics = lastStepDiagnostics_.stability;
     snapshot_.payloadBytes = stateStore_.createSnapshot(
         snapshot_.runSignature.identityHash(),
         resolvedProfile_.fingerprint(),
@@ -200,6 +214,8 @@ void Runtime::stop() {
 
     snapshot_.stateHeader = header;
     snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.reproducibilityClass = lastStepDiagnostics_.reproducibilityClass;
+    snapshot_.stabilityDiagnostics = lastStepDiagnostics_.stability;
     snapshot_.payloadBytes = stateStore_.createSnapshot(
         snapshot_.runSignature.identityHash(),
         resolvedProfile_.fingerprint(),
@@ -243,6 +259,7 @@ void Runtime::loadCheckpoint(const RuntimeCheckpoint& checkpoint) {
 
     snapshot_.stateHeader = stateStore_.header();
     snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.reproducibilityClass = admissionReport_.reproducibilityClass;
     snapshot_.payloadBytes = checkpoint.stateSnapshot.payloadBytes;
 }
 
@@ -252,10 +269,16 @@ void Runtime::allocateCanonicalFields() {
         {1, "surface_water_w"},
         {2, "temperature_T"},
         {3, "humidity_q"},
-        {4, "fertility_phi"},
-        {5, "vegetation_v"},
-        {6, "bootstrap_marker"},
-        {7, "seed_probe"}
+        {4, "wind_u"},
+        {5, "climate_index_c"},
+        {6, "fertility_phi"},
+        {7, "vegetation_v"},
+        {8, "resource_stock_r"},
+        {9, "event_signal_e"},
+        {10, "event_water_delta"},
+        {11, "event_temperature_delta"},
+        {12, "bootstrap_marker"},
+        {13, "seed_probe"}
     };
 
     for (const auto& spec : specs) {
@@ -320,6 +343,13 @@ std::string Runtime::stableHashForStringSet(const std::vector<std::string>& orde
         digest += ';';
     }
     return std::to_string(DeterministicHash::hashString(digest));
+}
+
+const AdmissionReport& Runtime::admissionReport() const {
+    if (!admissionReport_.admitted) {
+        throw std::runtime_error("Runtime admission report is not available before successful start");
+    }
+    return admissionReport_;
 }
 
 } // namespace ws

@@ -1,5 +1,5 @@
 #include "ws/core/runtime.hpp"
-#include "ws/core/subsystems/bootstrap_subsystem.hpp"
+#include "ws/core/subsystems/subsystems.hpp"
 
 #include <exception>
 #include <iostream>
@@ -32,7 +32,9 @@ int main() {
         config.profileInput = defaultProfileInput();
 
         ws::Runtime runtime(config);
-        runtime.registerSubsystem(std::make_shared<ws::BootstrapSubsystem>());
+        for (const auto& subsystem : ws::makePhase4Subsystems()) {
+            runtime.registerSubsystem(subsystem);
+        }
 
         runtime.start();
         runtime.step();

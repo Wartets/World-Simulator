@@ -37,6 +37,19 @@ enum class TemporalPolicy : std::uint8_t {
     MultiRateC = 2
 };
 
+enum class ReproducibilityClass : std::uint8_t {
+    Strict = 0,
+    BoundedDivergence = 1,
+    Exploratory = 2
+};
+
+enum class EscalationAction : std::uint8_t {
+    None = 0,
+    Damping = 1,
+    ControlledFallback = 2,
+    SafeAbort = 3
+};
+
 enum class RuntimeStatus : std::uint8_t {
     Created = 0,
     Initialized = 1,
@@ -104,6 +117,25 @@ using VariableRegistry = std::vector<VariableSpec>;
         case ModelTier::C: return "C";
     }
     return "Unknown";
+}
+
+[[nodiscard]] inline std::string toString(const ReproducibilityClass value) {
+    switch (value) {
+        case ReproducibilityClass::Strict: return "strict";
+        case ReproducibilityClass::BoundedDivergence: return "bounded_divergence";
+        case ReproducibilityClass::Exploratory: return "exploratory";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] inline std::string toString(const EscalationAction value) {
+    switch (value) {
+        case EscalationAction::None: return "none";
+        case EscalationAction::Damping: return "damping";
+        case EscalationAction::ControlledFallback: return "controlled_fallback";
+        case EscalationAction::SafeAbort: return "safe_abort";
+    }
+    return "unknown";
 }
 
 } // namespace ws

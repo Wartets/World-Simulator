@@ -4,6 +4,7 @@
 #include "ws/core/types.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -51,6 +52,13 @@ struct StateStoreSnapshot {
 
 class StateStore {
 public:
+    enum class AccessKind : std::uint8_t {
+        Read = 0,
+        Write = 1
+    };
+
+    using AccessObserver = std::function<void(const std::string&, AccessKind)>;
+
     class WriteSession {
     public:
         WriteSession(StateStore& stateStore, std::string ownerName, std::vector<std::string> allowedVariables);
@@ -84,6 +92,9 @@ public:
     [[nodiscard]] std::vector<FieldStorageMetadata> fieldMetadata() const;
     [[nodiscard]] std::uint64_t stateHash() const noexcept;
 
+    void setAccessObserver(AccessObserver observer);
+    void clearAccessObserver();
+
     [[nodiscard]] std::uint64_t indexOf(Cell cell) const;
     [[nodiscard]] std::uint64_t indexOf(CellSigned cell) const;
     [[nodiscard]] Cell cellFromIndex(std::uint64_t index) const;
@@ -104,6 +115,8 @@ public:
 
 private:
     friend class WriteSession;
+
+    void emitAccess(const std::string& variableName, AccessKind kind) const;
 
     void setScalarInternal(const std::string& variableName, Cell cell, float value);
     void fillScalarInternal(const std::string& variableName, float value);
@@ -131,6 +144,7 @@ private:
     StateHeader header_{};
     std::vector<VariableSpec> variableOrder_;
     std::unordered_map<std::string, ScalarFieldStorage> scalarFields_;
+    AccessObserver accessObserver_;
 };
 
 } // namespace ws

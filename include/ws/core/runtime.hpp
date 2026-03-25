@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ws/core/interactions.hpp"
 #include "ws/core/profile.hpp"
 #include "ws/core/run_signature.hpp"
 #include "ws/core/scheduler.hpp"
@@ -44,6 +45,8 @@ struct RuntimeSnapshot {
     std::uint64_t stateHash = 0;
     StateHeader stateHeader{};
     std::uint64_t payloadBytes = 0;
+    ReproducibilityClass reproducibilityClass = ReproducibilityClass::Strict;
+    StabilityDiagnostics stabilityDiagnostics{};
 };
 
 struct RuntimeCheckpoint {
@@ -79,6 +82,7 @@ public:
     [[nodiscard]] RuntimeStatus status() const noexcept { return status_; }
     [[nodiscard]] const RuntimeSnapshot& snapshot() const noexcept { return snapshot_; }
     [[nodiscard]] const StepDiagnostics& lastStepDiagnostics() const noexcept { return lastStepDiagnostics_; }
+    [[nodiscard]] const AdmissionReport& admissionReport() const;
 
 private:
     void allocateCanonicalFields();
@@ -91,6 +95,8 @@ private:
     RuntimeStatus status_ = RuntimeStatus::Created;
     ProfileResolver profileResolver_;
     RunSignatureService runSignatureService_;
+    InteractionCoordinator interactionCoordinator_;
+    AdmissionReport admissionReport_{};
     ModelProfile resolvedProfile_;
     StateStore stateStore_;
     Scheduler scheduler_;

@@ -56,6 +56,20 @@ bool StateStore::WriteSession::isAllowed(const std::string& variableName) const 
     return std::binary_search(allowedVariables_.begin(), allowedVariables_.end(), variableName);
 }
 
+void StateStore::setAccessObserver(AccessObserver observer) {
+    accessObserver_ = std::move(observer);
+}
+
+void StateStore::clearAccessObserver() {
+    accessObserver_ = nullptr;
+}
+
+void StateStore::emitAccess(const std::string& variableName, const AccessKind kind) const {
+    if (accessObserver_) {
+        accessObserver_(variableName, kind);
+    }
+}
+
 StateStore::StateStore(
     const GridSpec grid,
     const BoundaryMode boundaryMode,
@@ -120,6 +134,7 @@ void StateStore::allocateScalarField(const VariableSpec& spec) {
 }
 
 std::optional<float> StateStore::trySampleScalar(const std::string& name, const CellSigned cell) const {
+    emitAccess(name, AccessKind::Read);
     const auto& field = fieldForRead(name);
     const std::uint64_t idx = indexOf(cell);
 
@@ -172,6 +187,7 @@ std::uint64_t StateStore::logicalCellCount(const std::string& name) const {
 }
 
 const std::vector<float>& StateStore::scalarField(const std::string& name) const {
+    emitAccess(name, AccessKind::Read);
     return fieldForRead(name).values;
 }
 
@@ -269,6 +285,7 @@ const StateStore::ScalarFieldStorage& StateStore::fieldForRead(const std::string
 }
 
 void StateStore::setScalarInternal(const std::string& variableName, const Cell cell, const float value) {
+    emitAccess(variableName, AccessKind::Write);
     if (!std::isfinite(value)) {
         throw std::runtime_error("StateStore rejected non-finite scalar write for variable: " + variableName);
     }
@@ -279,6 +296,7 @@ void StateStore::setScalarInternal(const std::string& variableName, const Cell c
 }
 
 void StateStore::fillScalarInternal(const std::string& variableName, const float value) {
+    emitAccess(variableName, AccessKind::Write);
     if (!std::isfinite(value)) {
         throw std::runtime_error("StateStore rejected non-finite scalar fill for variable: " + variableName);
     }
@@ -290,6 +308,7 @@ void StateStore::fillScalarInternal(const std::string& variableName, const float
 }
 
 void StateStore::setOverlayScalarInternal(const std::string& variableName, const Cell cell, const float value) {
+    emitAccess(variableName, AccessKind::Write);
     if (!std::isfinite(value)) {
         throw std::runtime_error("StateStore rejected non-finite overlay write for variable: " + variableName);
     }
@@ -300,12 +319,14 @@ void StateStore::setOverlayScalarInternal(const std::string& variableName, const
 }
 
 void StateStore::clearOverlayScalarInternal(const std::string& variableName, const Cell cell) {
+    emitAccess(variableName, AccessKind::Write);
     auto& field = fieldForWrite(variableName);
     const std::uint64_t idx = indexOf(cell);
     field.sparseOverlay.erase(idx);
 }
 
 void StateStore::invalidateScalarInternal(const std::string& variableName, const Cell cell) {
+    emitAccess(variableName, AccessKind::Write);
     auto& field = fieldForWrite(variableName);
     const std::uint64_t idx = indexOf(cell);
     field.validityMask.at(static_cast<std::size_t>(idx)) = 0u;

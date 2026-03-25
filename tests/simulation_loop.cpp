@@ -33,11 +33,15 @@ public:
         return subsystemName_;
     }
 
+    [[nodiscard]] std::vector<std::string> declaredReadSet() const override {
+        return {};
+    }
+
     [[nodiscard]] std::vector<std::string> declaredWriteSet() const override {
         return {variableName_};
     }
 
-    void initialize(ws::StateStore::WriteSession& writeSession, const ws::ModelProfile&) override {
+    void initialize(const ws::StateStore&, ws::StateStore::WriteSession& writeSession, const ws::ModelProfile&) override {
         writeSession.fillScalar(variableName_, 0.0f);
     }
 
@@ -47,7 +51,7 @@ public:
         }
     }
 
-    void step(ws::StateStore::WriteSession& writeSession, const ws::ModelProfile&, const std::uint64_t) override {
+    void step(const ws::StateStore&, ws::StateStore::WriteSession& writeSession, const ws::ModelProfile&, const std::uint64_t) override {
         writeSession.fillScalar(variableName_, value_);
     }
 
@@ -69,6 +73,7 @@ ws::ProfileResolverInput baselineProfileInput() {
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
         input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
     }
+    input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::A;
     input.compatibilityAssumptions = {
         "phase3_execution_test",
         "deterministic_scheduler_order"
@@ -209,6 +214,9 @@ ScenarioResult runBaselineScenario(const ws::TemporalPolicy temporalPolicy, cons
     config.grid = ws::GridSpec{4, 4};
     config.temporalPolicy = temporalPolicy;
     config.profileInput = baselineProfileInput();
+    if (temporalPolicy == ws::TemporalPolicy::PhasedB) {
+        config.profileInput.requestedSubsystemTiers["temporal"] = ws::ModelTier::B;
+    }
 
     ws::Runtime runtime(config);
     runtime.registerSubsystem(std::make_shared<ws::BootstrapSubsystem>());

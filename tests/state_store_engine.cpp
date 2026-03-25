@@ -11,6 +11,7 @@ ws::ProfileResolverInput baselineProfileInput() {
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
         input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
     }
+    input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::A;
     input.compatibilityAssumptions = {
         "state_store_test_assumption",
         "deterministic_state_store"
