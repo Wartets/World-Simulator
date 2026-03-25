@@ -39,6 +39,7 @@ Runtime::Runtime(RuntimeConfig config)
                 StateHeader{},
                 0} {
     config_.grid.validate();
+    scheduler_.setExecutionPolicyMode(config_.executionPolicyMode);
 }
 
 void Runtime::registerSubsystem(std::shared_ptr<ISubsystem> subsystem) {
@@ -136,7 +137,7 @@ void Runtime::start() {
         trace(
             TraceChannel::Configuration,
             "runtime.start",
-            "runtime admitted and started",
+            "runtime admitted and started; execution_policy=" + toString(config_.executionPolicyMode),
             admissionReport_.fingerprint,
             0);
 

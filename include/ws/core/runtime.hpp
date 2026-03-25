@@ -23,6 +23,7 @@ struct RuntimeConfig {
     MemoryLayoutPolicy memoryLayoutPolicy{};
     UnitRegime unitRegime = UnitRegime::Normalized;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
+    ExecutionPolicyMode executionPolicyMode = ExecutionPolicyMode::StrictDeterministic;
     NumericGuardrailPolicy guardrailPolicy{};
     ProfileResolverInput profileInput{};
 };

@@ -6,56 +6,37 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(ws_core
-    src/core/profile_resolver.cpp
-    src/core/interactions.cpp
-    src/core/observability.cpp
-    src/core/replay.cpp
-    src/core/run_signature.cpp
-    src/core/scheduler.cpp
-    src/core/state_store.cpp
-    src/core/runtime.cpp
-    src/core/subsystems/bootstrap_subsystem.cpp
-    src/core/subsystems/subsystems.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/profile_resolver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/interactions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/observability.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/replay.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/run_signature.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/scheduler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/state_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/runtime.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/subsystems/bootstrap_subsystem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/subsystems/subsystems.cpp
 )
 
 target_include_directories(ws_core PUBLIC include)
 
-add_executable(world_sim src/main.cpp)
+add_executable(world_sim ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 target_link_libraries(world_sim PRIVATE ws_core)
 
 enable_testing()
 
-add_executable(determinism_core_test tests/determinism_core.cpp)
-target_link_libraries(determinism_core_test PRIVATE ws_core)
+function(ws_add_test test_name source_relative_path)
+    set(test_source "${CMAKE_CURRENT_SOURCE_DIR}/${source_relative_path}")
+    add_executable(${test_name} "${test_source}")
+    target_link_libraries(${test_name} PRIVATE ws_core)
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
 
-add_test(NAME determinism_core_test COMMAND determinism_core_test)
-
-add_executable(state_store_engine_test tests/state_store_engine.cpp)
-target_link_libraries(state_store_engine_test PRIVATE ws_core)
-
-add_test(NAME state_store_engine_test COMMAND state_store_engine_test)
-
-add_executable(simulation_loop_test tests/simulation_loop.cpp)
-target_link_libraries(simulation_loop_test PRIVATE ws_core)
-
-add_test(NAME simulation_loop_test COMMAND simulation_loop_test)
-
-add_executable(subsystems_test tests/subsystems.cpp)
-target_link_libraries(subsystems_test PRIVATE ws_core)
-
-add_test(NAME subsystems_test COMMAND subsystems_test)
-
-add_executable(interactions_test tests/interactions.cpp)
-target_link_libraries(interactions_test PRIVATE ws_core)
-
-add_test(NAME interactions_test COMMAND interactions_test)
-
-add_executable(advanced_coupling_test tests/advanced_coupling.cpp)
-target_link_libraries(advanced_coupling_test PRIVATE ws_core)
-
-add_test(NAME advanced_coupling_test COMMAND advanced_coupling_test)
-
-add_executable(control_replay_test tests/control_replay.cpp)
-target_link_libraries(control_replay_test PRIVATE ws_core)
-
-add_test(NAME control_replay_test COMMAND control_replay_test)
+ws_add_test(determinism_core_test tests/determinism_core.cpp)
+ws_add_test(state_store_engine_test tests/state_store_engine.cpp)
+ws_add_test(simulation_loop_test tests/simulation_loop.cpp)
+ws_add_test(subsystems_test tests/subsystems.cpp)
+ws_add_test(interactions_test tests/interactions.cpp)
+ws_add_test(advanced_coupling_test tests/advanced_coupling.cpp)
+ws_add_test(control_replay_test tests/control_replay.cpp)
+ws_add_test(parallel_stability_test tests/parallel_stability.cpp)

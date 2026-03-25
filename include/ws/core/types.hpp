@@ -37,6 +37,12 @@ enum class TemporalPolicy : std::uint8_t {
     MultiRateC = 2
 };
 
+enum class ExecutionPolicyMode : std::uint8_t {
+    StrictDeterministic = 0,
+    DeterministicReduced = 1,
+    ThroughputPriority = 2
+};
+
 enum class ReproducibilityClass : std::uint8_t {
     Strict = 0,
     BoundedDivergence = 1,
@@ -134,6 +140,15 @@ using VariableRegistry = std::vector<VariableSpec>;
         case EscalationAction::Damping: return "damping";
         case EscalationAction::ControlledFallback: return "controlled_fallback";
         case EscalationAction::SafeAbort: return "safe_abort";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] inline std::string toString(const ExecutionPolicyMode value) {
+    switch (value) {
+        case ExecutionPolicyMode::StrictDeterministic: return "strict_deterministic";
+        case ExecutionPolicyMode::DeterministicReduced: return "deterministic_reduced";
+        case ExecutionPolicyMode::ThroughputPriority: return "throughput_priority";
     }
     return "unknown";
 }

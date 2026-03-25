@@ -59,15 +59,20 @@ struct StepDiagnostics {
     std::uint64_t inputPatchesApplied = 0;
     std::uint64_t eventPatchesApplied = 0;
     std::uint64_t eventsApplied = 0;
+    std::uint64_t parallelBatchesExecuted = 0;
+    std::uint64_t parallelTasksDispatched = 0;
     std::vector<std::string> orderingLog;
     std::vector<std::string> stabilityAlerts;
     std::vector<std::string> constraintViolations;
     ReproducibilityClass reproducibilityClass = ReproducibilityClass::Strict;
+    ExecutionPolicyMode executionPolicyMode = ExecutionPolicyMode::StrictDeterministic;
     StabilityDiagnostics stability;
 };
 
 class Scheduler {
 public:
+    void setExecutionPolicyMode(ExecutionPolicyMode mode) noexcept;
+    [[nodiscard]] ExecutionPolicyMode executionPolicyMode() const noexcept;
     void registerSubsystem(std::shared_ptr<ISubsystem> subsystem);
     [[nodiscard]] std::vector<std::shared_ptr<ISubsystem>> registeredSubsystems() const;
     void setAdmissionReport(AdmissionReport report);
@@ -92,6 +97,7 @@ private:
     void attachObserverForSubsystem(StateStore& stateStore, const std::shared_ptr<ISubsystem>& subsystem);
 
     std::vector<std::shared_ptr<ISubsystem>> subsystems_;
+    ExecutionPolicyMode executionPolicyMode_ = ExecutionPolicyMode::StrictDeterministic;
     std::optional<AdmissionReport> admissionReport_;
     std::map<std::string, AccessObservation, std::less<>> observedDataFlow_;
 };

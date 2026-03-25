@@ -1,11 +1,14 @@
 #include "ws/core/scheduler.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <future>
 #include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 
 namespace ws {
@@ -120,7 +123,86 @@ void applyDampingFromReference(StateStore& stateStore, const FieldSnapshot& refe
     }
 }
 
+struct ParallelWriteBundle {
+    std::string subsystemName;
+    std::map<std::string, std::vector<float>, std::less<>> scalarWrites;
+    std::set<std::string, std::less<>> observedReads;
+    std::set<std::string, std::less<>> observedWrites;
+};
+
+std::vector<std::vector<std::string>> buildExecutionBatches(
+    const AdmissionReport& report,
+    const std::vector<std::shared_ptr<ISubsystem>>& orderedSubsystems) {
+    std::map<std::string, std::size_t, std::less<>> orderIndex;
+    std::map<std::string, std::set<std::string, std::less<>>, std::less<>> adjacency;
+    std::map<std::string, std::uint64_t, std::less<>> indegree;
+
+    std::size_t index = 0;
+    for (const auto& subsystem : orderedSubsystems) {
+        orderIndex.emplace(subsystem->name(), index++);
+        adjacency[subsystem->name()] = {};
+        indegree[subsystem->name()] = 0;
+    }
+
+    for (const auto& edge : report.edges) {
+        if (!orderIndex.contains(edge.fromSubsystem) || !orderIndex.contains(edge.toSubsystem)) {
+            continue;
+        }
+        if (edge.fromSubsystem == edge.toSubsystem) {
+            continue;
+        }
+
+        if (adjacency[edge.fromSubsystem].insert(edge.toSubsystem).second) {
+            indegree[edge.toSubsystem] += 1;
+        }
+    }
+
+    std::vector<std::vector<std::string>> batches;
+    std::vector<std::string> frontier;
+    for (const auto& [name, degree] : indegree) {
+        if (degree == 0) {
+            frontier.push_back(name);
+        }
+    }
+
+    std::size_t processed = 0;
+    while (!frontier.empty()) {
+        std::sort(frontier.begin(), frontier.end(), [&](const std::string& left, const std::string& right) {
+            return orderIndex.at(left) < orderIndex.at(right);
+        });
+
+        batches.push_back(frontier);
+        processed += frontier.size();
+
+        std::vector<std::string> nextFrontier;
+        for (const auto& current : frontier) {
+            for (const auto& next : adjacency.at(current)) {
+                auto& degree = indegree[next];
+                degree -= 1;
+                if (degree == 0) {
+                    nextFrontier.push_back(next);
+                }
+            }
+        }
+        frontier = std::move(nextFrontier);
+    }
+
+    if (processed != orderedSubsystems.size()) {
+        return {};
+    }
+
+    return batches;
+}
+
 } // namespace
+
+void Scheduler::setExecutionPolicyMode(const ExecutionPolicyMode mode) noexcept {
+    executionPolicyMode_ = mode;
+}
+
+ExecutionPolicyMode Scheduler::executionPolicyMode() const noexcept {
+    return executionPolicyMode_;
+}
 
 void Scheduler::registerSubsystem(std::shared_ptr<ISubsystem> subsystem) {
     if (!subsystem) {
@@ -321,6 +403,7 @@ StepDiagnostics Scheduler::step(
 
     StepDiagnostics diagnostics;
     diagnostics.reproducibilityClass = classifyReproducibility(profile);
+    diagnostics.executionPolicyMode = executionPolicyMode_;
     diagnostics.orderingLog.push_back("pipeline:begin_step_contracts");
 
     const auto ordered = orderedSubsystems();
@@ -339,17 +422,164 @@ StepDiagnostics Scheduler::step(
     diagnostics.orderingLog.push_back("pipeline:subsystem_updates");
 
     auto runUniformPass = [&]() {
-        for (const auto& subsystem : ordered) {
-            diagnostics.orderingLog.push_back("update:" + subsystem->name());
-            attachObserverForSubsystem(stateStore, subsystem);
-            const auto writeSet = effectiveWriteSetFor(subsystem);
-            StateStore::WriteSession session(
-                stateStore,
-                subsystem->name(),
-                std::vector<std::string>(writeSet.begin(), writeSet.end()));
-            subsystem->step(stateStore, session, profile, stepIndex);
-            stateStore.clearAccessObserver();
+        const bool canRunParallel =
+            executionPolicyMode_ != ExecutionPolicyMode::StrictDeterministic &&
+            temporalPolicy == TemporalPolicy::UniformA &&
+            admissionReport_.has_value();
+
+        if (!canRunParallel) {
+            for (const auto& subsystem : ordered) {
+                diagnostics.orderingLog.push_back("update:" + subsystem->name());
+                attachObserverForSubsystem(stateStore, subsystem);
+                const auto writeSet = effectiveWriteSetFor(subsystem);
+                StateStore::WriteSession session(
+                    stateStore,
+                    subsystem->name(),
+                    std::vector<std::string>(writeSet.begin(), writeSet.end()));
+                subsystem->step(stateStore, session, profile, stepIndex);
+                stateStore.clearAccessObserver();
+            }
+            return;
         }
+
+        const auto batches = buildExecutionBatches(*admissionReport_, ordered);
+        if (batches.empty()) {
+            diagnostics.stabilityAlerts.push_back("parallel_execution_fallback:dependency_cycle_detected");
+            for (const auto& subsystem : ordered) {
+                diagnostics.orderingLog.push_back("update:" + subsystem->name());
+                attachObserverForSubsystem(stateStore, subsystem);
+                const auto writeSet = effectiveWriteSetFor(subsystem);
+                StateStore::WriteSession session(
+                    stateStore,
+                    subsystem->name(),
+                    std::vector<std::string>(writeSet.begin(), writeSet.end()));
+                subsystem->step(stateStore, session, profile, stepIndex);
+                stateStore.clearAccessObserver();
+            }
+            return;
+        }
+
+        std::map<std::string, std::shared_ptr<ISubsystem>, std::less<>> byName;
+        for (const auto& subsystem : ordered) {
+            byName.emplace(subsystem->name(), subsystem);
+        }
+
+        StateStoreSnapshot batchBaseline = stateStore.createSnapshot(0, 0, "parallel_execution_baseline");
+
+        for (const auto& batch : batches) {
+            diagnostics.parallelBatchesExecuted += 1;
+            diagnostics.orderingLog.push_back("parallel_batch:size=" + std::to_string(batch.size()));
+
+            std::vector<std::future<ParallelWriteBundle>> futures;
+            futures.reserve(batch.size());
+
+            for (const auto& subsystemName : batch) {
+                const auto subsystemIt = byName.find(subsystemName);
+                if (subsystemIt == byName.end()) {
+                    throw std::runtime_error("Parallel execution subsystem lookup failed: " + subsystemName);
+                }
+
+                const auto& subsystem = subsystemIt->second;
+                const auto writeSet = effectiveWriteSetFor(subsystem);
+                const auto baselineCopy = std::make_shared<StateStoreSnapshot>(batchBaseline);
+
+                diagnostics.parallelTasksDispatched += 1;
+                futures.push_back(std::async(std::launch::async, [&, subsystem, writeSet, baselineCopy]() {
+                    StateStore localState(
+                        stateStore.grid(),
+                        stateStore.boundaryMode(),
+                        stateStore.topologyBackend(),
+                        stateStore.memoryLayoutPolicy());
+                    localState.loadSnapshot(*baselineCopy, 0, 0);
+
+                    StateStore::WriteSession localWriteSession(
+                        localState,
+                        subsystem->name(),
+                        std::vector<std::string>(writeSet.begin(), writeSet.end()));
+                    subsystem->step(localState, localWriteSession, profile, stepIndex);
+
+                    ParallelWriteBundle bundle;
+                    bundle.subsystemName = subsystem->name();
+                    const auto declaredReads = subsystem->declaredReadSet();
+                    bundle.observedReads.insert(
+                        declaredReads.begin(),
+                        declaredReads.end());
+                    bundle.observedWrites.insert(
+                        writeSet.begin(),
+                        writeSet.end());
+
+                    for (const auto& variableName : writeSet) {
+                        const auto& field = localState.scalarField(variableName);
+                        const auto logicalCount = static_cast<std::size_t>(localState.logicalCellCount(variableName));
+                        bundle.scalarWrites.emplace(
+                            variableName,
+                            std::vector<float>(field.begin(), field.begin() + static_cast<std::ptrdiff_t>(logicalCount)));
+                    }
+
+                    return bundle;
+                }));
+            }
+
+            std::vector<ParallelWriteBundle> completedBundles;
+            if (executionPolicyMode_ == ExecutionPolicyMode::ThroughputPriority) {
+                std::vector<bool> collected(futures.size(), false);
+                std::size_t remaining = futures.size();
+                while (remaining > 0) {
+                    bool progress = false;
+                    for (std::size_t i = 0; i < futures.size(); ++i) {
+                        if (collected[i]) {
+                            continue;
+                        }
+                        if (futures[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                            completedBundles.push_back(futures[i].get());
+                            collected[i] = true;
+                            remaining -= 1;
+                            progress = true;
+                        }
+                    }
+                    if (!progress) {
+                        std::this_thread::yield();
+                    }
+                }
+            } else {
+                for (auto& future : futures) {
+                    completedBundles.push_back(future.get());
+                }
+                std::map<std::string, std::size_t, std::less<>> batchOrder;
+                for (std::size_t i = 0; i < batch.size(); ++i) {
+                    batchOrder.emplace(batch[i], i);
+                }
+                std::sort(completedBundles.begin(), completedBundles.end(), [&](const auto& left, const auto& right) {
+                    return batchOrder.at(left.subsystemName) < batchOrder.at(right.subsystemName);
+                });
+            }
+
+            for (const auto& bundle : completedBundles) {
+                auto& observation = observedDataFlow_[bundle.subsystemName];
+                observation.reads.insert(bundle.observedReads.begin(), bundle.observedReads.end());
+                observation.writes.insert(bundle.observedWrites.begin(), bundle.observedWrites.end());
+
+                std::vector<std::string> writeVariables;
+                writeVariables.reserve(bundle.scalarWrites.size());
+                for (const auto& [variableName, values] : bundle.scalarWrites) {
+                    (void)values;
+                    writeVariables.push_back(variableName);
+                }
+
+                StateStore::WriteSession commitSession(stateStore, bundle.subsystemName, writeVariables);
+                for (const auto& [variableName, values] : bundle.scalarWrites) {
+                    for (std::size_t i = 0; i < values.size(); ++i) {
+                        commitSession.setScalar(variableName, stateStore.cellFromIndex(static_cast<std::uint64_t>(i)), values[i]);
+                    }
+                }
+
+                diagnostics.orderingLog.push_back("parallel_commit:" + bundle.subsystemName);
+            }
+
+            batchBaseline = stateStore.createSnapshot(0, 0, "parallel_execution_batch_commit");
+        }
+
+        stateStore.clearAccessObserver();
     };
 
     auto runPhasedPass = [&]() {
