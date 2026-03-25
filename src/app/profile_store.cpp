@@ -56,6 +56,15 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "height=" << config.grid.height << '\n';
     output << "tier=" << toString(config.tier) << '\n';
     output << "temporal=" << temporalPolicyToString(config.temporalPolicy) << '\n';
+    output << "gen.terrain_base_frequency=" << config.worldGen.terrainBaseFrequency << '\n';
+    output << "gen.terrain_detail_frequency=" << config.worldGen.terrainDetailFrequency << '\n';
+    output << "gen.terrain_warp_strength=" << config.worldGen.terrainWarpStrength << '\n';
+    output << "gen.terrain_amplitude=" << config.worldGen.terrainAmplitude << '\n';
+    output << "gen.terrain_ridge_mix=" << config.worldGen.terrainRidgeMix << '\n';
+    output << "gen.sea_level=" << config.worldGen.seaLevel << '\n';
+    output << "gen.polar_cooling=" << config.worldGen.polarCooling << '\n';
+    output << "gen.humidity_from_water=" << config.worldGen.humidityFromWater << '\n';
+    output << "gen.biome_noise_strength=" << config.worldGen.biomeNoiseStrength << '\n';
 }
 
 LaunchConfig ProfileStore::load(const std::string& profileName) const {
@@ -108,6 +117,28 @@ LaunchConfig ProfileStore::load(const std::string& profileName) const {
     config.grid = GridSpec{*width, *height};
     config.tier = *tier;
     config.temporalPolicy = *temporal;
+
+    auto assignOptionalFloat = [&](const char* key, float& target) {
+        const auto it = kv.find(key);
+        if (it == kv.end()) {
+            return;
+        }
+        const auto parsed = parseFloat(it->second);
+        if (parsed.has_value()) {
+            target = *parsed;
+        }
+    };
+
+    assignOptionalFloat("gen.terrain_base_frequency", config.worldGen.terrainBaseFrequency);
+    assignOptionalFloat("gen.terrain_detail_frequency", config.worldGen.terrainDetailFrequency);
+    assignOptionalFloat("gen.terrain_warp_strength", config.worldGen.terrainWarpStrength);
+    assignOptionalFloat("gen.terrain_amplitude", config.worldGen.terrainAmplitude);
+    assignOptionalFloat("gen.terrain_ridge_mix", config.worldGen.terrainRidgeMix);
+    assignOptionalFloat("gen.sea_level", config.worldGen.seaLevel);
+    assignOptionalFloat("gen.polar_cooling", config.worldGen.polarCooling);
+    assignOptionalFloat("gen.humidity_from_water", config.worldGen.humidityFromWater);
+    assignOptionalFloat("gen.biome_noise_strength", config.worldGen.biomeNoiseStrength);
+
     return config;
 }
 

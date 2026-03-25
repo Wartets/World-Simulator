@@ -18,6 +18,71 @@ std::string tierToString(const ModelTier tier) {
     return toString(tier);
 }
 
+float smoothStep(const float t) {
+    const float x = std::clamp(t, 0.0f, 1.0f);
+    return x * x * (3.0f - 2.0f * x);
+}
+
+std::uint64_t mix64(std::uint64_t value) {
+    value += 0x9e3779b97f4a7c15ull;
+    value = (value ^ (value >> 30u)) * 0xbf58476d1ce4e5b9ull;
+    value = (value ^ (value >> 27u)) * 0x94d049bb133111ebull;
+    return value ^ (value >> 31u);
+}
+
+float hash01(const std::uint64_t seed, const int x, const int y) {
+    std::uint64_t h = DeterministicHash::combine(seed, DeterministicHash::hashPod(x));
+    h = DeterministicHash::combine(h, DeterministicHash::hashPod(y));
+    h = mix64(h);
+    const std::uint32_t top24 = static_cast<std::uint32_t>((h >> 40u) & 0xFFFFFFu);
+    return static_cast<float>(top24) / static_cast<float>(0xFFFFFFu);
+}
+
+float valueNoise2D(const std::uint64_t seed, const float x, const float y) {
+    const int x0 = static_cast<int>(std::floor(x));
+    const int y0 = static_cast<int>(std::floor(y));
+    const int x1 = x0 + 1;
+    const int y1 = y0 + 1;
+
+    const float tx = smoothStep(x - static_cast<float>(x0));
+    const float ty = smoothStep(y - static_cast<float>(y0));
+
+    const float n00 = hash01(seed, x0, y0);
+    const float n10 = hash01(seed, x1, y0);
+    const float n01 = hash01(seed, x0, y1);
+    const float n11 = hash01(seed, x1, y1);
+
+    const float nx0 = n00 + (n10 - n00) * tx;
+    const float nx1 = n01 + (n11 - n01) * tx;
+    return nx0 + (nx1 - nx0) * ty;
+}
+
+float fbm2D(
+    const std::uint64_t seed,
+    const float x,
+    const float y,
+    const int octaves,
+    const float lacunarity,
+    const float gain) {
+    float frequency = 1.0f;
+    float amplitude = 1.0f;
+    float total = 0.0f;
+    float amplitudeSum = 0.0f;
+
+    for (int i = 0; i < octaves; ++i) {
+        const std::uint64_t octaveSeed = DeterministicHash::combine(seed, static_cast<std::uint64_t>(i + 1));
+        total += amplitude * valueNoise2D(octaveSeed, x * frequency, y * frequency);
+        amplitudeSum += amplitude;
+        frequency *= lacunarity;
+        amplitude *= gain;
+    }
+
+    if (amplitudeSum <= 1e-6f) {
+        return 0.5f;
+    }
+    return std::clamp(total / amplitudeSum, 0.0f, 1.0f);
+}
+
 } // namespace
 
 Runtime::Runtime(RuntimeConfig config)
@@ -91,10 +156,6 @@ void Runtime::start() {
 
         allocateCanonicalFields();
 
-        DeterministicRngFactory rngFactory(config_.seed);
-        auto bootstrapStream = rngFactory.createStream("runtime.seed.bootstrap_marker");
-        std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
-        std::uniform_real_distribution<float> signedNoise(-1.0f, 1.0f);
         {
             StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {
                 "terrain_elevation_h",
@@ -117,6 +178,22 @@ void Runtime::start() {
             const float invW = 1.0f / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.width - 1));
             const float invH = 1.0f / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.height - 1));
 
+            const float baseFreq = std::max(0.15f, config_.worldGen.terrainBaseFrequency);
+            const float detailFreq = std::max(0.25f, config_.worldGen.terrainDetailFrequency);
+            const float warpStrength = std::clamp(config_.worldGen.terrainWarpStrength, 0.0f, 2.0f);
+            const float terrainAmplitude = std::clamp(config_.worldGen.terrainAmplitude, 0.1f, 3.0f);
+            const float ridgeMix = std::clamp(config_.worldGen.terrainRidgeMix, 0.0f, 1.0f);
+            const float seaLevel = std::clamp(config_.worldGen.seaLevel, 0.0f, 1.0f);
+            const float polarCooling = std::clamp(config_.worldGen.polarCooling, 0.0f, 1.5f);
+            const float humidityFromWater = std::clamp(config_.worldGen.humidityFromWater, 0.0f, 1.5f);
+            const float biomeNoiseStrength = std::clamp(config_.worldGen.biomeNoiseStrength, 0.0f, 1.0f);
+
+            const std::uint64_t noiseSeedA = DeterministicHash::combine(config_.seed, 0xA1C31A5DULL);
+            const std::uint64_t noiseSeedB = DeterministicHash::combine(config_.seed, 0xB73F42D1ULL);
+            const std::uint64_t noiseSeedC = DeterministicHash::combine(config_.seed, 0xCA1F0E91ULL);
+            const std::uint64_t noiseSeedD = DeterministicHash::combine(config_.seed, 0xD4E8B8D3ULL);
+            const std::uint64_t noiseSeedE = DeterministicHash::combine(config_.seed, 0xE713944BULL);
+
             for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
                 for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
                     const float nx = static_cast<float>(x) * invW;
@@ -127,21 +204,59 @@ void Runtime::start() {
                     const float radius = std::sqrt((dx * dx) + (dy * dy)) /
                         std::max(1.0f, std::sqrt(centerX * centerX + centerY * centerY));
 
-                    const float waveA = std::sin(6.2831853f * nx) * std::cos(6.2831853f * ny);
-                    const float waveB = std::sin(12.5663706f * (nx + ny));
-                    const float randomU = distribution(bootstrapStream);
-                    const float randomSigned = signedNoise(bootstrapStream);
+                    const float warpX = fbm2D(noiseSeedA, nx * detailFreq, ny * detailFreq, 3, 2.0f, 0.5f);
+                    const float warpY = fbm2D(noiseSeedB, nx * detailFreq, ny * detailFreq, 3, 2.0f, 0.5f);
+                    const float domainX = nx + (warpX - 0.5f) * warpStrength;
+                    const float domainY = ny + (warpY - 0.5f) * warpStrength;
 
-                    const float elevation = 0.35f + 0.35f * waveA + 0.20f * waveB - 0.30f * radius + 0.10f * randomSigned;
-                    const float water = std::clamp(0.75f - elevation + 0.10f * randomSigned, 0.0f, 1.0f);
-                    const float temperature = std::clamp(0.30f + 0.60f * (1.0f - ny) + 0.12f * waveA + 0.06f * randomSigned, 0.0f, 1.0f);
-                    const float humidity = std::clamp(0.35f + 0.45f * water + 0.15f * std::sin(9.0f * nx), 0.0f, 1.0f);
-                    const float wind = std::clamp(0.5f + 0.45f * std::sin(6.2831853f * ny) - 0.20f * std::cos(6.2831853f * nx), 0.0f, 1.0f);
-                    const float climate = std::clamp(0.5f * (temperature + humidity), 0.0f, 1.0f);
-                    const float fertility = std::clamp(0.30f + 0.50f * (1.0f - std::abs(elevation - 0.35f)) + 0.10f * randomSigned, 0.0f, 1.0f);
+                    const float continental = fbm2D(noiseSeedC, domainX * baseFreq, domainY * baseFreq, 5, 2.0f, 0.54f);
+                    const float detail = fbm2D(noiseSeedD, domainX * detailFreq, domainY * detailFreq, 4, 2.3f, 0.56f);
+                    const float ridge = 1.0f - std::abs(2.0f * detail - 1.0f);
+                    const float biomeNoise = fbm2D(noiseSeedE, nx * (detailFreq * 0.5f), ny * (detailFreq * 0.5f), 3, 2.0f, 0.6f);
+
+                    const float macroShape = std::clamp(1.0f - radius * 0.85f, 0.0f, 1.0f);
+                    const float elevationRaw = std::clamp(
+                        (continental * 0.62f) +
+                        (ridge * 0.28f * ridgeMix) +
+                        (macroShape * 0.10f),
+                        0.0f,
+                        1.0f);
+                    const float elevation = std::clamp(0.5f + (elevationRaw - 0.5f) * terrainAmplitude, 0.0f, 1.0f);
+
+                    const float waterBasin = std::clamp((seaLevel - elevation) * 2.3f + 0.5f, 0.0f, 1.0f);
+                    const float coastalNoise = (biomeNoise - 0.5f) * 0.25f;
+                    const float water = std::clamp(waterBasin + coastalNoise, 0.0f, 1.0f);
+
+                    const float latitudinal = 1.0f - std::abs(2.0f * ny - 1.0f);
+                    const float heightCooling = std::clamp(elevation * 0.45f, 0.0f, 1.0f);
+                    const float temperature = std::clamp(
+                        0.25f +
+                            0.55f * latitudinal * (1.0f - 0.35f * polarCooling) +
+                            0.20f * (1.0f - heightCooling) +
+                            (biomeNoise - 0.5f) * biomeNoiseStrength,
+                        0.0f,
+                        1.0f);
+
+                    const float humidity = std::clamp(
+                        0.20f +
+                            humidityFromWater * 0.45f * water +
+                            0.25f * (1.0f - std::abs(temperature - 0.55f)) +
+                            (biomeNoise - 0.5f) * 0.2f,
+                        0.0f,
+                        1.0f);
+
+                    const float wind = std::clamp(
+                        0.25f +
+                            0.45f * fbm2D(noiseSeedB, nx * 4.0f + 11.0f, ny * 4.0f + 7.0f, 3, 2.0f, 0.6f) +
+                            0.30f * std::abs(temperature - 0.5f),
+                        0.0f,
+                        1.0f);
+
+                    const float climate = std::clamp(0.45f * temperature + 0.55f * humidity, 0.0f, 1.0f);
+                    const float fertility = std::clamp(0.25f + 0.55f * humidity + 0.20f * (1.0f - std::abs(elevation - seaLevel)), 0.0f, 1.0f);
                     const float vegetation = std::clamp(0.25f + 0.55f * fertility * humidity, 0.0f, 1.0f);
-                    const float resources = std::clamp(0.20f + 0.50f * vegetation + 0.20f * water + 0.10f * randomU, 0.0f, 1.0f);
-                    const float eventSignal = std::clamp(0.5f + 0.45f * std::sin(15.0f * radius + 4.0f * nx), 0.0f, 1.0f);
+                    const float resources = std::clamp(0.15f + 0.55f * vegetation + 0.15f * water + 0.15f * biomeNoise, 0.0f, 1.0f);
+                    const float eventSignal = std::clamp(0.15f + 0.85f * fbm2D(noiseSeedA, domainX * 10.0f + 3.0f, domainY * 10.0f + 5.0f, 3, 2.1f, 0.58f), 0.0f, 1.0f);
 
                     seedWriter.setScalar("terrain_elevation_h", Cell{x, y}, elevation);
                     seedWriter.setScalar("surface_water_w", Cell{x, y}, water);
@@ -155,8 +270,8 @@ void Runtime::start() {
                     seedWriter.setScalar("event_signal_e", Cell{x, y}, eventSignal);
                     seedWriter.setScalar("event_water_delta", Cell{x, y}, 0.0f);
                     seedWriter.setScalar("event_temperature_delta", Cell{x, y}, 0.0f);
-                    seedWriter.setScalar("bootstrap_marker", Cell{x, y}, randomU);
-                    seedWriter.setScalar("seed_probe", Cell{x, y}, randomU);
+                    seedWriter.setScalar("bootstrap_marker", Cell{x, y}, biomeNoise);
+                    seedWriter.setScalar("seed_probe", Cell{x, y}, continental);
                 }
             }
         }

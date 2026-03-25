@@ -15,6 +15,18 @@
 
 namespace ws {
 
+struct WorldGenerationParams {
+    float terrainBaseFrequency = 2.2f;
+    float terrainDetailFrequency = 7.5f;
+    float terrainWarpStrength = 0.55f;
+    float terrainAmplitude = 1.0f;
+    float terrainRidgeMix = 0.28f;
+    float seaLevel = 0.48f;
+    float polarCooling = 0.62f;
+    float humidityFromWater = 0.52f;
+    float biomeNoiseStrength = 0.20f;
+};
+
 struct RuntimeConfig {
     std::uint64_t seed = 1;
     GridSpec grid{16, 16};
@@ -26,6 +38,7 @@ struct RuntimeConfig {
     ExecutionPolicyMode executionPolicyMode = ExecutionPolicyMode::StrictDeterministic;
     NumericGuardrailPolicy guardrailPolicy{};
     ProfileResolverInput profileInput{};
+    WorldGenerationParams worldGen{};
 };
 
 struct ScalarWritePatch {

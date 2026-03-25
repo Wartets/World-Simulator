@@ -72,8 +72,18 @@ struct PanelState {
     float constraintRigidity = 0.5f;
     float constraintTolerance = 0.1f;
 
+    float terrainBaseFrequency = 2.2f;
+    float terrainDetailFrequency = 7.5f;
+    float terrainWarpStrength = 0.55f;
+    float terrainAmplitude = 1.0f;
+    float terrainRidgeMix = 0.28f;
+    float seaLevel = 0.48f;
+    float polarCooling = 0.62f;
+    float humidityFromWater = 0.52f;
+    float biomeNoiseStrength = 0.20f;
+
     char profileName[128] = "baseline";
-    char summaryVariable[128] = "temperature_t";
+    char summaryVariable[128] = "temperature_T";
     char checkpointLabel[128] = "quick";
 };
 
@@ -792,8 +802,13 @@ private:
             const auto period = std::chrono::duration_cast<clock::duration>(
                 std::chrono::duration<double>(1.0 / static_cast<double>(hz)));
 
+            const bool continuous = snapshotContinuousMode_.load();
             const auto now = clock::now();
             const bool forced = snapshotRequestPending_.exchange(false);
+            if (!forced && !continuous) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                continue;
+            }
             if (!forced && now < nextCapture) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 continue;
@@ -872,20 +887,24 @@ private:
     }
 
     void tickAutoRun(const float frameDt) {
+        snapshotContinuousMode_.store(viz_.autoRun && runtime_.isRunning());
+
         if (!viz_.autoRun || !runtime_.isRunning() || runtime_.isPaused()) {
             return;
         }
 
         autoRunStepBudget_ += static_cast<double>(std::max(1, viz_.simulationTickHz)) * static_cast<double>(std::max(0.0f, frameDt));
-        const int batch = static_cast<int>(std::floor(autoRunStepBudget_));
+        autoRunStepBudget_ = std::min(autoRunStepBudget_, 4.0);
+        const int batch = std::min(2, static_cast<int>(std::floor(autoRunStepBudget_)));
         if (batch <= 0) {
             return;
         }
 
         autoRunStepBudget_ -= static_cast<double>(batch);
 
+        const int stepsToRun = std::min(64, std::max(1, viz_.autoStepsPerFrame * batch));
         std::string message;
-        if (!runtime_.step(static_cast<std::uint32_t>(std::max(1, viz_.autoStepsPerFrame * batch)), message)) {
+        if (!runtime_.step(static_cast<std::uint32_t>(stepsToRun), message)) {
             viz_.autoRun = false;
             appendLog(message.empty() ? "auto_run_failed" : message);
             std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", message.c_str());
@@ -915,6 +934,36 @@ private:
         ImGui::End();
     }
 
+    void settingHint(const char* text) const {
+        if (text != nullptr && text[0] != '\0') {
+            DelayedTooltip(text);
+        }
+    }
+
+    bool checkboxWithHint(const char* label, bool* value, const char* hint) {
+        const bool changed = ImGui::Checkbox(label, value);
+        settingHint(hint);
+        return changed;
+    }
+
+    bool sliderFloatWithHint(const char* label, float* value, const float minV, const float maxV, const char* format, const char* hint) {
+        const bool changed = NumericSliderPair(label, value, minV, maxV, format);
+        settingHint(hint);
+        return changed;
+    }
+
+    bool sliderIntWithHint(const char* label, int* value, const int minV, const int maxV, const char* hint) {
+        const bool changed = NumericSliderPairInt(label, value, minV, maxV);
+        settingHint(hint);
+        return changed;
+    }
+
+    bool inputTextWithHint(const char* label, char* buffer, const std::size_t size, const char* hint) {
+        const bool changed = ImGui::InputText(label, buffer, size);
+        settingHint(hint);
+        return changed;
+    }
+
     void drawControlPanel() {
         ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(480.0f, 850.0f), ImGuiCond_FirstUseEver);
@@ -938,6 +987,7 @@ private:
             }
             if (ImGui::BeginTabItem("Environment")) {
                 drawGridSetupSection();
+                drawWorldGenerationSection();
                 drawPhysicsSection();
                 ImGui::EndTabItem();
             }
@@ -1014,9 +1064,9 @@ private:
 
             ImGui::Separator();
 
-            ImGui::Checkbox("Auto-run simulation", &viz_.autoRun);
+            checkboxWithHint("Auto-run simulation", &viz_.autoRun, "Continuously advances the simulation at the configured tick rate. Disable for manual stepping.");
             if (viz_.autoRun) {
-                NumericSliderPairInt("Steps / tick", &viz_.autoStepsPerFrame, 1, 128);
+                sliderIntWithHint("Steps / tick", &viz_.autoStepsPerFrame, 1, 128, "How many simulation steps are executed each tick while auto-run is enabled.");
                 if (PrimaryButton("Pause", ImVec2(80, 26))) {
                     std::string message;
                     runtime_.pause(message);
@@ -1032,7 +1082,7 @@ private:
                     triggerOverlay(OverlayIcon::Play);
                 }
             } else {
-                NumericSliderPairInt("Step Count", &panel_.stepCount, 1, 1000000);
+                sliderIntWithHint("Step Count", &panel_.stepCount, 1, 1000000, "Number of steps to execute when pressing Run Step(s).");
                 if (PrimaryButton("Run Step(s)", ImVec2(120, 26))) {
                     std::string message;
                     runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), message);
@@ -1042,7 +1092,7 @@ private:
 
                 ImGui::Separator();
                 int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
-                if (NumericSliderPairInt("Run Until", &runUntil, 0, kImGuiIntSafeMax)) {
+                if (sliderIntWithHint("Run Until", &runUntil, 0, kImGuiIntSafeMax, "Advance simulation until this absolute step index is reached.")) {
                     panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
                 }
                 if (PrimaryButton("Run Continuous", ImVec2(120, 26))) {
@@ -1062,14 +1112,14 @@ private:
             ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
             ImGui::Text("Snapshot mapping time: %.2f ms", viz_.lastSnapshotDurationMs);
             
-            NumericSliderPairInt("Simulation tick Hz", &viz_.simulationTickHz, 1, 240);
-            NumericSliderPair("Snapshot target Hz", &viz_.snapshotRefreshHz, 1.0f, 120.0f, "%.1f");
+            sliderIntWithHint("Simulation tick Hz", &viz_.simulationTickHz, 1, 240, "Target simulation frequency used by auto-run.");
+            sliderFloatWithHint("Snapshot target Hz", &viz_.snapshotRefreshHz, 1.0f, 120.0f, "%.1f", "Target frequency for background snapshot captures.");
 
-            ImGui::Checkbox("Adaptive Render Sampling", &viz_.adaptiveSampling);
+            checkboxWithHint("Adaptive Render Sampling", &viz_.adaptiveSampling, "Automatically increases sampling stride when zoomed out to keep rendering responsive.");
             if (!viz_.adaptiveSampling) {
-                NumericSliderPairInt("Manual stride", &viz_.manualSamplingStride, 1, 64);
+                sliderIntWithHint("Manual stride", &viz_.manualSamplingStride, 1, 64, "Render one cell every N cells when adaptive sampling is disabled.");
             }
-            NumericSliderPairInt("Max rendered cells", &viz_.maxRenderedCells, 1000, 2000000);
+            sliderIntWithHint("Max rendered cells", &viz_.maxRenderedCells, 1000, 2000000, "Hard cap on drawn cells per frame across panels.");
 
             if (PrimaryButton("Force Snapshot Refresh", ImVec2(-1.0f, 24.0f))) {
                 requestSnapshotRefresh();
@@ -1081,7 +1131,7 @@ private:
     void drawProfilesAndLogSection() {
         PushSectionTint(2);
         if (ImGui::CollapsingHeader("Profiles & Events", 0)) { // Closed by default
-            ImGui::InputText("Profile", panel_.profileName, sizeof(panel_.profileName));
+            inputTextWithHint("Profile", panel_.profileName, sizeof(panel_.profileName), "Profile name used for save/load operations.");
             if (PrimaryButton("Save", ImVec2(70, 26))) {
                 std::string message;
                 runtime_.saveProfile(panel_.profileName, message);
@@ -1130,6 +1180,7 @@ private:
             if (ImGui::Combo("Display Mode", &mode, modeNames.data(), static_cast<int>(modeNames.size()))) {
                 viz_.mode = static_cast<DisplayMode>(std::clamp(mode, 0, static_cast<int>(modeNames.size()) - 1));
             }
+            settingHint("How scalar fields are arranged on the simulation canvas.");
 
             if (PrimaryButton("Refresh Field List", ImVec2(160.0f, 24.0f))) {
                 refreshFieldNames();
@@ -1146,6 +1197,7 @@ private:
                     }
                     ImGui::EndCombo();
                 }
+                settingHint("Main scalar variable displayed in the first panel.");
 
                 if (viz_.mode != DisplayMode::Single) {
                     if (ImGui::BeginCombo("Secondary Field", viz_.fieldNames[static_cast<std::size_t>(viz_.secondaryFieldIndex)].c_str())) {
@@ -1157,10 +1209,11 @@ private:
                         }
                         ImGui::EndCombo();
                     }
+                    settingHint("Secondary scalar variable used by split or mixed display modes.");
                 }
 
                 if (viz_.mode == DisplayMode::MixedOverlay) {
-                    NumericSliderPair("Overlay Blend", &viz_.secondaryBlend, 0.0f, 1.0f, "%.2f");
+                    sliderFloatWithHint("Overlay Blend", &viz_.secondaryBlend, 0.0f, 1.0f, "%.2f", "Blend weight of the secondary field in mixed overlay mode.");
                 }
             }
 
@@ -1172,22 +1225,24 @@ private:
             if (ImGui::Combo("Color Palette", &colorMap, colorMapNames.data(), static_cast<int>(colorMapNames.size()))) {
                 viz_.colorMapMode = static_cast<ColorMapMode>(std::clamp(colorMap, 0, static_cast<int>(colorMapNames.size()) - 1));
             }
+            settingHint("Transfer palette used to map normalized scalar values to color.");
 
             static constexpr std::array<const char*, 3> normalizationNames = {"Per-frame Auto", "Sticky Limit (per-field)", "Fixed Manual Bounds"};
             int normalization = static_cast<int>(viz_.normalizationMode);
             if (ImGui::Combo("Normalization", &normalization, normalizationNames.data(), static_cast<int>(normalizationNames.size()))) {
                 viz_.normalizationMode = static_cast<NormalizationMode>(std::clamp(normalization, 0, static_cast<int>(normalizationNames.size()) - 1));
             }
+            settingHint("Controls how value ranges are normalized before color mapping.");
 
             if (viz_.normalizationMode == NormalizationMode::StickyPerField) {
                 if (ImGui::Button("Reset Sticky Tracking", ImVec2(170.0f, 24.0f))) {
                     viz_.stickyRanges.clear();
                 }
                 ImGui::SameLine();
-                ImGui::Checkbox("Debug range metrics", &viz_.showRangeDetails);
+                checkboxWithHint("Debug range metrics", &viz_.showRangeDetails, "Shows min/max diagnostics for normalization debugging.");
             } else if (viz_.normalizationMode == NormalizationMode::FixedManual) {
-                NumericSliderPair("Range Min", &viz_.fixedRangeMin, -15.0f, 15.0f, "%.3f");
-                NumericSliderPair("Range Max", &viz_.fixedRangeMax, -15.0f, 15.0f, "%.3f");
+                sliderFloatWithHint("Range Min", &viz_.fixedRangeMin, -15.0f, 15.0f, "%.3f", "Lower bound for fixed normalization mode.");
+                sliderFloatWithHint("Range Max", &viz_.fixedRangeMax, -15.0f, 15.0f, "%.3f", "Upper bound for fixed normalization mode.");
             }
         }
         PopSectionTint();
@@ -1196,28 +1251,28 @@ private:
     void drawOverlaysSection() {
         PushSectionTint(4);
         if (ImGui::CollapsingHeader("Vector & Spatial Overlays", 0)) { // Closed by default
-            ImGui::Checkbox("Show Domain Boundary", &visuals_.showBoundary);
+            checkboxWithHint("Show Domain Boundary", &visuals_.showBoundary, "Draw a boundary rectangle around the visible simulation domain.");
             if (visuals_.showBoundary) {
                 ImGui::Indent();
-                NumericSliderPair("Opacity", &visuals_.boundaryOpacity, 0.0f, 1.0f, "%.2f");
-                NumericSliderPair("Thickness", &visuals_.boundaryThickness, 0.5f, 6.0f, "%.2f");
-                ImGui::Checkbox("Animate Pulse", &visuals_.boundaryAnimate);
+                sliderFloatWithHint("Opacity", &visuals_.boundaryOpacity, 0.0f, 1.0f, "%.2f", "Boundary line alpha.");
+                sliderFloatWithHint("Thickness", &visuals_.boundaryThickness, 0.5f, 6.0f, "%.2f", "Boundary line width in pixels.");
+                checkboxWithHint("Animate Pulse", &visuals_.boundaryAnimate, "Animates boundary opacity to improve visibility during motion.");
                 if (accessibility_.reduceMotion) { visuals_.boundaryAnimate = false; }
                 ImGui::Unindent();
             }
 
-            ImGui::Checkbox("Overlay Cell Grid", &visuals_.showGrid);
+            checkboxWithHint("Overlay Cell Grid", &visuals_.showGrid, "Draws grid lines over rasterized cells.");
             if (visuals_.showGrid) {
                 viz_.showCellGrid = true;
                 ImGui::Indent();
-                NumericSliderPair("Grid Op", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f");
-                NumericSliderPair("Grid W", &visuals_.gridLineThickness, 0.5f, 4.0f, "%.2f");
+                sliderFloatWithHint("Grid Op", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f", "Grid line opacity.");
+                sliderFloatWithHint("Grid W", &visuals_.gridLineThickness, 0.5f, 4.0f, "%.2f", "Grid line thickness in pixels.");
                 ImGui::Unindent();
             } else {
                 viz_.showCellGrid = false;
             }
 
-            ImGui::Checkbox("Render Vector Fields", &viz_.showVectorField);
+            checkboxWithHint("Render Vector Fields", &viz_.showVectorField, "Draws vectors from the selected X/Y scalar fields.");
             if (viz_.showVectorField && !viz_.fieldNames.empty()) {
                 ImGui::Indent();
                 clampVisualizationIndices();
@@ -1233,14 +1288,14 @@ private:
                     }
                     ImGui::EndCombo();
                 }
-                NumericSliderPairInt("Ray Stride", &viz_.vectorStride, 1, 32);
-                NumericSliderPair("Ray Scale", &viz_.vectorScale, 0.05f, 2.0f, "%.2f");
+                sliderIntWithHint("Ray Stride", &viz_.vectorStride, 1, 32, "Sample spacing used when drawing vectors.");
+                sliderFloatWithHint("Ray Scale", &viz_.vectorScale, 0.05f, 2.0f, "%.2f", "Vector length scale.");
                 ImGui::Unindent();
             }
 
             ImGui::Separator();
-            ImGui::Checkbox("Show Value Legend", &viz_.showLegend);
-            ImGui::Checkbox("Render Sparse Objects", &viz_.showSparseOverlay);
+            checkboxWithHint("Show Value Legend", &viz_.showLegend, "Displays min/max/value legend overlays where available.");
+            checkboxWithHint("Render Sparse Objects", &viz_.showSparseOverlay, "Includes sparse overlay entries in the rasterized display.");
         }
         PopSectionTint();
     }
@@ -1248,14 +1303,14 @@ private:
     void drawOpticsSection() {
         PushSectionTint(5);
         if (ImGui::CollapsingHeader("Camera & Optics", 0)) { // Closed by default
-            NumericSliderPair("Zoom", &visuals_.zoom, 0.1f, 10.0f, "%.2f");
-            NumericSliderPair("Pan X", &visuals_.panX, -2000.0f, 2000.0f, "%.1f");
-            NumericSliderPair("Pan Y", &visuals_.panY, -2000.0f, 2000.0f, "%.1f");
+            sliderFloatWithHint("Zoom", &visuals_.zoom, 0.1f, 10.0f, "%.2f", "Zoom factor while preserving aspect ratio.");
+            sliderFloatWithHint("Pan X", &visuals_.panX, -2000.0f, 2000.0f, "%.1f", "Horizontal pan offset in pixels.");
+            sliderFloatWithHint("Pan Y", &visuals_.panY, -2000.0f, 2000.0f, "%.1f", "Vertical pan offset in pixels.");
             ImGui::Separator();
-            NumericSliderPair("Brightness", &visuals_.brightness, 0.1f, 3.0f, "%.2f");
-            NumericSliderPair("Contrast", &visuals_.contrast, 0.1f, 3.0f, "%.2f");
-            NumericSliderPair("Gamma", &visuals_.gamma, 0.2f, 3.0f, "%.2f");
-            ImGui::Checkbox("Invert Colors", &visuals_.invertColors);
+            sliderFloatWithHint("Brightness", &visuals_.brightness, 0.1f, 3.0f, "%.2f", "Post-color brightness multiplier.");
+            sliderFloatWithHint("Contrast", &visuals_.contrast, 0.1f, 3.0f, "%.2f", "Post-color contrast around mid-gray.");
+            sliderFloatWithHint("Gamma", &visuals_.gamma, 0.2f, 3.0f, "%.2f", "Display gamma correction applied after contrast/brightness.");
+            checkboxWithHint("Invert Colors", &visuals_.invertColors, "Inverts mapped colors after transfer.");
         }
         PopSectionTint();
     }
@@ -1264,12 +1319,12 @@ private:
         PushSectionTint(6);
         if (ImGui::CollapsingHeader("Grid Matrix Registration", ImGuiTreeNodeFlags_DefaultOpen)) {
             int seed = static_cast<int>(std::min<std::uint64_t>(panel_.seed, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
-            if (NumericSliderPairInt("Entropy Seed", &seed, 0, kImGuiIntSafeMax)) {
+            if (sliderIntWithHint("Entropy Seed", &seed, 0, kImGuiIntSafeMax, "Primary deterministic seed for world generation and initialization.")) {
                 panel_.seed = static_cast<std::uint64_t>(seed);
             }
 
-            NumericSliderPairInt("Width (Cols)", &panel_.gridWidth, 1, 1024);
-            NumericSliderPairInt("Height (Rows)", &panel_.gridHeight, 1, 1024);
+            sliderIntWithHint("Width (Cols)", &panel_.gridWidth, 1, 1024, "Grid width in cells.");
+            sliderIntWithHint("Height (Rows)", &panel_.gridHeight, 1, 1024, "Grid height in cells.");
 
             if (ImGui::BeginCombo("Runtime Tier", kTierOptions[panel_.tierIndex])) {
                 for (int i = 0; i < static_cast<int>(kTierOptions.size()); ++i) {
@@ -1277,6 +1332,7 @@ private:
                 }
                 ImGui::EndCombo();
             }
+            settingHint("Model family tier controlling coupling complexity (A/B/C).");
 
             if (ImGui::BeginCombo("Temporal Mode", kTemporalOptions[panel_.temporalIndex])) {
                 for (int i = 0; i < static_cast<int>(kTemporalOptions.size()); ++i) {
@@ -1284,6 +1340,7 @@ private:
                 }
                 ImGui::EndCombo();
             }
+            settingHint("Temporal integration policy used by the scheduler.");
 
             ImGui::Spacing();
             if (PrimaryButton("Apply Configuration & Reset", ImVec2(-1.0f, 32.0f))) {
@@ -1293,22 +1350,45 @@ private:
         PopSectionTint();
     }
 
-    void drawPhysicsSection() {
+    void drawWorldGenerationSection() {
         PushSectionTint(7);
+        if (ImGui::CollapsingHeader("World Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextUnformatted("Terrain Spectrum");
+            sliderFloatWithHint("Base Frequency", &panel_.terrainBaseFrequency, 0.1f, 12.0f, "%.2f", "Low-frequency terrain structure scale (continents/hills).");
+            sliderFloatWithHint("Detail Frequency", &panel_.terrainDetailFrequency, 0.2f, 24.0f, "%.2f", "High-frequency terrain detail scale.");
+            sliderFloatWithHint("Warp Strength", &panel_.terrainWarpStrength, 0.0f, 2.0f, "%.2f", "Domain warp amount used to bend noise patterns.");
+            sliderFloatWithHint("Terrain Amplitude", &panel_.terrainAmplitude, 0.1f, 3.0f, "%.2f", "Overall elevation contrast.");
+            sliderFloatWithHint("Ridge Mix", &panel_.terrainRidgeMix, 0.0f, 1.0f, "%.2f", "Adds ridge-like structures to terrain.");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Climate and Hydrology");
+            sliderFloatWithHint("Sea Level", &panel_.seaLevel, 0.0f, 1.0f, "%.3f", "Waterline threshold used to derive initial water coverage.");
+            sliderFloatWithHint("Polar Cooling", &panel_.polarCooling, 0.0f, 1.5f, "%.2f", "Strength of temperature cooling away from warm latitudes.");
+            sliderFloatWithHint("Humidity from Water", &panel_.humidityFromWater, 0.0f, 1.5f, "%.2f", "Influence of water presence on humidity initialization.");
+            sliderFloatWithHint("Biome Noise", &panel_.biomeNoiseStrength, 0.0f, 1.0f, "%.2f", "Additional noise contribution to biome/temperature diversity.");
+
+            ImGui::Spacing();
+            ImGui::TextDisabled("These settings apply on Start/Restart or after applying config.");
+        }
+        PopSectionTint();
+    }
+
+    void drawPhysicsSection() {
+        PushSectionTint(8);
         if (ImGui::CollapsingHeader("Environmental Physics", 0)) { // Closed by default
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Continuum Force Models");
-            NumericSliderPair("Global Force Scale", &panel_.forceFieldScale, 0.0f, 10.0f, "%.2f");
-            NumericSliderPair("Kinetic Damping", &panel_.forceFieldDamping, 0.0f, 1.0f, "%.3f");
+            sliderFloatWithHint("Global Force Scale", &panel_.forceFieldScale, 0.0f, 10.0f, "%.2f", "Strength of force-field interactions.");
+            sliderFloatWithHint("Kinetic Damping", &panel_.forceFieldDamping, 0.0f, 1.0f, "%.3f", "Velocity damping factor per step.");
             
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Particulate Interactions");
-            NumericSliderPair("Entity Mobility", &panel_.particleMobility, 0.0f, 1.0f, "%.3f");
-            NumericSliderPair("Cluster Cohesion", &panel_.particleCohesion, 0.0f, 1.0f, "%.3f");
+            sliderFloatWithHint("Entity Mobility", &panel_.particleMobility, 0.0f, 1.0f, "%.3f", "Mobility factor for particle-like transport behavior.");
+            sliderFloatWithHint("Cluster Cohesion", &panel_.particleCohesion, 0.0f, 1.0f, "%.3f", "Tendency to cluster with neighboring state.");
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Numerical Bounds");
-            NumericSliderPair("Boundary Rigidity", &panel_.constraintRigidity, 0.0f, 1.0f, "%.3f");
-            NumericSliderPair("Solver Tolerance", &panel_.constraintTolerance, 0.0f, 1.0f, "%.3f");
+            sliderFloatWithHint("Boundary Rigidity", &panel_.constraintRigidity, 0.0f, 1.0f, "%.3f", "Strength of imposed boundary constraints.");
+            sliderFloatWithHint("Solver Tolerance", &panel_.constraintTolerance, 0.0f, 1.0f, "%.3f", "Accepted numerical tolerance for constraint resolution.");
         }
         PopSectionTint();
     }
@@ -1335,7 +1415,7 @@ private:
             }
 
             ImGui::Spacing();
-            ImGui::InputText("Query Variable", panel_.summaryVariable, sizeof(panel_.summaryVariable));
+            inputTextWithHint("Query Variable", panel_.summaryVariable, sizeof(panel_.summaryVariable), "Field name to summarize (e.g., temperature_T).");
             if (PrimaryButton("Extract Summary", ImVec2(-1.0f, 26))) {
                 std::string message;
                 runtime_.summarizeField(panel_.summaryVariable, message);
@@ -1344,7 +1424,7 @@ private:
 
             ImGui::Separator();
             ImGui::Text("Volume Checkpoints");
-            ImGui::InputText("Label", panel_.checkpointLabel, sizeof(panel_.checkpointLabel));
+            inputTextWithHint("Label", panel_.checkpointLabel, sizeof(panel_.checkpointLabel), "Checkpoint label used by store/restore/list operations.");
             
             if (PrimaryButton("Store", ImVec2(90, 26))) {
                 std::string message;
@@ -1373,16 +1453,16 @@ private:
             bool styleChanged = false;
             bool rebuildFonts = false;
 
-            styleChanged |= NumericSliderPair("UI Scale", &accessibility_.uiScale, 0.75f, 3.0f, "%.2f");
-            if (NumericSliderPair("Font Size", &accessibility_.fontSizePx, 10.0f, 32.0f, "%.1f")) {
+            styleChanged |= sliderFloatWithHint("UI Scale", &accessibility_.uiScale, 0.75f, 3.0f, "%.2f", "Global UI scale multiplier.");
+            if (sliderFloatWithHint("Font Size", &accessibility_.fontSizePx, 10.0f, 32.0f, "%.1f", "Base font pixel size.")) {
                 styleChanged = true;
                 rebuildFonts = true;
             }
 
-            styleChanged |= ImGui::Checkbox("High Contrast", &accessibility_.highContrast);
-            styleChanged |= ImGui::Checkbox("Keyboard Navigation", &accessibility_.keyboardNav);
-            styleChanged |= ImGui::Checkbox("Focus Indicators", &accessibility_.focusIndicators);
-            ImGui::Checkbox("Reduce Motion", &accessibility_.reduceMotion);
+            styleChanged |= checkboxWithHint("High Contrast", &accessibility_.highContrast, "Boosts contrast in the UI theme.");
+            styleChanged |= checkboxWithHint("Keyboard Navigation", &accessibility_.keyboardNav, "Enables keyboard-first UI navigation.");
+            styleChanged |= checkboxWithHint("Focus Indicators", &accessibility_.focusIndicators, "Highlights active/focused controls.");
+            checkboxWithHint("Reduce Motion", &accessibility_.reduceMotion, "Disables non-essential animation effects.");
 
             if (styleChanged) {
                 applyTheme(rebuildFonts);
@@ -1400,6 +1480,16 @@ private:
 
         const std::string temporal = app::temporalPolicyToString(config.temporalPolicy);
         panel_.temporalIndex = (temporal == "uniform") ? 0 : (temporal == "phased") ? 1 : 2;
+
+        panel_.terrainBaseFrequency = config.worldGen.terrainBaseFrequency;
+        panel_.terrainDetailFrequency = config.worldGen.terrainDetailFrequency;
+        panel_.terrainWarpStrength = config.worldGen.terrainWarpStrength;
+        panel_.terrainAmplitude = config.worldGen.terrainAmplitude;
+        panel_.terrainRidgeMix = config.worldGen.terrainRidgeMix;
+        panel_.seaLevel = config.worldGen.seaLevel;
+        panel_.polarCooling = config.worldGen.polarCooling;
+        panel_.humidityFromWater = config.worldGen.humidityFromWater;
+        panel_.biomeNoiseStrength = config.worldGen.biomeNoiseStrength;
     }
 
     void applyConfigFromPanel() {
@@ -1412,13 +1502,26 @@ private:
             config.temporalPolicy = *parsedTemporal;
         }
 
+        config.worldGen.terrainBaseFrequency = panel_.terrainBaseFrequency;
+        config.worldGen.terrainDetailFrequency = panel_.terrainDetailFrequency;
+        config.worldGen.terrainWarpStrength = panel_.terrainWarpStrength;
+        config.worldGen.terrainAmplitude = panel_.terrainAmplitude;
+        config.worldGen.terrainRidgeMix = panel_.terrainRidgeMix;
+        config.worldGen.seaLevel = panel_.seaLevel;
+        config.worldGen.polarCooling = panel_.polarCooling;
+        config.worldGen.humidityFromWater = panel_.humidityFromWater;
+        config.worldGen.biomeNoiseStrength = panel_.biomeNoiseStrength;
+
         runtime_.setConfig(config);
 
         std::ostringstream output;
         output << "config_applied seed=" << config.seed
                << " grid=" << config.grid.width << 'x' << config.grid.height
                << " tier=" << toString(config.tier)
-               << " temporal=" << app::temporalPolicyToString(config.temporalPolicy);
+             << " temporal=" << app::temporalPolicyToString(config.temporalPolicy)
+             << " gen.base_freq=" << config.worldGen.terrainBaseFrequency
+             << " gen.detail_freq=" << config.worldGen.terrainDetailFrequency
+             << " gen.sea_level=" << config.worldGen.seaLevel;
         appendLog(output.str());
         requestSnapshotRefresh();
     }
@@ -1447,6 +1550,7 @@ private:
     std::thread snapshotWorker_;
     std::atomic<bool> snapshotWorkerRunning_{false};
     std::atomic<bool> snapshotRequestPending_{true};
+    std::atomic<bool> snapshotContinuousMode_{false};
     std::atomic<float> snapshotRefreshHzAtomic_{12.0f};
     std::atomic<float> snapshotDurationMsAtomic_{0.0f};
     std::atomic<int> snapshotFrontIndex_{0};
