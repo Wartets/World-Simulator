@@ -1,0 +1,230 @@
+#include "ws/core/runtime.hpp"
+
+#include "ws/core/determinism.hpp"
+
+#include <algorithm>
+#include <random>
+#include <stdexcept>
+#include <utility>
+
+namespace ws {
+
+namespace {
+
+std::string tierToString(const ModelTier tier) {
+    return toString(tier);
+}
+
+} // namespace
+
+Runtime::Runtime(RuntimeConfig config)
+    : config_(std::move(config)),
+    stateStore_(config_.grid, config_.boundaryMode, config_.topologyBackend, config_.memoryLayoutPolicy),
+      snapshot_{RunSignature(
+                    0,
+                    "placeholder",
+                    GridSpec{1, 1},
+                    BoundaryMode::Clamp,
+                    UnitRegime::Normalized,
+                    TemporalPolicy::UniformA,
+                    "none",
+                    "none",
+                    0,
+                    0,
+                    0),
+                0,
+                StateHeader{},
+                0} {
+    config_.grid.validate();
+}
+
+void Runtime::registerSubsystem(std::shared_ptr<ISubsystem> subsystem) {
+    if (status_ != RuntimeStatus::Created) {
+        throw std::runtime_error("Subsystem registration is only allowed before runtime start");
+    }
+    scheduler_.registerSubsystem(std::move(subsystem));
+}
+
+void Runtime::start() {
+    if (status_ != RuntimeStatus::Created) {
+        throw std::runtime_error("Runtime start can only be called from Created state");
+    }
+
+    try {
+        resolvedProfile_ = profileResolver_.resolve(config_.profileInput);
+        allocateCanonicalFields();
+
+        DeterministicRngFactory rngFactory(config_.seed);
+        auto bootstrapStream = rngFactory.createStream("runtime.seed.bootstrap_marker");
+        std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
+        {
+            StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {"seed_probe"});
+            for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                    seedWriter.setScalar("seed_probe", Cell{x, y}, distribution(bootstrapStream));
+                }
+            }
+        }
+
+        StateHeader header{};
+        header.stepIndex = 0;
+        header.timestampTicks = 0;
+        header.status = RuntimeStatus::Initialized;
+        stateStore_.setHeader(header);
+
+        scheduler_.initialize(stateStore_, resolvedProfile_);
+
+        const auto activeSubsystems = scheduler_.activeSubsystemNames();
+        const std::string subsystemHash = stableHashForStringSet(activeSubsystems);
+
+        std::string profileDigestData;
+        for (const auto& [subsystem, tier] : resolvedProfile_.subsystemTiers) {
+            profileDigestData += subsystem + ":" + tierToString(tier) + ";";
+        }
+
+        const std::string initializationHash = std::to_string(DeterministicHash::hashString(profileDigestData));
+        const std::string eventTimelineHash = std::to_string(DeterministicHash::hashString("baseline:no-events"));
+
+        snapshot_.runSignature = runSignatureService_.create(RunIdentityInput{
+            .globalSeed = config_.seed,
+            .initializationParameterHash = initializationHash,
+            .grid = config_.grid,
+            .boundaryMode = config_.boundaryMode,
+            .unitRegime = config_.unitRegime,
+            .temporalPolicy = config_.temporalPolicy,
+            .eventTimelineHash = eventTimelineHash,
+            .activeSubsystemSetHash = subsystemHash,
+            .profile = resolvedProfile_});
+
+        header.status = RuntimeStatus::Running;
+        stateStore_.setHeader(header);
+        snapshot_.stateHeader = stateStore_.header();
+        snapshot_.stateHash = stateStore_.stateHash();
+        snapshot_.payloadBytes = stateStore_.createSnapshot(
+            snapshot_.runSignature.identityHash(),
+            resolvedProfile_.fingerprint(),
+            "runtime_start_baseline")
+                                     .payloadBytes;
+        status_ = RuntimeStatus::Running;
+    } catch (...) {
+        status_ = RuntimeStatus::Error;
+        StateHeader header = stateStore_.header();
+        header.status = RuntimeStatus::Error;
+        stateStore_.setHeader(header);
+        throw;
+    }
+}
+
+void Runtime::step() {
+    if (status_ != RuntimeStatus::Running) {
+        throw std::runtime_error("Runtime step requires Running state");
+    }
+
+    scheduler_.step(stateStore_, resolvedProfile_, stateStore_.header().stepIndex);
+
+    StateHeader header = stateStore_.header();
+    header.stepIndex += 1;
+    header.timestampTicks += 1;
+    stateStore_.setHeader(header);
+
+    snapshot_.stateHeader = header;
+    snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.payloadBytes = stateStore_.createSnapshot(
+        snapshot_.runSignature.identityHash(),
+        resolvedProfile_.fingerprint(),
+        "runtime_step")
+                                 .payloadBytes;
+}
+
+void Runtime::stop() {
+    if (status_ == RuntimeStatus::Terminated) {
+        return;
+    }
+
+    if (status_ != RuntimeStatus::Running && status_ != RuntimeStatus::Error && status_ != RuntimeStatus::Initialized) {
+        throw std::runtime_error("Runtime stop called from invalid state");
+    }
+
+    StateHeader header = stateStore_.header();
+    header.status = RuntimeStatus::Terminated;
+    stateStore_.setHeader(header);
+
+    snapshot_.stateHeader = header;
+    snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.payloadBytes = stateStore_.createSnapshot(
+        snapshot_.runSignature.identityHash(),
+        resolvedProfile_.fingerprint(),
+        "runtime_stop")
+                                 .payloadBytes;
+    status_ = RuntimeStatus::Terminated;
+}
+
+RuntimeCheckpoint Runtime::createCheckpoint(const std::string& label) const {
+    if (status_ != RuntimeStatus::Running && status_ != RuntimeStatus::Initialized) {
+        throw std::runtime_error("Runtime checkpoint creation requires Initialized or Running state");
+    }
+
+    const std::uint64_t profileFingerprint = resolvedProfile_.fingerprint();
+    return RuntimeCheckpoint{
+        snapshot_.runSignature,
+        profileFingerprint,
+        stateStore_.createSnapshot(
+            snapshot_.runSignature.identityHash(),
+            profileFingerprint,
+            label)};
+}
+
+void Runtime::loadCheckpoint(const RuntimeCheckpoint& checkpoint) {
+    if (status_ != RuntimeStatus::Running && status_ != RuntimeStatus::Initialized) {
+        throw std::runtime_error("Runtime checkpoint load requires Initialized or Running state");
+    }
+
+    if (checkpoint.runSignature.identityHash() != snapshot_.runSignature.identityHash()) {
+        throw std::invalid_argument("Checkpoint run signature identity hash does not match active runtime");
+    }
+
+    if (checkpoint.profileFingerprint != resolvedProfile_.fingerprint()) {
+        throw std::invalid_argument("Checkpoint profile fingerprint does not match active runtime profile");
+    }
+
+    stateStore_.loadSnapshot(
+        checkpoint.stateSnapshot,
+        checkpoint.runSignature.identityHash(),
+        checkpoint.profileFingerprint);
+
+    snapshot_.stateHeader = stateStore_.header();
+    snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.payloadBytes = checkpoint.stateSnapshot.payloadBytes;
+}
+
+void Runtime::allocateCanonicalFields() {
+    const std::vector<VariableSpec> specs = {
+        {0, "terrain_elevation_h"},
+        {1, "surface_water_w"},
+        {2, "temperature_T"},
+        {3, "humidity_q"},
+        {4, "fertility_phi"},
+        {5, "vegetation_v"},
+        {6, "bootstrap_marker"},
+        {7, "seed_probe"}
+    };
+
+    for (const auto& spec : specs) {
+        if (!stateStore_.hasField(spec.name)) {
+            stateStore_.allocateScalarField(spec);
+        }
+    }
+}
+
+std::string Runtime::stableHashForStringSet(const std::vector<std::string>& orderedValues) {
+    std::vector<std::string> normalized = orderedValues;
+    std::sort(normalized.begin(), normalized.end());
+    std::string digest;
+    for (const auto& value : normalized) {
+        digest += value;
+        digest += ';';
+    }
+    return std::to_string(DeterministicHash::hashString(digest));
+}
+
+} // namespace ws
