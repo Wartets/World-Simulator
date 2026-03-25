@@ -1,4 +1,4 @@
-#include "ws/gui/runtime_service.hpp"
+﻿#include "ws/gui/runtime_service.hpp"
 
 #include "ws/core/subsystems/subsystems.hpp"
 
@@ -443,11 +443,12 @@ bool RuntimeService::listProfiles(std::string& message) const {
 }
 
 bool RuntimeService::requireRuntime(const char* operation, std::string& message) const {
-    if (!runtime_ || runtime_->status() != RuntimeStatus::Running) {
-        message = std::string("runtime is not running; operation unavailable: ") + operation;
+    if (!runtime_ || runtime_->status() == RuntimeStatus::Created || runtime_->status() == RuntimeStatus::Error) {
+        message = std::string("runtime is not ready; operation unavailable: ") + operation;
         return false;
     }
     return true;
 }
 
 } // namespace ws::gui
+

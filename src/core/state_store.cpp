@@ -1,4 +1,4 @@
-#include "ws/core/state_store.hpp"
+﻿#include "ws/core/state_store.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -107,7 +107,7 @@ void StateStore::allocateScalarField(const VariableSpec& spec) {
         throw std::invalid_argument("StateStore currently supports Float32 scalar fields only");
     }
 
-    if (scalarFields_.find(spec.name) != scalarFields_.end()) {
+    if (fieldNameToIndex_.find(spec.name) != fieldNameToIndex_.end()) {
         throw std::invalid_argument("Field already allocated for variable: " + spec.name);
     }
 
@@ -129,7 +129,8 @@ void StateStore::allocateScalarField(const VariableSpec& spec) {
     storage.values.assign(static_cast<std::size_t>(paddedCellCount), 0.0f);
     storage.validityMask.assign(static_cast<std::size_t>(paddedCellCount), 0u);
 
-    scalarFields_.emplace(spec.name, std::move(storage));
+    fieldNameToIndex_[spec.name] = scalarFields_.size();
+    scalarFields_.push_back(std::move(storage));
     variableOrder_.push_back(spec);
 }
 
@@ -170,7 +171,7 @@ std::vector<FieldStorageMetadata> StateStore::fieldMetadata() const {
 }
 
 bool StateStore::hasField(const std::string& name) const noexcept {
-    return scalarFields_.find(name) != scalarFields_.end();
+    return fieldNameToIndex_.find(name) != fieldNameToIndex_.end();
 }
 
 std::vector<std::string> StateStore::variableNames() const {
@@ -200,7 +201,7 @@ std::uint64_t StateStore::stateHash() const noexcept {
     for (const auto& variable : variableOrder_) {
         hash = DeterministicHash::combine(hash, DeterministicHash::hashString(variable.name));
 
-        const auto& storage = scalarFields_.at(variable.name);
+        const auto& storage = scalarFields_[fieldNameToIndex_.at(variable.name)];
         for (std::size_t i = 0; i < static_cast<std::size_t>(storage.logicalCellCount); ++i) {
             hash = DeterministicHash::combine(hash, DeterministicHash::hashPod(storage.values[i]));
         }
@@ -269,19 +270,19 @@ Cell StateStore::cellFromIndex(const std::uint64_t index) const {
 }
 
 StateStore::ScalarFieldStorage& StateStore::fieldForWrite(const std::string& variableName) {
-    auto iterator = scalarFields_.find(variableName);
-    if (iterator == scalarFields_.end()) {
+    auto iterator = fieldNameToIndex_.find(variableName);
+    if (iterator == fieldNameToIndex_.end()) {
         throw std::out_of_range("Unknown field write target: " + variableName);
     }
-    return iterator->second;
+    return scalarFields_[iterator->second];
 }
 
 const StateStore::ScalarFieldStorage& StateStore::fieldForRead(const std::string& variableName) const {
-    const auto iterator = scalarFields_.find(variableName);
-    if (iterator == scalarFields_.end()) {
+    const auto iterator = fieldNameToIndex_.find(variableName);
+    if (iterator == fieldNameToIndex_.end()) {
         throw std::out_of_range("Unknown field: " + variableName);
     }
-    return iterator->second;
+    return scalarFields_[iterator->second];
 }
 
 void StateStore::setScalarInternal(const std::string& variableName, const Cell cell, const float value) {
@@ -405,6 +406,7 @@ void StateStore::loadSnapshot(
     }
 
     scalarFields_.clear();
+    fieldNameToIndex_.clear();
     variableOrder_.clear();
 
     for (const auto& fieldPayload : snapshot.fields) {
@@ -437,6 +439,46 @@ void StateStore::loadSnapshot(
     if (loadedHash != snapshot.stateHash) {
         throw std::runtime_error("Snapshot integrity check failed: loaded state hash does not match snapshot hash");
     }
+}
+
+
+StateStore::FieldHandle StateStore::WriteSession::getFieldHandle(const std::string& variableName) const noexcept {
+    if (!isAllowed(variableName)) return StateStore::InvalidHandle;
+    return stateStore_.getFieldHandle(variableName);
+}
+
+void StateStore::WriteSession::setScalarFast(FieldHandle handle, Cell cell, float value) {
+    if (handle == StateStore::InvalidHandle || handle >= stateStore_.scalarFields_.size()) return;
+    if (!std::isfinite(value)) {
+        throw std::runtime_error("StateStore rejected non-finite fast scalar write");
+    }
+    auto& field = stateStore_.scalarFields_[handle];
+    const std::uint64_t idx = stateStore_.indexOf(cell);
+    field.values[static_cast<std::size_t>(idx)] = value;
+    field.validityMask[static_cast<std::size_t>(idx)] = 1u;
+}
+
+StateStore::FieldHandle StateStore::getFieldHandle(const std::string& name) const noexcept {
+    auto it = fieldNameToIndex_.find(name);
+    if (it != fieldNameToIndex_.end()) return it->second;
+    return InvalidHandle;
+}
+
+std::optional<float> StateStore::trySampleScalarFast(FieldHandle handle, const CellSigned cell) const {
+    if (handle == InvalidHandle || handle >= scalarFields_.size()) return std::nullopt;
+    const auto& field = scalarFields_[handle];
+    const std::uint64_t idx = indexOf(cell);
+    if (field.validityMask[static_cast<std::size_t>(idx)] == 0u) return std::nullopt;
+    const auto overlayIt = field.sparseOverlay.find(idx);
+    if (overlayIt != field.sparseOverlay.end()) return overlayIt->second;
+    return field.values[static_cast<std::size_t>(idx)];
+}
+
+const std::vector<float>& StateStore::scalarFieldFast(FieldHandle handle) const {
+    if (handle == InvalidHandle || handle >= scalarFields_.size()) {
+        throw std::out_of_range("Invalid fast handle");
+    }
+    return scalarFields_[handle].values;
 }
 
 } // namespace ws

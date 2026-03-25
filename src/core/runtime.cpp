@@ -1,4 +1,4 @@
-#include "ws/core/runtime.hpp"
+﻿#include "ws/core/runtime.hpp"
 
 #include "ws/core/determinism.hpp"
 
@@ -501,8 +501,8 @@ void Runtime::stop() {
 }
 
 RuntimeCheckpoint Runtime::createCheckpoint(const std::string& label) const {
-    if (status_ != RuntimeStatus::Running && status_ != RuntimeStatus::Initialized) {
-        throw std::runtime_error("Runtime checkpoint creation requires Initialized or Running state");
+    if (status_ == RuntimeStatus::Created || status_ == RuntimeStatus::Error) {
+        throw std::runtime_error("Runtime checkpoint creation requires Initialized, Running, or Terminated state");
     }
 
     const std::uint64_t profileFingerprint = resolvedProfile_.fingerprint();
@@ -677,3 +677,4 @@ void Runtime::trace(
 }
 
 } // namespace ws
+

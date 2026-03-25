@@ -1,4 +1,4 @@
-#include "ws/gui/main_window.hpp"
+﻿#include "ws/gui/main_window.hpp"
 
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/theme_bootstrap.hpp"
@@ -16,9 +16,11 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <unordered_map>
@@ -299,6 +301,22 @@ void minMaxFinite(const std::vector<float>& values, float& outMin, float& outMax
     }
 }
 
+std::uint64_t hashCombine(std::uint64_t seed, const std::uint64_t value) {
+    constexpr std::uint64_t k = 0x9e3779b97f4a7c15ull;
+    return seed ^ (value + k + (seed << 6u) + (seed >> 2u));
+}
+
+std::uint64_t hashFloat(const float value) {
+    return static_cast<std::uint64_t>(std::hash<float>{}(value));
+}
+
+void unpackColor(const ImU32 color, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b, std::uint8_t& a) {
+    r = static_cast<std::uint8_t>((color) & 0xFFu);
+    g = static_cast<std::uint8_t>((color >> 8u) & 0xFFu);
+    b = static_cast<std::uint8_t>((color >> 16u) & 0xFFu);
+    a = static_cast<std::uint8_t>((color >> 24u) & 0xFFu);
+}
+
 class MainWindowImpl {
 public:
     int run() {
@@ -369,6 +387,7 @@ public:
         }
 
         stopSnapshotWorker();
+        destroyRasterResources();
 
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
@@ -388,6 +407,80 @@ private:
         float cellH = 1.0f;
         int samplingStride = 1;
     };
+
+    struct RasterTexture {
+        GLuint id = 0;
+        int width = 0;
+        int height = 0;
+    };
+
+    struct RenderCacheState {
+        int snapshotGeneration = -1;
+        std::uint64_t configHash = 0;
+        bool valid = false;
+        float primaryMin = 0.0f;
+        float primaryMax = 1.0f;
+        float secondaryMin = 0.0f;
+        float secondaryMax = 1.0f;
+        std::string primaryName;
+        std::string secondaryName;
+    };
+
+    void destroyRasterTexture(RasterTexture& texture) {
+        if (texture.id != 0) {
+            glDeleteTextures(1, &texture.id);
+            texture.id = 0;
+        }
+        texture.width = 0;
+        texture.height = 0;
+    }
+
+    void destroyRasterResources() {
+        destroyRasterTexture(primaryRaster_);
+        destroyRasterTexture(secondaryRaster_);
+        destroyRasterTexture(mixedRaster_);
+        renderCache_.valid = false;
+    }
+
+    void uploadRasterTexture(RasterTexture& texture, const int width, const int height, const std::vector<std::uint8_t>& rgba) {
+        if (width <= 0 || height <= 0 || rgba.empty()) {
+            destroyRasterTexture(texture);
+            return;
+        }
+
+        if (texture.id == 0) {
+            glGenTextures(1, &texture.id);
+        }
+        texture.width = width;
+        texture.height = height;
+
+        glBindTexture(GL_TEXTURE_2D, texture.id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    [[nodiscard]] std::uint64_t makeRenderConfigHash() const {
+        std::uint64_t h = 1469598103934665603ull;
+        h = hashCombine(h, static_cast<std::uint64_t>(viz_.mode));
+        h = hashCombine(h, static_cast<std::uint64_t>(viz_.primaryFieldIndex));
+        h = hashCombine(h, static_cast<std::uint64_t>(viz_.secondaryFieldIndex));
+        h = hashCombine(h, static_cast<std::uint64_t>(viz_.normalizationMode));
+        h = hashCombine(h, static_cast<std::uint64_t>(viz_.colorMapMode));
+        h = hashCombine(h, static_cast<std::uint64_t>(viz_.showSparseOverlay));
+        h = hashCombine(h, hashFloat(viz_.secondaryBlend));
+        h = hashCombine(h, hashFloat(viz_.fixedRangeMin));
+        h = hashCombine(h, hashFloat(viz_.fixedRangeMax));
+        h = hashCombine(h, hashFloat(visuals_.brightness));
+        h = hashCombine(h, hashFloat(visuals_.contrast));
+        h = hashCombine(h, hashFloat(visuals_.gamma));
+        h = hashCombine(h, static_cast<std::uint64_t>(visuals_.invertColors));
+        return h;
+    }
 
     [[nodiscard]] ViewMapping makeViewMapping(const ImVec2 min, const ImVec2 max, const GridSpec grid) const {
         ViewMapping mapping;
@@ -529,34 +622,55 @@ private:
         const auto& primaryField = fields[static_cast<std::size_t>(viz_.primaryFieldIndex)];
         const auto& secondaryField = fields[static_cast<std::size_t>(viz_.secondaryFieldIndex)];
 
-        std::vector<float> primaryValues = mergedFieldValues(primaryField, viz_.showSparseOverlay);
-        std::vector<float> secondaryValues = mergedFieldValues(secondaryField, viz_.showSparseOverlay);
+        const std::uint64_t renderHash = makeRenderConfigHash();
+        const bool cacheDirty =
+            !renderCache_.valid ||
+            renderCache_.snapshotGeneration != consumedSnapshotGeneration_ ||
+            renderCache_.configHash != renderHash;
 
-        float pMin = 0.0f;
-        float pMax = 1.0f;
-        float sMin = 0.0f;
-        float sMax = 1.0f;
-        minMaxFinite(primaryValues, pMin, pMax);
-        minMaxFinite(secondaryValues, sMin, sMax);
-        const auto pRange = resolveDisplayRange(primaryField.spec.name, pMin, pMax);
-        const auto sRange = resolveDisplayRange(secondaryField.spec.name, sMin, sMax);
-        pMin = pRange.first;
-        pMax = pRange.second;
-        sMin = sRange.first;
-        sMax = sRange.second;
+        if (cacheDirty) {
+            std::vector<float> primaryValues = mergedFieldValues(primaryField, viz_.showSparseOverlay);
+            std::vector<float> secondaryValues = mergedFieldValues(secondaryField, viz_.showSparseOverlay);
+
+            float pMin = 0.0f;
+            float pMax = 1.0f;
+            float sMin = 0.0f;
+            float sMax = 1.0f;
+            minMaxFinite(primaryValues, pMin, pMax);
+            minMaxFinite(secondaryValues, sMin, sMax);
+            const auto pRange = resolveDisplayRange(primaryField.spec.name, pMin, pMax);
+            const auto sRange = resolveDisplayRange(secondaryField.spec.name, sMin, sMax);
+            pMin = pRange.first;
+            pMax = pRange.second;
+            sMin = sRange.first;
+            sMax = sRange.second;
+
+            rebuildRasterTextures(snapshot.grid, primaryValues, secondaryValues, pMin, pMax, sMin, sMax);
+
+            renderCache_.snapshotGeneration = consumedSnapshotGeneration_;
+            renderCache_.configHash = renderHash;
+            renderCache_.valid = true;
+            renderCache_.primaryMin = pMin;
+            renderCache_.primaryMax = pMax;
+            renderCache_.secondaryMin = sMin;
+            renderCache_.secondaryMax = sMax;
+            renderCache_.primaryName = primaryField.spec.name;
+            renderCache_.secondaryName = secondaryField.spec.name;
+        }
 
         if (viz_.mode == DisplayMode::Single) {
-            drawScalarFieldPanel(*dl, canvasMin, canvasMax, snapshot.grid, primaryField.spec.name, primaryValues, pMin, pMax);
+            drawRasterPanel(*dl, canvasMin, canvasMax, snapshot.grid, renderCache_.primaryName, primaryRaster_, renderCache_.primaryMin, renderCache_.primaryMax);
         } else if (viz_.mode == DisplayMode::SideBySideVertical) {
             const float midX = (canvasMin.x + canvasMax.x) * 0.5f;
-            drawScalarFieldPanel(*dl, canvasMin, ImVec2(midX - 3.0f, canvasMax.y), snapshot.grid, primaryField.spec.name, primaryValues, pMin, pMax);
-            drawScalarFieldPanel(*dl, ImVec2(midX + 3.0f, canvasMin.y), canvasMax, snapshot.grid, secondaryField.spec.name, secondaryValues, sMin, sMax);
+            drawRasterPanel(*dl, canvasMin, ImVec2(midX - 3.0f, canvasMax.y), snapshot.grid, renderCache_.primaryName, primaryRaster_, renderCache_.primaryMin, renderCache_.primaryMax);
+            drawRasterPanel(*dl, ImVec2(midX + 3.0f, canvasMin.y), canvasMax, snapshot.grid, renderCache_.secondaryName, secondaryRaster_, renderCache_.secondaryMin, renderCache_.secondaryMax);
         } else if (viz_.mode == DisplayMode::SideBySideHorizontal) {
             const float midY = (canvasMin.y + canvasMax.y) * 0.5f;
-            drawScalarFieldPanel(*dl, canvasMin, ImVec2(canvasMax.x, midY - 3.0f), snapshot.grid, primaryField.spec.name, primaryValues, pMin, pMax);
-            drawScalarFieldPanel(*dl, ImVec2(canvasMin.x, midY + 3.0f), canvasMax, snapshot.grid, secondaryField.spec.name, secondaryValues, sMin, sMax);
+            drawRasterPanel(*dl, canvasMin, ImVec2(canvasMax.x, midY - 3.0f), snapshot.grid, renderCache_.primaryName, primaryRaster_, renderCache_.primaryMin, renderCache_.primaryMax);
+            drawRasterPanel(*dl, ImVec2(canvasMin.x, midY + 3.0f), canvasMax, snapshot.grid, renderCache_.secondaryName, secondaryRaster_, renderCache_.secondaryMin, renderCache_.secondaryMax);
         } else {
-            drawMixedPanel(*dl, canvasMin, canvasMax, snapshot.grid, primaryField.spec.name, secondaryField.spec.name, primaryValues, secondaryValues, pMin, pMax, sMin, sMax);
+            const std::string title = "Mixed: " + renderCache_.primaryName + " + " + renderCache_.secondaryName;
+            drawRasterPanel(*dl, canvasMin, canvasMax, snapshot.grid, title, mixedRaster_, renderCache_.primaryMin, renderCache_.primaryMax);
         }
 
         if (viz_.showVectorField) {
@@ -564,13 +678,89 @@ private:
         }
     }
 
-    void drawScalarFieldPanel(
+    void rebuildRasterTextures(
+        const GridSpec grid,
+        const std::vector<float>& primary,
+        const std::vector<float>& secondary,
+        const float pMin,
+        const float pMax,
+        const float sMin,
+        const float sMax) {
+        if (grid.width == 0 || grid.height == 0) {
+            destroyRasterResources();
+            return;
+        }
+
+        const int width = static_cast<int>(grid.width);
+        const int height = static_cast<int>(grid.height);
+        const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+
+        auto fillScalar = [&](const std::vector<float>& values, const float minV, const float maxV, std::vector<std::uint8_t>& out) {
+            out.assign(pixelCount * 4u, 0u);
+            for (std::size_t i = 0; i < pixelCount; ++i) {
+                const float value = i < values.size() ? values[i] : std::numeric_limits<float>::quiet_NaN();
+                ImU32 color = IM_COL32(18, 18, 28, 255);
+                if (std::isfinite(value)) {
+                    const float t = (value - minV) / (maxV - minV);
+                    color = mapColor(t);
+                }
+                std::uint8_t r = 0;
+                std::uint8_t g = 0;
+                std::uint8_t b = 0;
+                std::uint8_t a = 0;
+                unpackColor(color, r, g, b, a);
+                const std::size_t o = i * 4u;
+                out[o + 0] = r;
+                out[o + 1] = g;
+                out[o + 2] = b;
+                out[o + 3] = a;
+            }
+        };
+
+        auto fillMixed = [&](std::vector<std::uint8_t>& out) {
+            out.assign(pixelCount * 4u, 0u);
+            const float mixA = std::clamp(viz_.secondaryBlend, 0.0f, 1.0f);
+            for (std::size_t i = 0; i < pixelCount; ++i) {
+                const float pv = i < primary.size() ? primary[i] : std::numeric_limits<float>::quiet_NaN();
+                const float sv = i < secondary.size() ? secondary[i] : std::numeric_limits<float>::quiet_NaN();
+
+                const float p = std::isfinite(pv) ? std::clamp((pv - pMin) / (pMax - pMin), 0.0f, 1.0f) : 0.0f;
+                const float s = std::isfinite(sv) ? std::clamp((sv - sMin) / (sMax - sMin), 0.0f, 1.0f) : 0.0f;
+                const float pTone = applyDisplayTransfer(p, visuals_);
+                const float sTone = applyDisplayTransfer(s, visuals_);
+
+                const int r = static_cast<int>((1.0f - mixA) * pTone * 255.0f + mixA * sTone * 90.0f);
+                const int g = static_cast<int>((1.0f - mixA) * (0.4f + 0.6f * pTone) * 255.0f + mixA * (0.5f + 0.5f * sTone) * 180.0f);
+                const int b = static_cast<int>((1.0f - mixA) * (1.0f - pTone) * 220.0f + mixA * sTone * 255.0f);
+                const std::size_t o = i * 4u;
+                out[o + 0] = static_cast<std::uint8_t>(std::clamp(r, 0, 255));
+                out[o + 1] = static_cast<std::uint8_t>(std::clamp(g, 0, 255));
+                out[o + 2] = static_cast<std::uint8_t>(std::clamp(b, 0, 255));
+                out[o + 3] = 255u;
+            }
+        };
+
+        if (viz_.mode == DisplayMode::Single) {
+            fillScalar(primary, pMin, pMax, rasterBufferA_);
+            uploadRasterTexture(primaryRaster_, width, height, rasterBufferA_);
+        } else if (viz_.mode == DisplayMode::SideBySideVertical || viz_.mode == DisplayMode::SideBySideHorizontal) {
+            fillScalar(primary, pMin, pMax, rasterBufferA_);
+            fillScalar(secondary, sMin, sMax, rasterBufferB_);
+            uploadRasterTexture(primaryRaster_, width, height, rasterBufferA_);
+            uploadRasterTexture(secondaryRaster_, width, height, rasterBufferB_);
+        } else {
+            fillMixed(rasterBufferMixed_);
+            uploadRasterTexture(mixedRaster_, width, height, rasterBufferMixed_);
+        }
+    }
+
+    void drawRasterPanel(
         ImDrawList& dl,
         const ImVec2 min,
         const ImVec2 max,
         const GridSpec grid,
         const std::string& title,
-        const std::vector<float>& values,
+        const RasterTexture& texture,
         const float minV,
         const float maxV) const {
         const ViewMapping mapping = makeViewMapping(min, max, grid);
@@ -583,27 +773,19 @@ private:
         dl.AddRectFilled(mapping.viewportMin, mapping.viewportMax, IM_COL32(12, 14, 22, 255), 2.0f);
         dl.PushClipRect(mapping.viewportMin, mapping.viewportMax, true);
 
-        const int stride = std::max(1, mapping.samplingStride);
-        for (std::uint32_t y = 0; y < grid.height; y += static_cast<std::uint32_t>(stride)) {
-            for (std::uint32_t x = 0; x < grid.width; x += static_cast<std::uint32_t>(stride)) {
-                const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(grid.width) + static_cast<std::size_t>(x);
-                const float value = idx < values.size() ? values[idx] : std::numeric_limits<float>::quiet_NaN();
-                ImU32 color = IM_COL32(18, 18, 28, 255);
-                if (std::isfinite(value)) {
-                    const float t = (value - minV) / (maxV - minV);
-                    color = mapColor(t);
-                }
-
-                const ImVec2 a(
-                    mapping.contentMin.x + mapping.cellW * static_cast<float>(x),
-                    mapping.contentMin.y + mapping.cellH * static_cast<float>(y));
-                const ImVec2 b(
-                    a.x + mapping.cellW * static_cast<float>(stride) + 0.75f,
-                    a.y + mapping.cellH * static_cast<float>(stride) + 0.75f);
-                dl.AddRectFilled(a, b, color);
-            }
+        if (texture.id != 0) {
+            const ImVec2 contentMax(
+                mapping.contentMin.x + mapping.cellW * static_cast<float>(grid.width),
+                mapping.contentMin.y + mapping.cellH * static_cast<float>(grid.height));
+            dl.AddImage(
+                static_cast<ImTextureID>(texture.id),
+                mapping.contentMin,
+                contentMax,
+                ImVec2(0.0f, 0.0f),
+                ImVec2(1.0f, 1.0f));
         }
 
+            const int stride = std::max(1, mapping.samplingStride);
         if (visuals_.showGrid && viz_.showCellGrid && mapping.cellW * static_cast<float>(stride) >= 4.0f && mapping.cellH * static_cast<float>(stride) >= 4.0f) {
             const int alpha = static_cast<int>(std::clamp(visuals_.gridOpacity, 0.0f, 1.0f) * 220.0f);
             const float thickness = std::max(0.5f, visuals_.gridLineThickness);
@@ -637,63 +819,6 @@ private:
                 dl.AddText(ImVec2(min.x + 8.0f, min.y + 44.0f), IM_COL32(180, 200, 240, 230), modeText);
             }
         }
-    }
-
-    void drawMixedPanel(
-        ImDrawList& dl,
-        const ImVec2 min,
-        const ImVec2 max,
-        const GridSpec grid,
-        const std::string& pName,
-        const std::string& sName,
-        const std::vector<float>& primary,
-        const std::vector<float>& secondary,
-        const float pMin,
-        const float pMax,
-        const float sMin,
-        const float sMax) const {
-        const ViewMapping mapping = makeViewMapping(min, max, grid);
-        const int stride = std::max(1, mapping.samplingStride);
-
-        dl.AddRectFilled(mapping.viewportMin, mapping.viewportMax, IM_COL32(12, 14, 22, 255), 2.0f);
-        dl.PushClipRect(mapping.viewportMin, mapping.viewportMax, true);
-
-        for (std::uint32_t y = 0; y < grid.height; y += static_cast<std::uint32_t>(stride)) {
-            for (std::uint32_t x = 0; x < grid.width; x += static_cast<std::uint32_t>(stride)) {
-                const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(grid.width) + static_cast<std::size_t>(x);
-                const float pv = idx < primary.size() ? primary[idx] : std::numeric_limits<float>::quiet_NaN();
-                const float sv = idx < secondary.size() ? secondary[idx] : std::numeric_limits<float>::quiet_NaN();
-
-                const float p = std::isfinite(pv) ? std::clamp((pv - pMin) / (pMax - pMin), 0.0f, 1.0f) : 0.0f;
-                const float s = std::isfinite(sv) ? std::clamp((sv - sMin) / (sMax - sMin), 0.0f, 1.0f) : 0.0f;
-
-                const float pTone = applyDisplayTransfer(p, visuals_);
-                const float sTone = applyDisplayTransfer(s, visuals_);
-
-                const float mixA = std::clamp(viz_.secondaryBlend, 0.0f, 1.0f);
-                const int r = static_cast<int>((1.0f - mixA) * pTone * 255.0f + mixA * sTone * 90.0f);
-                const int g = static_cast<int>((1.0f - mixA) * (0.4f + 0.6f * pTone) * 255.0f + mixA * (0.5f + 0.5f * sTone) * 180.0f);
-                const int b = static_cast<int>((1.0f - mixA) * (1.0f - pTone) * 220.0f + mixA * sTone * 255.0f);
-
-                const ImVec2 a(
-                    mapping.contentMin.x + mapping.cellW * static_cast<float>(x),
-                    mapping.contentMin.y + mapping.cellH * static_cast<float>(y));
-                const ImVec2 bRect(
-                    a.x + mapping.cellW * static_cast<float>(stride) + 0.75f,
-                    a.y + mapping.cellH * static_cast<float>(stride) + 0.75f);
-                dl.AddRectFilled(a, bRect, IM_COL32(r, g, b, 255));
-            }
-        }
-
-        dl.PopClipRect();
-
-        if (visuals_.showBoundary) {
-            const int alpha = static_cast<int>(std::clamp(visuals_.boundaryOpacity, 0.0f, 1.0f) * 255.0f);
-            const float thickness = std::max(0.5f, visuals_.boundaryThickness);
-            dl.AddRect(mapping.viewportMin, mapping.viewportMax, IM_COL32(90, 105, 140, alpha), 2.0f, 0, thickness);
-        }
-        const std::string title = "Mixed: " + pName + " + " + sName;
-        dl.AddText(ImVec2(min.x + 8.0f, min.y + 8.0f), IM_COL32(240, 245, 255, 255), title.c_str());
     }
 
     void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max, const GridSpec grid) const {
@@ -1036,6 +1161,8 @@ private:
     void drawSessionLifecycleSection() {
         PushSectionTint(0);
         if (ImGui::CollapsingHeader("Engine Lifecycle & Playback", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextDisabled("Live mode: Auto-run. Manual mode: Run Step(s). Blocking mode: Run To Target.");
+
             if (PrimaryButton("Start", ImVec2(100, 28))) {
                 std::string message;
                 runtime_.start(message);
@@ -1047,6 +1174,7 @@ private:
             ImGui::SameLine();
             if (PrimaryButton("Stop", ImVec2(100, 28))) {
                 std::string message;
+                viz_.autoRun = false;
                 runtime_.stop(message);
                 appendLog(message);
                 requestSnapshotRefresh();
@@ -1095,12 +1223,13 @@ private:
                 if (sliderIntWithHint("Run Until", &runUntil, 0, kImGuiIntSafeMax, "Advance simulation until this absolute step index is reached.")) {
                     panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
                 }
-                if (PrimaryButton("Run Continuous", ImVec2(120, 26))) {
+                if (PrimaryButton("Run To Target", ImVec2(120, 26))) {
                     std::string message;
                     runtime_.runUntil(panel_.runUntilTarget, message);
                     appendLog(message);
                     requestSnapshotRefresh();
                 }
+                settingHint("Runs a blocking batch until target step is reached. Use Auto-run for interactive evolution.");
             }
         }
         PopSectionTint();
@@ -1120,6 +1249,17 @@ private:
                 sliderIntWithHint("Manual stride", &viz_.manualSamplingStride, 1, 64, "Render one cell every N cells when adaptive sampling is disabled.");
             }
             sliderIntWithHint("Max rendered cells", &viz_.maxRenderedCells, 1000, 2000000, "Hard cap on drawn cells per frame across panels.");
+
+            if (PrimaryButton("Apply Interactive Preset", ImVec2(-1.0f, 24.0f))) {
+                viz_.simulationTickHz = 40;
+                viz_.snapshotRefreshHz = 18.0f;
+                viz_.adaptiveSampling = true;
+                viz_.manualSamplingStride = 1;
+                viz_.maxRenderedCells = 220000;
+                viz_.autoStepsPerFrame = 1;
+                appendLog("performance_preset=interactive");
+                requestSnapshotRefresh();
+            }
 
             if (PrimaryButton("Force Snapshot Refresh", ImVec2(-1.0f, 24.0f))) {
                 requestSnapshotRefresh();
@@ -1562,6 +1702,14 @@ private:
     std::mutex snapshotErrorMutex_;
     std::string snapshotWorkerError_;
 
+    RasterTexture primaryRaster_{};
+    RasterTexture secondaryRaster_{};
+    RasterTexture mixedRaster_{};
+    std::vector<std::uint8_t> rasterBufferA_;
+    std::vector<std::uint8_t> rasterBufferB_;
+    std::vector<std::uint8_t> rasterBufferMixed_;
+    RenderCacheState renderCache_{};
+
     double autoRunStepBudget_ = 0.0;
     RuntimeService runtime_;
 };
@@ -1574,3 +1722,4 @@ int MainWindow::run() {
 }
 
 } // namespace ws::gui
+

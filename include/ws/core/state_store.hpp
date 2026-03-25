@@ -59,6 +59,9 @@ public:
 
     using AccessObserver = std::function<void(const std::string&, AccessKind)>;
 
+    using FieldHandle = std::size_t;
+    static constexpr FieldHandle InvalidHandle = static_cast<std::size_t>(-1);
+
     class WriteSession {
     public:
         WriteSession(StateStore& stateStore, std::string ownerName, std::vector<std::string> allowedVariables);
@@ -68,6 +71,9 @@ public:
         void setOverlayScalar(const std::string& variableName, Cell cell, float value);
         void clearOverlayScalar(const std::string& variableName, Cell cell);
         void invalidateScalar(const std::string& variableName, Cell cell);
+
+        FieldHandle getFieldHandle(const std::string& variableName) const noexcept;
+        void setScalarFast(FieldHandle handle, Cell cell, float value);
 
     private:
         [[nodiscard]] bool isAllowed(const std::string& variableName) const;
@@ -113,6 +119,10 @@ public:
         std::string checkpointLabel) const;
     void loadSnapshot(const StateStoreSnapshot& snapshot, std::uint64_t expectedRunIdentityHash, std::uint64_t expectedProfileFingerprint);
 
+    [[nodiscard]] FieldHandle getFieldHandle(const std::string& name) const noexcept;
+    [[nodiscard]] std::optional<float> trySampleScalarFast(FieldHandle handle, CellSigned cell) const;
+    [[nodiscard]] const std::vector<float>& scalarFieldFast(FieldHandle handle) const;
+
 private:
     friend class WriteSession;
 
@@ -143,7 +153,8 @@ private:
     MemoryLayoutPolicy memoryLayoutPolicy_{};
     StateHeader header_{};
     std::vector<VariableSpec> variableOrder_;
-    std::unordered_map<std::string, ScalarFieldStorage> scalarFields_;
+    std::vector<ScalarFieldStorage> scalarFields_;
+      std::unordered_map<std::string, std::size_t> fieldNameToIndex_;
     AccessObserver accessObserver_;
 };
 
