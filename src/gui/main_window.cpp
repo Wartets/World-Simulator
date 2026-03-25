@@ -28,6 +28,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <future>
 
 namespace ws::gui {
 namespace {
@@ -413,6 +414,11 @@ private:
         int width = 0;
         int height = 0;
     };
+
+    std::future<void> autoRunFuture_;
+    std::mutex asyncStateMutex_;
+    std::string asyncErrorMessage_;
+    bool asyncErrorPending_ = false;
 
     struct RenderCacheState {
         int snapshotGeneration = -1;
@@ -1012,13 +1018,28 @@ private:
     }
 
     void tickAutoRun(const float frameDt) {
+        {
+            const std::lock_guard<std::mutex> lock(asyncStateMutex_);
+            if (asyncErrorPending_) {
+                viz_.autoRun = false;
+                appendLog(asyncErrorMessage_.empty() ? "auto_run_failed" : asyncErrorMessage_);
+                std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", asyncErrorMessage_.c_str());
+                asyncErrorPending_ = false;
+            }
+        }
+
         snapshotContinuousMode_.store(viz_.autoRun && runtime_.isRunning());
 
         if (!viz_.autoRun || !runtime_.isRunning() || runtime_.isPaused()) {
             return;
         }
 
-        autoRunStepBudget_ += static_cast<double>(std::max(1, viz_.simulationTickHz)) * static_cast<double>(std::max(0.0f, frameDt));
+        if (autoRunFuture_.valid() && autoRunFuture_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            return;
+        }
+
+        autoRunStepBudget_ += static_cast<double>(std::max(1, viz_.simulationTickHz)) *
+static_cast<double>(std::max(0.0f, frameDt));
         autoRunStepBudget_ = std::min(autoRunStepBudget_, 4.0);
         const int batch = std::min(2, static_cast<int>(std::floor(autoRunStepBudget_)));
         if (batch <= 0) {
@@ -1028,14 +1049,15 @@ private:
         autoRunStepBudget_ -= static_cast<double>(batch);
 
         const int stepsToRun = std::min(64, std::max(1, viz_.autoStepsPerFrame * batch));
-        std::string message;
-        if (!runtime_.step(static_cast<std::uint32_t>(stepsToRun), message)) {
-            viz_.autoRun = false;
-            appendLog(message.empty() ? "auto_run_failed" : message);
-            std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", message.c_str());
-            return;
-        }
-        requestSnapshotRefresh();
+        autoRunFuture_ = std::async(std::launch::async, [this, stepsToRun]() {
+            std::string message;
+            if (!runtime_.step(static_cast<std::uint32_t>(stepsToRun), message)) {
+                const std::lock_guard<std::mutex> lock(asyncStateMutex_);
+                asyncErrorMessage_ = message;
+                asyncErrorPending_ = true;
+            }
+            requestSnapshotRefresh();
+        });
     }
 
     void drawDockSpace() {
@@ -1091,7 +1113,7 @@ private:
 
     void drawControlPanel() {
         ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(480.0f, 850.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(480.0f, 425.0f), ImGuiCond_FirstUseEver);
 
         ImGui::Begin("Control Panel");
 
@@ -1099,6 +1121,7 @@ private:
 
         if (ImGui::BeginTabBar("ControlTabs", ImGuiTabBarFlags_None)) {
             if (ImGui::BeginTabItem("Session")) {
+                drawSimulationDetailsSection();
                 drawSessionLifecycleSection();
                 drawPerformanceSection();
                 drawProfilesAndLogSection();
@@ -1156,6 +1179,23 @@ private:
         ImGui::EndChild();
         ImGui::PopStyleColor();
         ImGui::Spacing();
+    }
+
+    void drawSimulationDetailsSection() {
+        PushSectionTint(0);
+        if (ImGui::CollapsingHeader("Active Simulation Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (viz_.hasCachedCheckpoint) {
+                const auto& sig = viz_.cachedCheckpoint.runSignature;
+                ImGui::Text("Identity:"); ImGui::SameLine(100); ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.0f, 1.0f), "%016llx", static_cast<unsigned long long>(sig.identityHash()));
+                ImGui::Text("Steps:"); ImGui::SameLine(100); ImGui::TextColored(ImVec4(0.7f, 1.0f, 0.7f, 1.0f), "%llu", static_cast<unsigned long long>(viz_.cachedCheckpoint.stateSnapshot.header.stepIndex));
+                ImGui::Text("Grid:"); ImGui::SameLine(100); ImGui::Text("%ux%u (Total %u cells)", sig.grid().width, sig.grid().height, sig.grid().width * sig.grid().height);
+                ImGui::Text("Policy:"); ImGui::SameLine(100); ImGui::Text("%s", app::temporalPolicyToString(sig.temporalPolicy()).c_str());
+                ImGui::Text("State Size:"); ImGui::SameLine(100); ImGui::Text("%.2f MB", static_cast<float>(viz_.cachedCheckpoint.stateSnapshot.payloadBytes) / 1048576.0f);
+            } else {
+                ImGui::TextDisabled("No active simulation data.");
+            }
+        }
+        PopSectionTint();
     }
 
     void drawSessionLifecycleSection() {
@@ -1296,8 +1336,14 @@ private:
             ImGui::Separator();
             ImGui::Text("Event Log:");
             ImGui::BeginChild("log_scroller", ImVec2(0, 180), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-            for (const std::string& line : logs_) {
-                ImGui::TextUnformatted(line.c_str());
+            if (!logs_.empty()) {
+                ImGuiListClipper clipper;
+                clipper.Begin(static_cast<int>(logs_.size()));
+                while (clipper.Step()) {
+                    for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                        ImGui::TextUnformatted(logs_[static_cast<std::size_t>(i)].c_str());
+                    }
+                }
             }
             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
                 ImGui::SetScrollHereY(1.0f);
@@ -1493,22 +1539,30 @@ private:
     void drawWorldGenerationSection() {
         PushSectionTint(7);
         if (ImGui::CollapsingHeader("World Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool changed = false;
             ImGui::TextUnformatted("Terrain Spectrum");
-            sliderFloatWithHint("Base Frequency", &panel_.terrainBaseFrequency, 0.1f, 12.0f, "%.2f", "Low-frequency terrain structure scale (continents/hills).");
-            sliderFloatWithHint("Detail Frequency", &panel_.terrainDetailFrequency, 0.2f, 24.0f, "%.2f", "High-frequency terrain detail scale.");
-            sliderFloatWithHint("Warp Strength", &panel_.terrainWarpStrength, 0.0f, 2.0f, "%.2f", "Domain warp amount used to bend noise patterns.");
-            sliderFloatWithHint("Terrain Amplitude", &panel_.terrainAmplitude, 0.1f, 3.0f, "%.2f", "Overall elevation contrast.");
-            sliderFloatWithHint("Ridge Mix", &panel_.terrainRidgeMix, 0.0f, 1.0f, "%.2f", "Adds ridge-like structures to terrain.");
+            changed |= sliderFloatWithHint("Base Frequency", &panel_.terrainBaseFrequency, 0.1f, 12.0f, "%.2f", "Low-frequency terrain structure scale (continents/hills).");
+            changed |= sliderFloatWithHint("Detail Frequency", &panel_.terrainDetailFrequency, 0.2f, 24.0f, "%.2f", "High-frequency terrain detail scale.");
+            changed |= sliderFloatWithHint("Warp Strength", &panel_.terrainWarpStrength, 0.0f, 2.0f, "%.2f", "Domain warp amount used to bend noise patterns.");
+            changed |= sliderFloatWithHint("Terrain Amplitude", &panel_.terrainAmplitude, 0.1f, 3.0f, "%.2f", "Overall elevation contrast.");
+            changed |= sliderFloatWithHint("Ridge Mix", &panel_.terrainRidgeMix, 0.0f, 1.0f, "%.2f", "Adds ridge-like structures to terrain.");
 
             ImGui::Separator();
             ImGui::TextUnformatted("Climate and Hydrology");
-            sliderFloatWithHint("Sea Level", &panel_.seaLevel, 0.0f, 1.0f, "%.3f", "Waterline threshold used to derive initial water coverage.");
-            sliderFloatWithHint("Polar Cooling", &panel_.polarCooling, 0.0f, 1.5f, "%.2f", "Strength of temperature cooling away from warm latitudes.");
-            sliderFloatWithHint("Humidity from Water", &panel_.humidityFromWater, 0.0f, 1.5f, "%.2f", "Influence of water presence on humidity initialization.");
-            sliderFloatWithHint("Biome Noise", &panel_.biomeNoiseStrength, 0.0f, 1.0f, "%.2f", "Additional noise contribution to biome/temperature diversity.");
+            changed |= sliderFloatWithHint("Sea Level", &panel_.seaLevel, 0.0f, 1.0f, "%.3f", "Waterline threshold used to derive initial water coverage.");
+            changed |= sliderFloatWithHint("Polar Cooling", &panel_.polarCooling, 0.0f, 1.5f, "%.2f", "Strength of temperature cooling away from warm latitudes.");
+            changed |= sliderFloatWithHint("Humidity from Water", &panel_.humidityFromWater, 0.0f, 1.5f, "%.2f", "Influence of water presence on humidity initialization.");
+            changed |= sliderFloatWithHint("Biome Noise", &panel_.biomeNoiseStrength, 0.0f, 1.0f, "%.2f", "Additional noise contribution to biome/temperature diversity.");
+
+            if (changed) {
+                applyConfigFromPanel();
+                std::string message;
+                runtime_.restart(message);
+                requestSnapshotRefresh();
+            }
 
             ImGui::Spacing();
-            ImGui::TextDisabled("These settings apply on Start/Restart or after applying config.");
+            ImGui::TextDisabled("These settings apply on Start/Restart or after applying config. A live preview is generated automatically.");
         }
         PopSectionTint();
     }
@@ -1722,4 +1776,5 @@ int MainWindow::run() {
 }
 
 } // namespace ws::gui
+
 
