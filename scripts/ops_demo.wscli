@@ -1,0 +1,14 @@
+# World Simulator CLI automation demo
+status
+preset phased_b
+restart
+step 2
+fields
+sample temperature_T 0 0
+heatmap surface_water_w 32 8
+checkpoint scripted
+savecp scripted build/checkpoints/scripted.wscp
+rununtil 15
+loadcp imported build/checkpoints/scripted.wscp
+restore imported
+status

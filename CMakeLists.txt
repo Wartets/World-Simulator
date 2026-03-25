@@ -20,8 +20,25 @@ add_library(ws_core
 
 target_include_directories(ws_core PUBLIC include)
 
-add_executable(world_sim ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
+add_executable(world_sim
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/runtime_shell.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
+)
 target_link_libraries(world_sim PRIVATE ws_core)
+
+if (WIN32)
+    add_executable(world_sim_gui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
+    )
+    target_link_libraries(world_sim_gui PRIVATE ws_core comctl32)
+endif()
 
 enable_testing()
 

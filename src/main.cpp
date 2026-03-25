@@ -1,50 +1,12 @@
-#include "ws/core/runtime.hpp"
-#include "ws/core/subsystems/subsystems.hpp"
+#include "ws/app/runtime_shell.hpp"
 
 #include <exception>
 #include <iostream>
-#include <memory>
-
-namespace {
-
-ws::ProfileResolverInput defaultProfileInput() {
-    ws::ProfileResolverInput input;
-    for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
-        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
-    }
-    input.compatibilityAssumptions = {
-        "baseline_low_coupling",
-        "single_rate_temporal_admissible"
-    };
-    return input;
-}
-
-} // namespace
 
 int main() {
     try {
-        ws::RuntimeConfig config;
-        config.seed = 42;
-        config.grid = ws::GridSpec{32, 16};
-        config.boundaryMode = ws::BoundaryMode::Clamp;
-        config.unitRegime = ws::UnitRegime::Normalized;
-        config.temporalPolicy = ws::TemporalPolicy::UniformA;
-        config.profileInput = defaultProfileInput();
-
-        ws::Runtime runtime(config);
-        for (const auto& subsystem : ws::makePhase4Subsystems()) {
-            runtime.registerSubsystem(subsystem);
-        }
-
-        runtime.start();
-        runtime.step();
-        runtime.stop();
-
-        const auto& snapshot = runtime.snapshot();
-        std::cout << "run_identity_hash=" << snapshot.runSignature.identityHash() << '\n';
-        std::cout << "state_hash=" << snapshot.stateHash << '\n';
-        std::cout << "step_index=" << snapshot.stateHeader.stepIndex << '\n';
-        return 0;
+        ws::app::RuntimeShell shell;
+        return shell.run();
     } catch (const std::exception& exception) {
         std::cerr << "runtime_error=" << exception.what() << '\n';
         return 1;
