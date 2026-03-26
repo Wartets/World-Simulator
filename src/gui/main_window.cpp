@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 #include <future>
+#include <fstream>
 
 namespace ws::gui {
 namespace {
@@ -80,8 +81,12 @@ struct PanelState {
     float terrainWarpStrength = 0.55f;
     float terrainAmplitude = 1.0f;
     float terrainRidgeMix = 0.28f;
+    int terrainOctaves = 5;
+    float terrainLacunarity = 2.0f;
+    float terrainGain = 0.5f;
     float seaLevel = 0.48f;
     float polarCooling = 0.62f;
+    float latitudeBanding = 1.0f;
     float humidityFromWater = 0.52f;
     float biomeNoiseStrength = 0.20f;
 
@@ -95,11 +100,11 @@ struct OverlayState {
     OverlayIcon icon = OverlayIcon::None;
 };
 
-enum class DisplayMode {
+enum class ScreenLayout {
     Single = 0,
-    SideBySideVertical = 1,
-    SideBySideHorizontal = 2,
-    MixedOverlay = 3
+    SplitLeftRight = 1,
+    SplitTopBottom = 2,
+    Quad = 3
 };
 
 enum class NormalizationMode {
@@ -111,35 +116,58 @@ enum class NormalizationMode {
 enum class ColorMapMode {
     Turbo = 0,
     Grayscale = 1,
-    Diverging = 2
+    Diverging = 2,
+    Water = 3
+};
+
+struct ViewportConfig {
+    int primaryFieldIndex = 0;
+    
+    NormalizationMode normalizationMode = NormalizationMode::StickyPerField;
+    ColorMapMode colorMapMode = ColorMapMode::Turbo;
+    float fixedRangeMin = 0.0f;
+    float fixedRangeMax = 1.0f;
+    std::unordered_map<std::string, std::pair<float, float>> stickyRanges;
+
+    bool showLegend = true;
+    bool showRangeDetails = true;
+
+    bool showVectorField = false;
+    int vectorXFieldIndex = 0;
+    int vectorYFieldIndex = 1;
+    int vectorStride = 6;
+    float vectorScale = 0.45f;
 };
 
 struct VisualizationState {
-    DisplayMode mode = DisplayMode::Single;
+    ScreenLayout layout = ScreenLayout::SplitLeftRight;
+    std::array<ViewportConfig, 4> viewports = []() {
+        std::array<ViewportConfig, 4> arr;
+        // Default to distinct views for better out-of-the-box experience
+        arr[0].primaryFieldIndex = 0; // Configured normally for Elevation
+        arr[0].colorMapMode = ColorMapMode::Turbo;
+
+        arr[1].primaryFieldIndex = 1; // E.g., Water or Humidity
+        arr[1].colorMapMode = ColorMapMode::Water;
+
+        arr[2].primaryFieldIndex = 2; // E.g., Temperature
+        arr[2].colorMapMode = ColorMapMode::Turbo;
+
+        arr[3].primaryFieldIndex = 3; // E.g., Wind
+        arr[3].colorMapMode = ColorMapMode::Turbo;
+        return arr;
+    }();
+    int activeViewportEditor = 0;
+
     bool showCellGrid = false;
-    bool showLegend = true;
-    bool showVectorField = false;
     bool showSparseOverlay = true;
-    bool autoRun = false;
+    bool autoRun = true;
     int autoStepsPerFrame = 1;
     int simulationTickHz = 30;
     float snapshotRefreshHz = 12.0f;
     bool adaptiveSampling = true;
     int manualSamplingStride = 1;
     int maxRenderedCells = 180000;
-    int vectorStride = 6;
-    float vectorScale = 0.45f;
-    float secondaryBlend = 0.45f;
-    NormalizationMode normalizationMode = NormalizationMode::StickyPerField;
-    ColorMapMode colorMapMode = ColorMapMode::Turbo;
-    float fixedRangeMin = 0.0f;
-    float fixedRangeMax = 1.0f;
-    bool showRangeDetails = true;
-
-    int primaryFieldIndex = 0;
-    int secondaryFieldIndex = 1;
-    int vectorXFieldIndex = 4;
-    int vectorYFieldIndex = 3;
 
     std::vector<std::string> fieldNames;
     RuntimeCheckpoint cachedCheckpoint{};
@@ -152,7 +180,7 @@ struct VisualizationState {
     std::unordered_map<std::string, std::pair<float, float>> stickyRanges;
 };
 
-constexpr std::array<const char*, 3> kTierOptions = {"A", "B", "C"};
+constexpr std::array<const char*, 3> kTierOptions = {"A (Baseline)", "B (Intermediate)", "C (Advanced)"};
 constexpr std::array<const char*, 3> kTemporalOptions = {"uniform", "phased", "multirate"};
 constexpr int kImGuiIntSafeMax = std::numeric_limits<int>::max() / 2;
 
@@ -245,6 +273,14 @@ ImU32 colormapDiverging(const float t01) {
     const int r = static_cast<int>((0.2f + 0.4f * (1.0f - a)) * 255.0f);
     const int g = static_cast<int>((0.3f + 0.5f * (1.0f - a)) * 255.0f);
     const int b = static_cast<int>((0.45f + 0.55f * a) * 255.0f);
+    return IM_COL32(r, g, b, 255);
+}
+
+ImU32 colormapWater(const float t01) {
+    const float t = std::clamp(t01, 0.0f, 1.0f);
+    const int r = static_cast<int>(t * 120.0f);
+    const int g = static_cast<int>(t * t * 180.0f + 70.0f);
+    const int b = static_cast<int>(t * 60.0f + 195.0f);
     return IM_COL32(r, g, b, 255);
 }
 
@@ -345,6 +381,8 @@ public:
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 450");
 
+        loadDisplayPrefs();
+
         std::string startupMessage;
         runtime_.start(startupMessage);
         appendLog(startupMessage);
@@ -426,10 +464,7 @@ private:
         bool valid = false;
         float primaryMin = 0.0f;
         float primaryMax = 1.0f;
-        float secondaryMin = 0.0f;
-        float secondaryMax = 1.0f;
         std::string primaryName;
-        std::string secondaryName;
     };
 
     void destroyRasterTexture(RasterTexture& texture) {
@@ -442,10 +477,12 @@ private:
     }
 
     void destroyRasterResources() {
-        destroyRasterTexture(primaryRaster_);
-        destroyRasterTexture(secondaryRaster_);
-        destroyRasterTexture(mixedRaster_);
-        renderCache_.valid = false;
+        for (auto& raster : viewportRasters_) {
+            destroyRasterTexture(raster);
+        }
+        for (auto& cache : renderCaches_) {
+            cache.valid = false;
+        }
     }
 
     void uploadRasterTexture(RasterTexture& texture, const int width, const int height, const std::vector<std::uint8_t>& rgba) {
@@ -470,17 +507,14 @@ private:
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 
-    [[nodiscard]] std::uint64_t makeRenderConfigHash() const {
+    [[nodiscard]] std::uint64_t makeRenderConfigHash(const ViewportConfig& vp) const {
         std::uint64_t h = 1469598103934665603ull;
-        h = hashCombine(h, static_cast<std::uint64_t>(viz_.mode));
-        h = hashCombine(h, static_cast<std::uint64_t>(viz_.primaryFieldIndex));
-        h = hashCombine(h, static_cast<std::uint64_t>(viz_.secondaryFieldIndex));
-        h = hashCombine(h, static_cast<std::uint64_t>(viz_.normalizationMode));
-        h = hashCombine(h, static_cast<std::uint64_t>(viz_.colorMapMode));
+        h = hashCombine(h, static_cast<std::uint64_t>(vp.primaryFieldIndex));
+        h = hashCombine(h, static_cast<std::uint64_t>(vp.normalizationMode));
+        h = hashCombine(h, static_cast<std::uint64_t>(vp.colorMapMode));
         h = hashCombine(h, static_cast<std::uint64_t>(viz_.showSparseOverlay));
-        h = hashCombine(h, hashFloat(viz_.secondaryBlend));
-        h = hashCombine(h, hashFloat(viz_.fixedRangeMin));
-        h = hashCombine(h, hashFloat(viz_.fixedRangeMax));
+        h = hashCombine(h, hashFloat(vp.fixedRangeMin));
+        h = hashCombine(h, hashFloat(vp.fixedRangeMax));
         h = hashCombine(h, hashFloat(visuals_.brightness));
         h = hashCombine(h, hashFloat(visuals_.contrast));
         h = hashCombine(h, hashFloat(visuals_.gamma));
@@ -535,22 +569,23 @@ private:
     }
 
     [[nodiscard]] std::pair<float, float> resolveDisplayRange(
+        ViewportConfig& vp,
         const std::string& fieldName,
         const float localMin,
         const float localMax) {
-        if (viz_.normalizationMode == NormalizationMode::FixedManual) {
-            const float lo = std::min(viz_.fixedRangeMin, viz_.fixedRangeMax);
-            const float hi = std::max(viz_.fixedRangeMin, viz_.fixedRangeMax);
+        if (vp.normalizationMode == NormalizationMode::FixedManual) {
+            const float lo = std::min(vp.fixedRangeMin, vp.fixedRangeMax);
+            const float hi = std::max(vp.fixedRangeMin, vp.fixedRangeMax);
             return {lo, std::max(lo + 1e-6f, hi)};
         }
 
-        if (viz_.normalizationMode == NormalizationMode::PerFrameAuto) {
+        if (vp.normalizationMode == NormalizationMode::PerFrameAuto) {
             return {localMin, localMax};
         }
 
-        auto it = viz_.stickyRanges.find(fieldName);
-        if (it == viz_.stickyRanges.end()) {
-            viz_.stickyRanges.emplace(fieldName, std::make_pair(localMin, localMax));
+        auto it = vp.stickyRanges.find(fieldName);
+        if (it == vp.stickyRanges.end()) {
+            vp.stickyRanges.emplace(fieldName, std::make_pair(localMin, localMax));
             return {localMin, localMax};
         }
 
@@ -563,16 +598,14 @@ private:
         return range;
     }
 
-    [[nodiscard]] ImU32 mapColor(const float normalizedValue) const {
+    [[nodiscard]] ImU32 mapColor(const float normalizedValue, const ColorMapMode mode) const {
         const float t = applyDisplayTransfer(normalizedValue, visuals_);
-        switch (viz_.colorMapMode) {
-            case ColorMapMode::Grayscale:
-                return colormapGrayscale(t);
-            case ColorMapMode::Diverging:
-                return colormapDiverging(t);
+        switch (mode) {
+            case ColorMapMode::Grayscale: return colormapGrayscale(t);
+            case ColorMapMode::Diverging: return colormapDiverging(t);
+            case ColorMapMode::Water:     return colormapWater(t);
             case ColorMapMode::Turbo:
-            default:
-                return colormapTurboLike(t);
+            default:                      return colormapTurboLike(t);
         }
     }
 
@@ -623,141 +656,107 @@ private:
         }
 
         dl->AddRectFilled(canvasMin, canvasMax, IM_COL32(8, 10, 18, 255), 6.0f);
-
         const auto& fields = snapshot.fields;
-        const auto& primaryField = fields[static_cast<std::size_t>(viz_.primaryFieldIndex)];
-        const auto& secondaryField = fields[static_cast<std::size_t>(viz_.secondaryFieldIndex)];
 
-        const std::uint64_t renderHash = makeRenderConfigHash();
-        const bool cacheDirty =
-            !renderCache_.valid ||
-            renderCache_.snapshotGeneration != consumedSnapshotGeneration_ ||
-            renderCache_.configHash != renderHash;
-
-        if (cacheDirty) {
-            std::vector<float> primaryValues = mergedFieldValues(primaryField, viz_.showSparseOverlay);
-            std::vector<float> secondaryValues = mergedFieldValues(secondaryField, viz_.showSparseOverlay);
-
-            float pMin = 0.0f;
-            float pMax = 1.0f;
-            float sMin = 0.0f;
-            float sMax = 1.0f;
-            minMaxFinite(primaryValues, pMin, pMax);
-            minMaxFinite(secondaryValues, sMin, sMax);
-            const auto pRange = resolveDisplayRange(primaryField.spec.name, pMin, pMax);
-            const auto sRange = resolveDisplayRange(secondaryField.spec.name, sMin, sMax);
-            pMin = pRange.first;
-            pMax = pRange.second;
-            sMin = sRange.first;
-            sMax = sRange.second;
-
-            rebuildRasterTextures(snapshot.grid, primaryValues, secondaryValues, pMin, pMax, sMin, sMax);
-
-            renderCache_.snapshotGeneration = consumedSnapshotGeneration_;
-            renderCache_.configHash = renderHash;
-            renderCache_.valid = true;
-            renderCache_.primaryMin = pMin;
-            renderCache_.primaryMax = pMax;
-            renderCache_.secondaryMin = sMin;
-            renderCache_.secondaryMax = sMax;
-            renderCache_.primaryName = primaryField.spec.name;
-            renderCache_.secondaryName = secondaryField.spec.name;
+        int numViewports = 1;
+        if (viz_.layout == ScreenLayout::SplitLeftRight || viz_.layout == ScreenLayout::SplitTopBottom) {
+            numViewports = 2;
+        } else if (viz_.layout == ScreenLayout::Quad) {
+            numViewports = 4;
         }
 
-        if (viz_.mode == DisplayMode::Single) {
-            drawRasterPanel(*dl, canvasMin, canvasMax, snapshot.grid, renderCache_.primaryName, primaryRaster_, renderCache_.primaryMin, renderCache_.primaryMax);
-        } else if (viz_.mode == DisplayMode::SideBySideVertical) {
-            const float midX = (canvasMin.x + canvasMax.x) * 0.5f;
-            drawRasterPanel(*dl, canvasMin, ImVec2(midX - 3.0f, canvasMax.y), snapshot.grid, renderCache_.primaryName, primaryRaster_, renderCache_.primaryMin, renderCache_.primaryMax);
-            drawRasterPanel(*dl, ImVec2(midX + 3.0f, canvasMin.y), canvasMax, snapshot.grid, renderCache_.secondaryName, secondaryRaster_, renderCache_.secondaryMin, renderCache_.secondaryMax);
-        } else if (viz_.mode == DisplayMode::SideBySideHorizontal) {
-            const float midY = (canvasMin.y + canvasMax.y) * 0.5f;
-            drawRasterPanel(*dl, canvasMin, ImVec2(canvasMax.x, midY - 3.0f), snapshot.grid, renderCache_.primaryName, primaryRaster_, renderCache_.primaryMin, renderCache_.primaryMax);
-            drawRasterPanel(*dl, ImVec2(canvasMin.x, midY + 3.0f), canvasMax, snapshot.grid, renderCache_.secondaryName, secondaryRaster_, renderCache_.secondaryMin, renderCache_.secondaryMax);
-        } else {
-            const std::string title = "Mixed: " + renderCache_.primaryName + " + " + renderCache_.secondaryName;
-            drawRasterPanel(*dl, canvasMin, canvasMax, snapshot.grid, title, mixedRaster_, renderCache_.primaryMin, renderCache_.primaryMax);
+        for (int i = 0; i < numViewports; ++i) {
+            auto& vp = viz_.viewports[i];
+            const auto& primaryField = fields[static_cast<std::size_t>(vp.primaryFieldIndex)];
+            
+            const std::uint64_t renderHash = makeRenderConfigHash(vp);
+            auto& cache = renderCaches_[i];
+            
+            const bool cacheDirty = !cache.valid || cache.snapshotGeneration != consumedSnapshotGeneration_ || cache.configHash != renderHash;
+            
+            if (cacheDirty) {
+                std::vector<float> primaryValues = mergedFieldValues(primaryField, viz_.showSparseOverlay);
+                float pMin = 0.0f, pMax = 1.0f;
+                minMaxFinite(primaryValues, pMin, pMax);
+                const auto pRange = resolveDisplayRange(vp, primaryField.spec.name, pMin, pMax);
+                
+                rebuildRasterTexture(i, snapshot.grid, primaryValues, pRange.first, pRange.second, vp);
+                
+                cache.snapshotGeneration = consumedSnapshotGeneration_;
+                cache.configHash = renderHash;
+                cache.valid = true;
+                cache.primaryMin = pRange.first;
+                cache.primaryMax = pRange.second;
+                cache.primaryName = primaryField.spec.name;
+            }
         }
 
-        if (viz_.showVectorField) {
-            drawVectorOverlay(*dl, canvasMin, canvasMax, snapshot.grid);
+        // Layout evaluation
+        const float midX = (canvasMin.x + canvasMax.x) * 0.5f;
+        const float midY = (canvasMin.y + canvasMax.y) * 0.5f;
+
+        auto drawPanel = [&](const int i, const ImVec2 pMin, const ImVec2 pMax) {
+            const auto& cache = renderCaches_[i];
+            auto& vp = viz_.viewports[i];
+            drawRasterPanel(*dl, pMin, pMax, snapshot.grid, cache.primaryName, viewportRasters_[i], cache.primaryMin, cache.primaryMax, vp);
+            if (vp.showVectorField) {
+                drawVectorOverlay(*dl, pMin, pMax, snapshot.grid, vp);
+            }
+        };
+
+        if (viz_.layout == ScreenLayout::Single) {
+            drawPanel(0, canvasMin, canvasMax);
+        } else if (viz_.layout == ScreenLayout::SplitLeftRight) {
+            drawPanel(0, canvasMin, ImVec2(midX - 3.0f, canvasMax.y));
+            drawPanel(1, ImVec2(midX + 3.0f, canvasMin.y), canvasMax);
+        } else if (viz_.layout == ScreenLayout::SplitTopBottom) {
+            drawPanel(0, canvasMin, ImVec2(canvasMax.x, midY - 3.0f));
+            drawPanel(1, ImVec2(canvasMin.x, midY + 3.0f), canvasMax);
+        } else if (viz_.layout == ScreenLayout::Quad) {
+            drawPanel(0, canvasMin, ImVec2(midX - 2.0f, midY - 2.0f));
+            drawPanel(1, ImVec2(midX + 2.0f, canvasMin.y), ImVec2(canvasMax.x, midY - 2.0f));
+            drawPanel(2, ImVec2(canvasMin.x, midY + 2.0f), ImVec2(midX - 2.0f, canvasMax.y));
+            drawPanel(3, ImVec2(midX + 2.0f, midY + 2.0f), canvasMax);
         }
     }
 
-    void rebuildRasterTextures(
+    void rebuildRasterTexture(
+        const int viewportIndex,
         const GridSpec grid,
         const std::vector<float>& primary,
-        const std::vector<float>& secondary,
         const float pMin,
         const float pMax,
-        const float sMin,
-        const float sMax) {
+        const ViewportConfig& vp) {
+        
+        auto& raster = viewportRasters_[viewportIndex];
+        auto& buffer = rasterBuffers_[viewportIndex];
+
         if (grid.width == 0 || grid.height == 0) {
-            destroyRasterResources();
+            destroyRasterTexture(raster);
             return;
         }
 
         const int width = static_cast<int>(grid.width);
         const int height = static_cast<int>(grid.height);
         const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-
-        auto fillScalar = [&](const std::vector<float>& values, const float minV, const float maxV, std::vector<std::uint8_t>& out) {
-            out.assign(pixelCount * 4u, 0u);
-            for (std::size_t i = 0; i < pixelCount; ++i) {
-                const float value = i < values.size() ? values[i] : std::numeric_limits<float>::quiet_NaN();
-                ImU32 color = IM_COL32(18, 18, 28, 255);
-                if (std::isfinite(value)) {
-                    const float t = (value - minV) / (maxV - minV);
-                    color = mapColor(t);
-                }
-                std::uint8_t r = 0;
-                std::uint8_t g = 0;
-                std::uint8_t b = 0;
-                std::uint8_t a = 0;
-                unpackColor(color, r, g, b, a);
-                const std::size_t o = i * 4u;
-                out[o + 0] = r;
-                out[o + 1] = g;
-                out[o + 2] = b;
-                out[o + 3] = a;
+        
+        buffer.assign(pixelCount * 4u, 0u);
+        for (std::size_t i = 0; i < pixelCount; ++i) {
+            const float value = i < primary.size() ? primary[i] : std::numeric_limits<float>::quiet_NaN();     
+            ImU32 color = IM_COL32(18, 18, 28, 255);
+            if (std::isfinite(value)) {
+                const float t = (value - pMin) / (std::max(0.0001f, pMax - pMin));
+                color = mapColor(t, vp.colorMapMode);
             }
-        };
-
-        auto fillMixed = [&](std::vector<std::uint8_t>& out) {
-            out.assign(pixelCount * 4u, 0u);
-            const float mixA = std::clamp(viz_.secondaryBlend, 0.0f, 1.0f);
-            for (std::size_t i = 0; i < pixelCount; ++i) {
-                const float pv = i < primary.size() ? primary[i] : std::numeric_limits<float>::quiet_NaN();
-                const float sv = i < secondary.size() ? secondary[i] : std::numeric_limits<float>::quiet_NaN();
-
-                const float p = std::isfinite(pv) ? std::clamp((pv - pMin) / (pMax - pMin), 0.0f, 1.0f) : 0.0f;
-                const float s = std::isfinite(sv) ? std::clamp((sv - sMin) / (sMax - sMin), 0.0f, 1.0f) : 0.0f;
-                const float pTone = applyDisplayTransfer(p, visuals_);
-                const float sTone = applyDisplayTransfer(s, visuals_);
-
-                const int r = static_cast<int>((1.0f - mixA) * pTone * 255.0f + mixA * sTone * 90.0f);
-                const int g = static_cast<int>((1.0f - mixA) * (0.4f + 0.6f * pTone) * 255.0f + mixA * (0.5f + 0.5f * sTone) * 180.0f);
-                const int b = static_cast<int>((1.0f - mixA) * (1.0f - pTone) * 220.0f + mixA * sTone * 255.0f);
-                const std::size_t o = i * 4u;
-                out[o + 0] = static_cast<std::uint8_t>(std::clamp(r, 0, 255));
-                out[o + 1] = static_cast<std::uint8_t>(std::clamp(g, 0, 255));
-                out[o + 2] = static_cast<std::uint8_t>(std::clamp(b, 0, 255));
-                out[o + 3] = 255u;
-            }
-        };
-
-        if (viz_.mode == DisplayMode::Single) {
-            fillScalar(primary, pMin, pMax, rasterBufferA_);
-            uploadRasterTexture(primaryRaster_, width, height, rasterBufferA_);
-        } else if (viz_.mode == DisplayMode::SideBySideVertical || viz_.mode == DisplayMode::SideBySideHorizontal) {
-            fillScalar(primary, pMin, pMax, rasterBufferA_);
-            fillScalar(secondary, sMin, sMax, rasterBufferB_);
-            uploadRasterTexture(primaryRaster_, width, height, rasterBufferA_);
-            uploadRasterTexture(secondaryRaster_, width, height, rasterBufferB_);
-        } else {
-            fillMixed(rasterBufferMixed_);
-            uploadRasterTexture(mixedRaster_, width, height, rasterBufferMixed_);
+            std::uint8_t r = 0, g = 0, b = 0, a = 0;
+            unpackColor(color, r, g, b, a);
+            const std::size_t o = i * 4u;
+            buffer[o + 0] = r;
+            buffer[o + 1] = g;
+            buffer[o + 2] = b;
+            buffer[o + 3] = a;
         }
+        uploadRasterTexture(raster, width, height, buffer);
     }
 
     void drawRasterPanel(
@@ -768,7 +767,8 @@ private:
         const std::string& title,
         const RasterTexture& texture,
         const float minV,
-        const float maxV) const {
+        const float maxV,
+        const ViewportConfig& vp) const {
         const ViewMapping mapping = makeViewMapping(min, max, grid);
         const float width = mapping.viewportMax.x - mapping.viewportMin.x;
         const float height = mapping.viewportMax.y - mapping.viewportMin.y;
@@ -791,7 +791,7 @@ private:
                 ImVec2(1.0f, 1.0f));
         }
 
-            const int stride = std::max(1, mapping.samplingStride);
+        const int stride = std::max(1, mapping.samplingStride);
         if (visuals_.showGrid && viz_.showCellGrid && mapping.cellW * static_cast<float>(stride) >= 4.0f && mapping.cellH * static_cast<float>(stride) >= 4.0f) {
             const int alpha = static_cast<int>(std::clamp(visuals_.gridOpacity, 0.0f, 1.0f) * 220.0f);
             const float thickness = std::max(0.5f, visuals_.gridLineThickness);
@@ -808,33 +808,33 @@ private:
         dl.PopClipRect();
 
         if (visuals_.showBoundary) {
-            const int alpha = static_cast<int>(std::clamp(visuals_.boundaryOpacity, 0.0f, 1.0f) * 255.0f);
+            const int alpha = static_cast<int>(std::clamp(visuals_.boundaryOpacity, 0.0f, 1.0f) * 255.0f);       
             const float thickness = std::max(0.5f, visuals_.boundaryThickness);
             dl.AddRect(mapping.viewportMin, mapping.viewportMax, IM_COL32(90, 105, 140, alpha), 2.0f, 0, thickness);
         }
         dl.AddText(ImVec2(min.x + 8.0f, min.y + 8.0f), IM_COL32(240, 245, 255, 255), title.c_str());
 
-        if (viz_.showLegend) {
+        if (vp.showLegend) {
             const std::string legend = "min=" + std::to_string(minV) + "  max=" + std::to_string(maxV);
             dl.AddText(ImVec2(min.x + 8.0f, min.y + 26.0f), IM_COL32(210, 220, 245, 255), legend.c_str());
-            if (viz_.showRangeDetails) {
+            if (vp.showRangeDetails) {
                 const char* modeText =
-                    (viz_.normalizationMode == NormalizationMode::PerFrameAuto) ? "range=frame" :
-                    (viz_.normalizationMode == NormalizationMode::StickyPerField) ? "range=sticky" :
+                    (vp.normalizationMode == NormalizationMode::PerFrameAuto) ? "range=frame" :
+                    (vp.normalizationMode == NormalizationMode::StickyPerField) ? "range=sticky" :
                     "range=fixed";
                 dl.AddText(ImVec2(min.x + 8.0f, min.y + 44.0f), IM_COL32(180, 200, 240, 230), modeText);
             }
         }
     }
 
-    void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max, const GridSpec grid) const {
+    void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max, const GridSpec grid, const ViewportConfig& vp) const {      
         const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
         if (fields.empty()) {
             return;
         }
 
-        const auto& xField = fields[static_cast<std::size_t>(viz_.vectorXFieldIndex)];
-        const auto& yField = fields[static_cast<std::size_t>(viz_.vectorYFieldIndex)];
+        const auto& xField = fields[static_cast<std::size_t>(vp.vectorXFieldIndex)];
+        const auto& yField = fields[static_cast<std::size_t>(vp.vectorYFieldIndex)];
         std::vector<float> xValues = mergedFieldValues(xField, viz_.showSparseOverlay);
         std::vector<float> yValues = mergedFieldValues(yField, viz_.showSparseOverlay);
 
@@ -846,7 +846,7 @@ private:
         minMaxFinite(yValues, yMin, yMax);
 
         const ViewMapping mapping = makeViewMapping(min, max, grid);
-        const int stride = std::max(std::max(1, viz_.vectorStride), mapping.samplingStride);
+        const int stride = std::max(std::max(1, vp.vectorStride), mapping.samplingStride);
 
         dl.PushClipRect(mapping.viewportMin, mapping.viewportMax, true);
 
@@ -860,13 +860,13 @@ private:
                     continue;
                 }
 
-                const float nx = ((xValues[idx] - xMin) / (xMax - xMin) - 0.5f) * 2.0f;
-                const float ny = ((yValues[idx] - yMin) / (yMax - yMin) - 0.5f) * 2.0f;
+                const float nx = ((xValues[idx] - xMin) / std::max(0.0001f, xMax - xMin) - 0.5f) * 2.0f;
+                const float ny = ((yValues[idx] - yMin) / std::max(0.0001f, yMax - yMin) - 0.5f) * 2.0f;
 
                 const ImVec2 center(
                     mapping.contentMin.x + (static_cast<float>(x) + 0.5f) * mapping.cellW,
                     mapping.contentMin.y + (static_cast<float>(y) + 0.5f) * mapping.cellH);
-                const float len = std::min(mapping.cellW, mapping.cellH) * static_cast<float>(stride) * viz_.vectorScale;
+                const float len = std::min(mapping.cellW, mapping.cellH) * static_cast<float>(stride) * vp.vectorScale;
                 const ImVec2 tip(center.x + nx * len, center.y + ny * len);
                 dl.AddLine(center, tip, IM_COL32(235, 235, 120, 220), 1.4f);
             }
@@ -877,18 +877,14 @@ private:
 
     void clampVisualizationIndices() {
         if (viz_.fieldNames.empty()) {
-            viz_.primaryFieldIndex = 0;
-            viz_.secondaryFieldIndex = 0;
-            viz_.vectorXFieldIndex = 0;
-            viz_.vectorYFieldIndex = 0;
             return;
         }
-
         const int maxIndex = static_cast<int>(viz_.fieldNames.size()) - 1;
-        viz_.primaryFieldIndex = std::clamp(viz_.primaryFieldIndex, 0, maxIndex);
-        viz_.secondaryFieldIndex = std::clamp(viz_.secondaryFieldIndex, 0, maxIndex);
-        viz_.vectorXFieldIndex = std::clamp(viz_.vectorXFieldIndex, 0, maxIndex);
-        viz_.vectorYFieldIndex = std::clamp(viz_.vectorYFieldIndex, 0, maxIndex);
+        for (auto& vp : viz_.viewports) {
+            vp.primaryFieldIndex = std::clamp(vp.primaryFieldIndex, 0, maxIndex);
+            vp.vectorXFieldIndex = std::clamp(vp.vectorXFieldIndex, 0, maxIndex);
+            vp.vectorYFieldIndex = std::clamp(vp.vectorYFieldIndex, 0, maxIndex);
+        }
     }
 
     void refreshFieldNames() {
@@ -896,7 +892,9 @@ private:
         std::vector<std::string> names;
         if (runtime_.fieldNames(names, message) && !names.empty()) {
             viz_.fieldNames = std::move(names);
-            viz_.stickyRanges.clear();
+            for (auto& vp : viz_.viewports) {
+                vp.stickyRanges.clear();
+            }
             clampVisualizationIndices();
         } else if (!message.empty()) {
             std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", message.c_str());
@@ -1201,75 +1199,92 @@ static_cast<double>(std::max(0.0f, frameDt));
     void drawSessionLifecycleSection() {
         PushSectionTint(0);
         if (ImGui::CollapsingHeader("Engine Lifecycle & Playback", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::TextDisabled("Live mode: Auto-run. Manual mode: Run Step(s). Blocking mode: Run To Target.");
+            bool isRunning = runtime_.isRunning();
+            bool isPaused = runtime_.isPaused();
+            bool isPlaying = isRunning && !isPaused && viz_.autoRun;
 
-            if (PrimaryButton("Start", ImVec2(100, 28))) {
-                std::string message;
-                runtime_.start(message);
-                appendLog(message);
-                refreshFieldNames();
-                requestSnapshotRefresh();
-                triggerOverlay(OverlayIcon::Play);
-            }
-            ImGui::SameLine();
-            if (PrimaryButton("Stop", ImVec2(100, 28))) {
-                std::string message;
-                viz_.autoRun = false;
-                runtime_.stop(message);
-                appendLog(message);
-                requestSnapshotRefresh();
-                triggerOverlay(OverlayIcon::Pause);
-            }
-            ImGui::SameLine();
-            if (PrimaryButton("Restart", ImVec2(100, 28))) {
-                std::string message;
-                runtime_.restart(message);
-                appendLog(message);
-                refreshFieldNames();
-                requestSnapshotRefresh();
-                triggerOverlay(OverlayIcon::Play);
-            }
+            ImVec2 halfBtn = ImVec2(ImGui::GetContentRegionAvail().x * 0.5f - 4.0f, 36.0f);
 
-            ImGui::Separator();
-
-            checkboxWithHint("Auto-run simulation", &viz_.autoRun, "Continuously advances the simulation at the configured tick rate. Disable for manual stepping.");
-            if (viz_.autoRun) {
-                sliderIntWithHint("Steps / tick", &viz_.autoStepsPerFrame, 1, 128, "How many simulation steps are executed each tick while auto-run is enabled.");
-                if (PrimaryButton("Pause", ImVec2(80, 26))) {
+            if (!isRunning) {
+                // Not running at all
+                if (PrimaryButton("Start Simulation", halfBtn)) {
                     std::string message;
-                    runtime_.pause(message);
+                    runtime_.start(message);
+                    viz_.autoRun = true;
                     appendLog(message);
-                    triggerOverlay(OverlayIcon::Pause);
-                }
-                ImGui::SameLine();
-                if (PrimaryButton("Resume", ImVec2(80, 26))) {
-                    std::string message;
-                    runtime_.resume(message);
-                    appendLog(message);
+                    refreshFieldNames();
                     requestSnapshotRefresh();
                     triggerOverlay(OverlayIcon::Play);
                 }
+                ImGui::SameLine();
+                ImGui::BeginDisabled();
+                PrimaryButton("Stop", ImVec2(-1.0f, 36.0f));
+                ImGui::EndDisabled();
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("Simulation is stopped. Press Start to begin.");
             } else {
-                sliderIntWithHint("Step Count", &panel_.stepCount, 1, 1000000, "Number of steps to execute when pressing Run Step(s).");
-                if (PrimaryButton("Run Step(s)", ImVec2(120, 26))) {
+                // Running (either playing or paused)
+                if (isPlaying) {
+                    if (PrimaryButton("Pause", halfBtn)) {
+                        std::string message;
+                        runtime_.pause(message);
+                        viz_.autoRun = false;
+                        appendLog(message);
+                        triggerOverlay(OverlayIcon::Pause);
+                    }
+                } else {
+                    if (PrimaryButton("Play / Resume", halfBtn)) {
+                        std::string message;
+                        runtime_.resume(message);
+                        viz_.autoRun = true;
+                        appendLog(message);
+                        requestSnapshotRefresh();
+                        triggerOverlay(OverlayIcon::Play);
+                    }
+                }
+                ImGui::SameLine();
+                if (PrimaryButton("Stop & Reset", ImVec2(-1.0f, 36.0f))) {
                     std::string message;
-                    runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), message);
+                    viz_.autoRun = false;
+                    runtime_.stop(message);
                     appendLog(message);
                     requestSnapshotRefresh();
+                    triggerOverlay(OverlayIcon::Pause);
                 }
 
+                ImGui::Spacing();
                 ImGui::Separator();
-                int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
-                if (sliderIntWithHint("Run Until", &runUntil, 0, kImGuiIntSafeMax, "Advance simulation until this absolute step index is reached.")) {
-                    panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
+                ImGui::Spacing();
+
+                if (isPlaying) {
+                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Mode: Continuous Auto-Run");
+                    sliderIntWithHint("Simulation Speed (Hz)", &viz_.simulationTickHz, 1, 240, "Target background tick frequency.");
+                    sliderIntWithHint("Steps per Tick", &viz_.autoStepsPerFrame, 1, 128, "How many simulation steps are executed each tick.");
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Mode: Manual Stepping / Paused");
+                    
+                    sliderIntWithHint("Step Size", &panel_.stepCount, 1, 1000000, "Number of steps to advance when pressing Step Forward.");
+                    if (PrimaryButton("Advance Step(s)", ImVec2(-1.0f, 28))) {
+                        std::string message;
+                        runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), message);
+                        appendLog(message);
+                        requestSnapshotRefresh();
+                    }
+
+                    ImGui::Spacing();
+                    
+                    int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
+                    if (sliderIntWithHint("Target Step Index", &runUntil, 0, kImGuiIntSafeMax, "Advance simulation until this absolute step index is reached.")) {
+                        panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
+                    }
+                    if (PrimaryButton("Fast-Forward to Target", ImVec2(-1.0f, 28))) {
+                        std::string message;
+                        runtime_.runUntil(panel_.runUntilTarget, message);
+                        appendLog(message);
+                        requestSnapshotRefresh();
+                    }
                 }
-                if (PrimaryButton("Run To Target", ImVec2(120, 26))) {
-                    std::string message;
-                    runtime_.runUntil(panel_.runUntilTarget, message);
-                    appendLog(message);
-                    requestSnapshotRefresh();
-                }
-                settingHint("Runs a blocking batch until target step is reached. Use Auto-run for interactive evolution.");
             }
         }
         PopSectionTint();
@@ -1281,7 +1296,6 @@ static_cast<double>(std::max(0.0f, frameDt));
             ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
             ImGui::Text("Snapshot mapping time: %.2f ms", viz_.lastSnapshotDurationMs);
             
-            sliderIntWithHint("Simulation tick Hz", &viz_.simulationTickHz, 1, 240, "Target simulation frequency used by auto-run.");
             sliderFloatWithHint("Snapshot target Hz", &viz_.snapshotRefreshHz, 1.0f, 120.0f, "%.1f", "Target frequency for background snapshot captures.");
 
             checkboxWithHint("Adaptive Render Sampling", &viz_.adaptiveSampling, "Automatically increases sampling stride when zoomed out to keep rendering responsive.");
@@ -1353,82 +1367,183 @@ static_cast<double>(std::max(0.0f, frameDt));
         PopSectionTint();
     }
 
+
+    void saveDisplayPrefs() {
+        std::ofstream out("display_prefs.txt");
+        if (!out.is_open()) return;
+        out << "layout=" << static_cast<int>(viz_.layout) << "\n";
+        for (int i = 0; i < 4; ++i) {
+            auto& vp = viz_.viewports[i];
+            out << "vp" << i << "_primaryFieldIndex=" << vp.primaryFieldIndex << "\n";
+            out << "vp" << i << "_normalizationMode=" << static_cast<int>(vp.normalizationMode) << "\n";        
+            out << "vp" << i << "_colorMapMode=" << static_cast<int>(vp.colorMapMode) << "\n";
+            out << "vp" << i << "_showVectorField=" << vp.showVectorField << "\n";
+            out << "vp" << i << "_vectorXFieldIndex=" << vp.vectorXFieldIndex << "\n";
+            out << "vp" << i << "_vectorYFieldIndex=" << vp.vectorYFieldIndex << "\n";
+            out << "vp" << i << "_showLegend=" << vp.showLegend << "\n";
+        }
+    }
+
+    void loadDisplayPrefs() {
+        std::ifstream in("display_prefs.txt");
+        if (!in.is_open()) return;
+        std::string line;
+        while (std::getline(in, line)) {
+            auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq);
+            try {
+                int val = std::stoi(line.substr(eq + 1));
+                if (key == "layout") viz_.layout = static_cast<ScreenLayout>(val);
+                else if (key.starts_with("vp")) {
+                    int vpIdx = key[2] - '0';
+                    if (vpIdx < 0 || vpIdx > 3) continue;
+                    auto& vp = viz_.viewports[vpIdx];
+                    std::string sub = key.substr(4);
+                    if (sub == "primaryFieldIndex") vp.primaryFieldIndex = val;
+                    else if (sub == "normalizationMode") vp.normalizationMode = static_cast<NormalizationMode>(val); 
+                    else if (sub == "colorMapMode") vp.colorMapMode = static_cast<ColorMapMode>(val);
+                    else if (sub == "showVectorField") vp.showVectorField = (val != 0);
+                    else if (sub == "vectorXFieldIndex") vp.vectorXFieldIndex = val;
+                    else if (sub == "vectorYFieldIndex") vp.vectorYFieldIndex = val;
+                    else if (sub == "showLegend") vp.showLegend = (val != 0);
+                }
+            } catch(...) {}
+        }
+    }
+
     void drawDisplayMappingSection() {
         PushSectionTint(3);
-        if (ImGui::CollapsingHeader("Continuum Field Mapping", ImGuiTreeNodeFlags_DefaultOpen)) {
-            static constexpr std::array<const char*, 4> modeNames = {
-                "Single Field",
-                "Side-by-Side (Vertical)",
-                "Side-by-Side (Horizontal)",
-                "Mixed Overlay"
+        if (ImGui::CollapsingHeader("Continuum Field Mapping & Layout", ImGuiTreeNodeFlags_DefaultOpen)) {
+            
+            static constexpr std::array<const char*, 4> layoutNames = {
+                "Single View",
+                "Split Left/Right (Double)",
+                "Split Top/Bottom (Double)",
+                "4-Way Quad View"
             };
-            int mode = static_cast<int>(viz_.mode);
-            if (ImGui::Combo("Display Mode", &mode, modeNames.data(), static_cast<int>(modeNames.size()))) {
-                viz_.mode = static_cast<DisplayMode>(std::clamp(mode, 0, static_cast<int>(modeNames.size()) - 1));
+            int layout = static_cast<int>(viz_.layout);
+            if (ImGui::Combo("Global View Layout", &layout, layoutNames.data(), static_cast<int>(layoutNames.size()))) {     
+                viz_.layout = static_cast<ScreenLayout>(std::clamp(layout, 0, static_cast<int>(layoutNames.size()) - 1));
             }
-            settingHint("How scalar fields are arranged on the simulation canvas.");
+            settingHint("Changes the central grid view to display 1, 2, or 4 viewports.");
 
             if (PrimaryButton("Refresh Field List", ImVec2(160.0f, 24.0f))) {
                 refreshFieldNames();
             }
+            ImGui::SameLine();
+            if (PrimaryButton("Save Layout", ImVec2(100.0f, 24.0f))) {
+                saveDisplayPrefs();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Restore Defaults", ImVec2(100.0f, 24.0f))) {
+                ImGui::OpenPopup("Revert Settings");
+            }
+            
+            if (ImGui::BeginPopupModal("Revert Settings", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Are you sure you want to revert to the default double-sided view settings?");
+                ImGui::Separator();
+                if (ImGui::Button("Yes, Revert", ImVec2(120, 0))) {
+                    viz_.layout = ScreenLayout::SplitLeftRight;
+                    for (size_t i = 0; i < viz_.viewports.size(); ++i) {
+                        auto& vp = viz_.viewports[i];
+                        vp.primaryFieldIndex = i;
+                        vp.normalizationMode = NormalizationMode::StickyPerField;
+                        vp.colorMapMode = (i == 1) ? ColorMapMode::Water : ColorMapMode::Turbo;
+                        vp.showVectorField = false;
+                        vp.showLegend = true;
+                    }
+                    saveDisplayPrefs();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+                ImGui::EndPopup();
+            }
 
+            ImGui::Separator();
+            ImGui::TextUnformatted("Viewport Specific Controls");
+            
+            int activeViewportCount = 1;
+            if (viz_.layout == ScreenLayout::SplitLeftRight || viz_.layout == ScreenLayout::SplitTopBottom) activeViewportCount = 2;
+            else if (viz_.layout == ScreenLayout::Quad) activeViewportCount = 4;
+            
+            viz_.activeViewportEditor = std::clamp(viz_.activeViewportEditor, 0, activeViewportCount - 1);
+            
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
+            for (int i = 0; i < activeViewportCount; ++i) {
+                if (i > 0) ImGui::SameLine();
+                std::string btnLabel = "Display " + std::to_string(i + 1);
+                
+                bool isActive = (viz_.activeViewportEditor == i);
+                if (isActive) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
+                }
+                if (ImGui::Button(btnLabel.c_str(), ImVec2(90, 24))) {
+                    viz_.activeViewportEditor = i;
+                }
+                if (isActive) {
+                    ImGui::PopStyleColor();
+                }
+            }
+            ImGui::PopStyleVar();
+            
+            ImGui::Spacing();
+            
+            auto& vp = viz_.viewports[viz_.activeViewportEditor];
+            
             if (!viz_.fieldNames.empty()) {
                 clampVisualizationIndices();
-                if (ImGui::BeginCombo("Primary Field", viz_.fieldNames[static_cast<std::size_t>(viz_.primaryFieldIndex)].c_str())) {
-                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
-                        const bool selected = (viz_.primaryFieldIndex == i);
-                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
-                            viz_.primaryFieldIndex = i;
+                if (ImGui::BeginCombo("Primary Field", viz_.fieldNames[static_cast<std::size_t>(vp.primaryFieldIndex)].c_str())) {                                                                                                                  for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        const bool selected = (vp.primaryFieldIndex == i);
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) { 
+                            vp.primaryFieldIndex = i;
                         }
                     }
                     ImGui::EndCombo();
                 }
-                settingHint("Main scalar variable displayed in the first panel.");
-
-                if (viz_.mode != DisplayMode::Single) {
-                    if (ImGui::BeginCombo("Secondary Field", viz_.fieldNames[static_cast<std::size_t>(viz_.secondaryFieldIndex)].c_str())) {
-                        for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
-                            const bool selected = (viz_.secondaryFieldIndex == i);
-                            if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), selected)) {
-                                viz_.secondaryFieldIndex = i;
-                            }
-                        }
-                        ImGui::EndCombo();
-                    }
-                    settingHint("Secondary scalar variable used by split or mixed display modes.");
-                }
-
-                if (viz_.mode == DisplayMode::MixedOverlay) {
-                    sliderFloatWithHint("Overlay Blend", &viz_.secondaryBlend, 0.0f, 1.0f, "%.2f", "Blend weight of the secondary field in mixed overlay mode.");
-                }
+                settingHint("Main scalar variable displayed in this specific panel.");
             }
 
             ImGui::Separator();
             ImGui::TextUnformatted("Colorization & Ranges");
 
-            static constexpr std::array<const char*, 3> colorMapNames = {"Turbo", "Grayscale", "Diverging"};
-            int colorMap = static_cast<int>(viz_.colorMapMode);
-            if (ImGui::Combo("Color Palette", &colorMap, colorMapNames.data(), static_cast<int>(colorMapNames.size()))) {
-                viz_.colorMapMode = static_cast<ColorMapMode>(std::clamp(colorMap, 0, static_cast<int>(colorMapNames.size()) - 1));
-            }
-            settingHint("Transfer palette used to map normalized scalar values to color.");
+            static constexpr std::array<const char*, 4> colorMapNames = {"Turbo", "Grayscale", "Diverging", "Water"};     
+            int colorMap = static_cast<int>(vp.colorMapMode);
+            if (ImGui::Combo("Color Palette", &colorMap, colorMapNames.data(), static_cast<int>(colorMapNames.size()))) {                                                                                                                         vp.colorMapMode = static_cast<ColorMapMode>(std::clamp(colorMap, 0, static_cast<int>(colorMapNames.size()) - 1));                                                                                                           }
+            settingHint("Transfer palette used to map normalized scalar values for this view.");
 
-            static constexpr std::array<const char*, 3> normalizationNames = {"Per-frame Auto", "Sticky Limit (per-field)", "Fixed Manual Bounds"};
-            int normalization = static_cast<int>(viz_.normalizationMode);
-            if (ImGui::Combo("Normalization", &normalization, normalizationNames.data(), static_cast<int>(normalizationNames.size()))) {
-                viz_.normalizationMode = static_cast<NormalizationMode>(std::clamp(normalization, 0, static_cast<int>(normalizationNames.size()) - 1));
-            }
-            settingHint("Controls how value ranges are normalized before color mapping.");
+            static constexpr std::array<const char*, 3> normalizationNames = {"Per-frame Auto", "Sticky Limit (per-field)", "Fixed Manual Bounds"};                                                                                           int normalization = static_cast<int>(vp.normalizationMode);
+            if (ImGui::Combo("Normalization", &normalization, normalizationNames.data(), static_cast<int>(normalizationNames.size()))) {                                                                                                          vp.normalizationMode = static_cast<NormalizationMode>(std::clamp(normalization, 0, static_cast<int>(normalizationNames.size()) - 1));                                                                                       }
+            settingHint("Controls how value ranges are normalized before color mapping for this specific view.");
 
-            if (viz_.normalizationMode == NormalizationMode::StickyPerField) {
+            if (vp.normalizationMode == NormalizationMode::StickyPerField) {
                 if (ImGui::Button("Reset Sticky Tracking", ImVec2(170.0f, 24.0f))) {
-                    viz_.stickyRanges.clear();
+                    vp.stickyRanges.clear();
                 }
                 ImGui::SameLine();
-                checkboxWithHint("Debug range metrics", &viz_.showRangeDetails, "Shows min/max diagnostics for normalization debugging.");
-            } else if (viz_.normalizationMode == NormalizationMode::FixedManual) {
-                sliderFloatWithHint("Range Min", &viz_.fixedRangeMin, -15.0f, 15.0f, "%.3f", "Lower bound for fixed normalization mode.");
-                sliderFloatWithHint("Range Max", &viz_.fixedRangeMax, -15.0f, 15.0f, "%.3f", "Upper bound for fixed normalization mode.");
+                checkboxWithHint("Debug range metrics", &vp.showRangeDetails, "Shows min/max diagnostics for normalization debugging.");                                                                                                    } else if (vp.normalizationMode == NormalizationMode::FixedManual) {
+                sliderFloatWithHint("Range Min", &vp.fixedRangeMin, -15.0f, 15.0f, "%.3f", "Lower bound for fixed normalization mode.");                                                                                                        sliderFloatWithHint("Range Max", &vp.fixedRangeMax, -15.0f, 15.0f, "%.3f", "Upper bound for fixed normalization mode.");                                                                                                    }
+                
+            checkboxWithHint("Show Legend on View", &vp.showLegend, "Displays min/max/value legend overlays where available on this display.");
+                
+            ImGui::Separator();
+            ImGui::TextUnformatted("Data Visual Overlays");
+            
+            checkboxWithHint("Render Vector Overlay", &vp.showVectorField, "Draws vectors from the selected X/Y scalar fields over this specific Viewport.");                                                                                                            
+            if (vp.showVectorField && !viz_.fieldNames.empty()) {
+                ImGui::Indent();
+                if (ImGui::BeginCombo("Def. X", viz_.fieldNames[static_cast<std::size_t>(vp.vectorXFieldIndex)].c_str())) {                                                                                                                         for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), vp.vectorXFieldIndex == i)) { vp.vectorXFieldIndex = i; }                                                                                     }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::BeginCombo("Def. Y", viz_.fieldNames[static_cast<std::size_t>(vp.vectorYFieldIndex)].c_str())) {                                                                                                                         for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), vp.vectorYFieldIndex == i)) { vp.vectorYFieldIndex = i; }                                                                                     }
+                    ImGui::EndCombo();
+                }
+                sliderIntWithHint("Ray Stride", &vp.vectorStride, 1, 32, "Sample spacing used when drawing vectors.");                                                                                                                          sliderFloatWithHint("Ray Scale", &vp.vectorScale, 0.05f, 2.0f, "%.2f", "Vector length scale.");
+                ImGui::Unindent();
             }
         }
         PopSectionTint();
@@ -1436,56 +1551,27 @@ static_cast<double>(std::max(0.0f, frameDt));
 
     void drawOverlaysSection() {
         PushSectionTint(4);
-        if (ImGui::CollapsingHeader("Vector & Spatial Overlays", 0)) { // Closed by default
-            checkboxWithHint("Show Domain Boundary", &visuals_.showBoundary, "Draw a boundary rectangle around the visible simulation domain.");
-            if (visuals_.showBoundary) {
+        if (ImGui::CollapsingHeader("Global Spatial Overlays", 0)) { // Closed by default
+            checkboxWithHint("Show Domain Boundary", &visuals_.showBoundary, "Draw a boundary rectangle around the visible simulation domain.");                                                                                              if (visuals_.showBoundary) {
                 ImGui::Indent();
-                sliderFloatWithHint("Opacity", &visuals_.boundaryOpacity, 0.0f, 1.0f, "%.2f", "Boundary line alpha.");
-                sliderFloatWithHint("Thickness", &visuals_.boundaryThickness, 0.5f, 6.0f, "%.2f", "Boundary line width in pixels.");
-                checkboxWithHint("Animate Pulse", &visuals_.boundaryAnimate, "Animates boundary opacity to improve visibility during motion.");
-                if (accessibility_.reduceMotion) { visuals_.boundaryAnimate = false; }
+                sliderFloatWithHint("Opacity", &visuals_.boundaryOpacity, 0.0f, 1.0f, "%.2f", "Boundary line alpha.");                                                                                                                            sliderFloatWithHint("Thickness", &visuals_.boundaryThickness, 0.5f, 6.0f, "%.2f", "Boundary line width in pixels.");                                                                                                              checkboxWithHint("Animate Pulse", &visuals_.boundaryAnimate, "Animates boundary opacity to improve visibility during motion.");                                                                                                   if (accessibility_.reduceMotion) { visuals_.boundaryAnimate = false; }
                 ImGui::Unindent();
             }
 
-            checkboxWithHint("Overlay Cell Grid", &visuals_.showGrid, "Draws grid lines over rasterized cells.");
+            checkboxWithHint("Overlay Cell Grid", &visuals_.showGrid, "Draws grid lines over rasterized cells across all displays.");
             if (visuals_.showGrid) {
                 viz_.showCellGrid = true;
                 ImGui::Indent();
-                sliderFloatWithHint("Grid Op", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f", "Grid line opacity.");
-                sliderFloatWithHint("Grid W", &visuals_.gridLineThickness, 0.5f, 4.0f, "%.2f", "Grid line thickness in pixels.");
-                ImGui::Unindent();
+                sliderFloatWithHint("Grid Op", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f", "Grid line opacity."); 
+                sliderFloatWithHint("Grid W", &visuals_.gridLineThickness, 0.5f, 4.0f, "%.2f", "Grid line thickness in pixels.");                                                                                                                 ImGui::Unindent();
             } else {
                 viz_.showCellGrid = false;
             }
 
-            checkboxWithHint("Render Vector Fields", &viz_.showVectorField, "Draws vectors from the selected X/Y scalar fields.");
-            if (viz_.showVectorField && !viz_.fieldNames.empty()) {
-                ImGui::Indent();
-                clampVisualizationIndices();
-                if (ImGui::BeginCombo("Def. X", viz_.fieldNames[static_cast<std::size_t>(viz_.vectorXFieldIndex)].c_str())) {
-                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
-                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), viz_.vectorXFieldIndex == i)) { viz_.vectorXFieldIndex = i; }
-                    }
-                    ImGui::EndCombo();
-                }
-                if (ImGui::BeginCombo("Def. Y", viz_.fieldNames[static_cast<std::size_t>(viz_.vectorYFieldIndex)].c_str())) {
-                    for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
-                        if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), viz_.vectorYFieldIndex == i)) { viz_.vectorYFieldIndex = i; }
-                    }
-                    ImGui::EndCombo();
-                }
-                sliderIntWithHint("Ray Stride", &viz_.vectorStride, 1, 32, "Sample spacing used when drawing vectors.");
-                sliderFloatWithHint("Ray Scale", &viz_.vectorScale, 0.05f, 2.0f, "%.2f", "Vector length scale.");
-                ImGui::Unindent();
-            }
-
             ImGui::Separator();
-            checkboxWithHint("Show Value Legend", &viz_.showLegend, "Displays min/max/value legend overlays where available.");
-            checkboxWithHint("Render Sparse Objects", &viz_.showSparseOverlay, "Includes sparse overlay entries in the rasterized display.");
-        }
+            checkboxWithHint("Render Sparse Objects", &viz_.showSparseOverlay, "Includes sparse overlay entries in the rasterized display.");                                                                                             }
         PopSectionTint();
     }
-
     void drawOpticsSection() {
         PushSectionTint(5);
         if (ImGui::CollapsingHeader("Camera & Optics", 0)) { // Closed by default
@@ -1518,7 +1604,10 @@ static_cast<double>(std::max(0.0f, frameDt));
                 }
                 ImGui::EndCombo();
             }
-            settingHint("Model family tier controlling coupling complexity (A/B/C).");
+            settingHint("Model family tier controlling coupling complexity:\n"
+                        "A (Baseline): Simple interactions, fast performance.\n"
+                        "B (Intermediate): Balanced coupling rules.\n"
+                        "C (Advanced): High realism, intricate non-linear dependencies.");
 
             if (ImGui::BeginCombo("Temporal Mode", kTemporalOptions[panel_.temporalIndex])) {
                 for (int i = 0; i < static_cast<int>(kTemporalOptions.size()); ++i) {
@@ -1531,6 +1620,8 @@ static_cast<double>(std::max(0.0f, frameDt));
             ImGui::Spacing();
             if (PrimaryButton("Apply Configuration & Reset", ImVec2(-1.0f, 32.0f))) {
                 applyConfigFromPanel();
+                std::string message;
+                runtime_.restart(message);
             }
         }
         PopSectionTint();
@@ -1546,9 +1637,20 @@ static_cast<double>(std::max(0.0f, frameDt));
             changed |= sliderFloatWithHint("Warp Strength", &panel_.terrainWarpStrength, 0.0f, 2.0f, "%.2f", "Domain warp amount used to bend noise patterns.");
             changed |= sliderFloatWithHint("Terrain Amplitude", &panel_.terrainAmplitude, 0.1f, 3.0f, "%.2f", "Overall elevation contrast.");
             changed |= sliderFloatWithHint("Ridge Mix", &panel_.terrainRidgeMix, 0.0f, 1.0f, "%.2f", "Adds ridge-like structures to terrain.");
+            
+            ImGui::Separator();
+            ImGui::TextUnformatted("Noise Fractal Parameters (Advanced)");
+            int octaves = panel_.terrainOctaves;
+            if (sliderIntWithHint("Octaves", &octaves, 1, 8, "Number of detail layers added together.")) {
+                panel_.terrainOctaves = octaves;
+                changed = true;
+            }
+            changed |= sliderFloatWithHint("Lacunarity", &panel_.terrainLacunarity, 1.0f, 4.0f, "%.2f", "Frequency multiplier per octave (usually ~2.0).");
+            changed |= sliderFloatWithHint("Gain", &panel_.terrainGain, 0.1f, 1.0f, "%.2f", "Amplitude multiplier per octave (usually ~0.5).");
 
             ImGui::Separator();
             ImGui::TextUnformatted("Climate and Hydrology");
+            changed |= sliderFloatWithHint("Latitude Banding", &panel_.latitudeBanding, 0.0f, 2.0f, "%.2f", "Strength of dominant horizontal climate bands from Equator to Poles.");
             changed |= sliderFloatWithHint("Sea Level", &panel_.seaLevel, 0.0f, 1.0f, "%.3f", "Waterline threshold used to derive initial water coverage.");
             changed |= sliderFloatWithHint("Polar Cooling", &panel_.polarCooling, 0.0f, 1.5f, "%.2f", "Strength of temperature cooling away from warm latitudes.");
             changed |= sliderFloatWithHint("Humidity from Water", &panel_.humidityFromWater, 0.0f, 1.5f, "%.2f", "Influence of water presence on humidity initialization.");
@@ -1680,8 +1782,12 @@ static_cast<double>(std::max(0.0f, frameDt));
         panel_.terrainWarpStrength = config.worldGen.terrainWarpStrength;
         panel_.terrainAmplitude = config.worldGen.terrainAmplitude;
         panel_.terrainRidgeMix = config.worldGen.terrainRidgeMix;
+        panel_.terrainOctaves = config.worldGen.terrainOctaves;
+        panel_.terrainLacunarity = config.worldGen.terrainLacunarity;
+        panel_.terrainGain = config.worldGen.terrainGain;
         panel_.seaLevel = config.worldGen.seaLevel;
         panel_.polarCooling = config.worldGen.polarCooling;
+        panel_.latitudeBanding = config.worldGen.latitudeBanding;
         panel_.humidityFromWater = config.worldGen.humidityFromWater;
         panel_.biomeNoiseStrength = config.worldGen.biomeNoiseStrength;
     }
@@ -1701,8 +1807,12 @@ static_cast<double>(std::max(0.0f, frameDt));
         config.worldGen.terrainWarpStrength = panel_.terrainWarpStrength;
         config.worldGen.terrainAmplitude = panel_.terrainAmplitude;
         config.worldGen.terrainRidgeMix = panel_.terrainRidgeMix;
+        config.worldGen.terrainOctaves = panel_.terrainOctaves;
+        config.worldGen.terrainLacunarity = panel_.terrainLacunarity;
+        config.worldGen.terrainGain = panel_.terrainGain;
         config.worldGen.seaLevel = panel_.seaLevel;
         config.worldGen.polarCooling = panel_.polarCooling;
+        config.worldGen.latitudeBanding = panel_.latitudeBanding;
         config.worldGen.humidityFromWater = panel_.humidityFromWater;
         config.worldGen.biomeNoiseStrength = panel_.biomeNoiseStrength;
 
@@ -1756,13 +1866,9 @@ static_cast<double>(std::max(0.0f, frameDt));
     std::mutex snapshotErrorMutex_;
     std::string snapshotWorkerError_;
 
-    RasterTexture primaryRaster_{};
-    RasterTexture secondaryRaster_{};
-    RasterTexture mixedRaster_{};
-    std::vector<std::uint8_t> rasterBufferA_;
-    std::vector<std::uint8_t> rasterBufferB_;
-    std::vector<std::uint8_t> rasterBufferMixed_;
-    RenderCacheState renderCache_{};
+    std::array<RasterTexture, 4> viewportRasters_{};
+    std::array<std::vector<std::uint8_t>, 4> rasterBuffers_{};
+    std::array<RenderCacheState, 4> renderCaches_{};
 
     double autoRunStepBudget_ = 0.0;
     RuntimeService runtime_;

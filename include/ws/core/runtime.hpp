@@ -21,8 +21,12 @@ struct WorldGenerationParams {
     float terrainWarpStrength = 0.55f;
     float terrainAmplitude = 1.0f;
     float terrainRidgeMix = 0.28f;
+    int terrainOctaves = 5;
+    float terrainLacunarity = 2.0f;
+    float terrainGain = 0.5f;
     float seaLevel = 0.48f;
     float polarCooling = 0.62f;
+    float latitudeBanding = 1.0f;
     float humidityFromWater = 0.52f;
     float biomeNoiseStrength = 0.20f;
 };

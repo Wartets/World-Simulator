@@ -183,8 +183,12 @@ void Runtime::start() {
             const float warpStrength = std::clamp(config_.worldGen.terrainWarpStrength, 0.0f, 2.0f);
             const float terrainAmplitude = std::clamp(config_.worldGen.terrainAmplitude, 0.1f, 3.0f);
             const float ridgeMix = std::clamp(config_.worldGen.terrainRidgeMix, 0.0f, 1.0f);
+            const int octaves = std::clamp(config_.worldGen.terrainOctaves, 1, 8);
+            const float lacunarity = std::max(1.0f, config_.worldGen.terrainLacunarity);
+            const float gain = std::clamp(config_.worldGen.terrainGain, 0.0f, 1.0f);
             const float seaLevel = std::clamp(config_.worldGen.seaLevel, 0.0f, 1.0f);
             const float polarCooling = std::clamp(config_.worldGen.polarCooling, 0.0f, 1.5f);
+            const float banding = std::clamp(config_.worldGen.latitudeBanding, 0.0f, 2.0f);
             const float humidityFromWater = std::clamp(config_.worldGen.humidityFromWater, 0.0f, 1.5f);
             const float biomeNoiseStrength = std::clamp(config_.worldGen.biomeNoiseStrength, 0.0f, 1.0f);
 
@@ -194,25 +198,30 @@ void Runtime::start() {
             const std::uint64_t noiseSeedD = DeterministicHash::combine(config_.seed, 0xD4E8B8D3ULL);
             const std::uint64_t noiseSeedE = DeterministicHash::combine(config_.seed, 0xE713944BULL);
 
+            const float aspect = static_cast<float>(config_.grid.width) / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.height));
+
             for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
                 for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
                     const float nx = static_cast<float>(x) * invW;
                     const float ny = static_cast<float>(y) * invH;
+
+                    const float noiseX = nx * aspect;
+                    const float noiseY = ny;
 
                     const float dx = static_cast<float>(x) - centerX;
                     const float dy = static_cast<float>(y) - centerY;
                     const float radius = std::sqrt((dx * dx) + (dy * dy)) /
                         std::max(1.0f, std::sqrt(centerX * centerX + centerY * centerY));
 
-                    const float warpX = fbm2D(noiseSeedA, nx * detailFreq, ny * detailFreq, 3, 2.0f, 0.5f);
-                    const float warpY = fbm2D(noiseSeedB, nx * detailFreq, ny * detailFreq, 3, 2.0f, 0.5f);
-                    const float domainX = nx + (warpX - 0.5f) * warpStrength;
-                    const float domainY = ny + (warpY - 0.5f) * warpStrength;
+                    const float warpX = fbm2D(noiseSeedA, noiseX * detailFreq, noiseY * detailFreq, 3, lacunarity, gain);
+                    const float warpY = fbm2D(noiseSeedB, noiseX * detailFreq, noiseY * detailFreq, 3, lacunarity, gain);
+                    const float domainX = noiseX + (warpX - 0.5f) * warpStrength;
+                    const float domainY = noiseY + (warpY - 0.5f) * warpStrength;
 
-                    const float continental = fbm2D(noiseSeedC, domainX * baseFreq, domainY * baseFreq, 5, 2.0f, 0.54f);
-                    const float detail = fbm2D(noiseSeedD, domainX * detailFreq, domainY * detailFreq, 4, 2.3f, 0.56f);
+                    const float continental = fbm2D(noiseSeedC, domainX * baseFreq, domainY * baseFreq, octaves, lacunarity, gain);
+                    const float detail = fbm2D(noiseSeedD, domainX * detailFreq, domainY * detailFreq, octaves - 1, lacunarity, gain);
                     const float ridge = 1.0f - std::abs(2.0f * detail - 1.0f);
-                    const float biomeNoise = fbm2D(noiseSeedE, nx * (detailFreq * 0.5f), ny * (detailFreq * 0.5f), 3, 2.0f, 0.6f);
+                    const float biomeNoise = fbm2D(noiseSeedE, noiseX * (detailFreq * 0.5f), noiseY * (detailFreq * 0.5f), 3, 2.0f, 0.6f);
 
                     const float macroShape = std::clamp(1.0f - radius * 0.85f, 0.0f, 1.0f);
                     const float elevationRaw = std::clamp(
@@ -231,7 +240,7 @@ void Runtime::start() {
                     const float heightCooling = std::clamp(elevation * 0.45f, 0.0f, 1.0f);
                     const float temperature = std::clamp(
                         0.25f +
-                            0.55f * latitudinal * (1.0f - 0.35f * polarCooling) +
+                            0.55f * latitudinal * banding * (1.0f - 0.35f * polarCooling) +
                             0.20f * (1.0f - heightCooling) +
                             (biomeNoise - 0.5f) * biomeNoiseStrength,
                         0.0f,
@@ -247,7 +256,7 @@ void Runtime::start() {
 
                     const float wind = std::clamp(
                         0.25f +
-                            0.45f * fbm2D(noiseSeedB, nx * 4.0f + 11.0f, ny * 4.0f + 7.0f, 3, 2.0f, 0.6f) +
+                            0.45f * fbm2D(noiseSeedB, noiseX * 4.0f + 11.0f, noiseY * 4.0f + 7.0f, 3, 2.0f, 0.6f) +
                             0.30f * std::abs(temperature - 0.5f),
                         0.0f,
                         1.0f);
