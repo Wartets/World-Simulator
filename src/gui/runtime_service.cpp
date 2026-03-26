@@ -1,15 +1,70 @@
 ﻿#include "ws/gui/runtime_service.hpp"
 
+#include "ws/app/checkpoint_io.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
 namespace ws::gui {
 
+namespace {
+
+std::string normalizeWorldName(std::string worldName) {
+    worldName = app::trim(std::move(worldName));
+    if (worldName.empty()) {
+        return {};
+    }
+
+    for (char& ch : worldName) {
+        const bool allowed =
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' || ch == '-';
+        if (!allowed) {
+            ch = '_';
+        }
+    }
+    return worldName;
+}
+
+} // namespace
+
 RuntimeService::RuntimeService() = default;
+
+std::filesystem::path RuntimeService::worldProfileRoot() {
+    return std::filesystem::path("checkpoints") / "world_profiles";
+}
+
+std::filesystem::path RuntimeService::worldCheckpointRoot() {
+    return std::filesystem::path("checkpoints") / "worlds";
+}
+
+std::filesystem::path RuntimeService::checkpointPathForWorld(const std::string& worldName) {
+    return worldCheckpointRoot() / (worldName + ".wscp");
+}
+
+bool RuntimeService::isDefaultWorldName(const std::string& name, int& outIndex) {
+    if (name.size() != 10 || !name.starts_with("world_")) {
+        return false;
+    }
+
+    int value = 0;
+    for (std::size_t i = 6; i < name.size(); ++i) {
+        const char ch = name[i];
+        if (ch < '0' || ch > '9') {
+            return false;
+        }
+        value = (value * 10) + static_cast<int>(ch - '0');
+    }
+    outIndex = value;
+    return true;
+}
 
 bool RuntimeService::isRunning() const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
@@ -73,6 +128,159 @@ bool RuntimeService::stop(std::string& message) {
         return true;
     } catch (const std::exception& exception) {
         message = std::string("stop_failed error=") + exception.what();
+        return false;
+    }
+}
+
+std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<StoredWorldInfo> worlds;
+
+    try {
+        const auto names = worldProfileStore_.list();
+        worlds.reserve(names.size());
+
+        for (const auto& worldName : names) {
+            StoredWorldInfo info;
+            info.worldName = worldName;
+            info.profilePath = worldProfileStore_.pathFor(worldName);
+            info.checkpointPath = checkpointPathForWorld(worldName);
+            info.hasCheckpoint = std::filesystem::exists(info.checkpointPath);
+            if (info.hasCheckpoint) {
+                const auto checkpoint = app::readCheckpointFile(info.checkpointPath);
+                info.stepIndex = checkpoint.stateSnapshot.header.stepIndex;
+                info.runIdentityHash = checkpoint.runSignature.identityHash();
+            }
+            worlds.push_back(std::move(info));
+        }
+
+        message = "world_list_ready count=" + std::to_string(worlds.size());
+    } catch (const std::exception& exception) {
+        message = std::string("world_list_failed error=") + exception.what();
+        worlds.clear();
+    }
+
+    return worlds;
+}
+
+std::string RuntimeService::suggestNextWorldName() const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    const auto names = worldProfileStore_.list();
+    int maxIndex = 0;
+    for (const auto& name : names) {
+        int value = 0;
+        if (isDefaultWorldName(name, value)) {
+            maxIndex = std::max(maxIndex, value);
+        }
+    }
+
+    for (int i = maxIndex + 1; i < 100000; ++i) {
+        std::ostringstream candidate;
+        candidate << "world_" << std::setw(4) << std::setfill('0') << i;
+        const std::string name = candidate.str();
+        if (!std::filesystem::exists(worldProfileStore_.pathFor(name))) {
+            return name;
+        }
+    }
+
+    return "world_99999";
+}
+
+bool RuntimeService::createWorld(const std::string& worldName, const app::LaunchConfig& config, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    const std::string normalized = normalizeWorldName(worldName);
+    if (normalized.empty()) {
+        message = "world name is required";
+        return false;
+    }
+
+    config_ = config;
+    if (!start(message)) {
+        return false;
+    }
+
+    activeWorldName_ = normalized;
+    if (!saveActiveWorld(message)) {
+        return false;
+    }
+
+    std::ostringstream output;
+    output << "world_created name=" << activeWorldName_
+           << " grid=" << config_.grid.width << 'x' << config_.grid.height
+           << " seed=" << config_.seed;
+    message = output.str();
+    return true;
+}
+
+bool RuntimeService::openWorld(const std::string& worldName, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    const std::string normalized = normalizeWorldName(worldName);
+    if (normalized.empty()) {
+        message = "world name is required";
+        return false;
+    }
+
+    try {
+        config_ = worldProfileStore_.load(normalized);
+    } catch (const std::exception& exception) {
+        message = std::string("world_open_failed error=") + exception.what();
+        return false;
+    }
+
+    if (!start(message)) {
+        return false;
+    }
+
+    const auto checkpointPath = checkpointPathForWorld(normalized);
+    if (std::filesystem::exists(checkpointPath)) {
+        try {
+            const auto checkpoint = app::readCheckpointFile(checkpointPath);
+            runtime_->resetToCheckpoint(checkpoint);
+        } catch (const std::exception& exception) {
+            message = std::string("world_open_failed checkpoint_restore_error=") + exception.what();
+            return false;
+        }
+    }
+
+    activeWorldName_ = normalized;
+    std::ostringstream output;
+    output << "world_opened name=" << activeWorldName_;
+    if (std::filesystem::exists(checkpointPath)) {
+        output << " source=checkpoint";
+    } else {
+        output << " source=profile";
+    }
+    message = output.str();
+    return true;
+}
+
+bool RuntimeService::saveActiveWorld(std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    if (activeWorldName_.empty()) {
+        message = "no active world selected";
+        return false;
+    }
+    if (!runtime_ || runtime_->status() != RuntimeStatus::Running) {
+        message = "world save requires an active running runtime";
+        return false;
+    }
+
+    try {
+        worldProfileStore_.save(activeWorldName_, config_);
+        const auto checkpoint = runtime_->createCheckpoint(activeWorldName_);
+        const auto checkpointPath = checkpointPathForWorld(activeWorldName_);
+        app::writeCheckpointFile(checkpoint, checkpointPath);
+        std::ostringstream output;
+        output << "world_saved name=" << activeWorldName_
+               << " step=" << checkpoint.stateSnapshot.header.stepIndex;
+        message = output.str();
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("world_save_failed error=") + exception.what();
         return false;
     }
 }

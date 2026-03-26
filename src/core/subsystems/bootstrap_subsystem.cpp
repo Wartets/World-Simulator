@@ -26,17 +26,12 @@ void BootstrapSubsystem::initialize(const StateStore&, StateStore::WriteSession&
     switch (tier) {
         case ModelTier::A:
             writeSession.fillScalar("bootstrap_marker", 1.0f);
-            writeSession.fillScalar("temperature_T", 273.15f);
             break;
         case ModelTier::B:
             writeSession.fillScalar("bootstrap_marker", 2.0f);
-            writeSession.fillScalar("temperature_T", 275.15f);
-            writeSession.fillScalar("humidity_q", 0.5f);
             break;
         case ModelTier::C:
             writeSession.fillScalar("bootstrap_marker", 3.0f);
-            writeSession.fillScalar("temperature_T", 278.15f);
-            writeSession.fillScalar("humidity_q", 0.65f);
             break;
     }
 }

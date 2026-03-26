@@ -83,6 +83,48 @@ float fbm2D(
     return std::clamp(total / amplitudeSum, 0.0f, 1.0f);
 }
 
+struct ZoneSample {
+    float zoneValue = 0.5f;
+    float edgeBlend = 0.0f;
+};
+
+ZoneSample macroZoneSample(const std::uint64_t seed, const float x, const float y, const float zoneScale) {
+    const float px = x / std::max(0.001f, zoneScale);
+    const float py = y / std::max(0.001f, zoneScale);
+
+    const int cx = static_cast<int>(std::floor(px));
+    const int cy = static_cast<int>(std::floor(py));
+
+    float bestDist2 = std::numeric_limits<float>::infinity();
+    float secondDist2 = std::numeric_limits<float>::infinity();
+    float bestValue = 0.5f;
+
+    for (int oy = -1; oy <= 1; ++oy) {
+        for (int ox = -1; ox <= 1; ++ox) {
+            const int sx = cx + ox;
+            const int sy = cy + oy;
+            const float jitterX = hash01(DeterministicHash::combine(seed, 0x11ULL), sx, sy) - 0.5f;
+            const float jitterY = hash01(DeterministicHash::combine(seed, 0x23ULL), sx, sy) - 0.5f;
+            const float siteX = static_cast<float>(sx) + 0.5f + 0.9f * jitterX;
+            const float siteY = static_cast<float>(sy) + 0.5f + 0.9f * jitterY;
+            const float dx = px - siteX;
+            const float dy = py - siteY;
+            const float dist2 = dx * dx + dy * dy;
+
+            if (dist2 < bestDist2) {
+                secondDist2 = bestDist2;
+                bestDist2 = dist2;
+                bestValue = hash01(DeterministicHash::combine(seed, 0x37ULL), sx, sy);
+            } else if (dist2 < secondDist2) {
+                secondDist2 = dist2;
+            }
+        }
+    }
+
+    const float edge = std::clamp((std::sqrt(secondDist2) - std::sqrt(bestDist2)) * 0.8f, 0.0f, 1.0f);
+    return ZoneSample{bestValue, edge};
+}
+
 } // namespace
 
 Runtime::Runtime(RuntimeConfig config)
@@ -173,8 +215,6 @@ void Runtime::start() {
                 "bootstrap_marker",
                 "seed_probe"});
 
-            const float centerX = static_cast<float>(config_.grid.width - 1) * 0.5f;
-            const float centerY = static_cast<float>(config_.grid.height - 1) * 0.5f;
             const float invW = 1.0f / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.width - 1));
             const float invH = 1.0f / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.height - 1));
 
@@ -197,8 +237,11 @@ void Runtime::start() {
             const std::uint64_t noiseSeedC = DeterministicHash::combine(config_.seed, 0xCA1F0E91ULL);
             const std::uint64_t noiseSeedD = DeterministicHash::combine(config_.seed, 0xD4E8B8D3ULL);
             const std::uint64_t noiseSeedE = DeterministicHash::combine(config_.seed, 0xE713944BULL);
+            const std::uint64_t zoneSeed = DeterministicHash::combine(config_.seed, 0x9B1D44AFULL);
+            const std::uint64_t zoneSeed2 = DeterministicHash::combine(config_.seed, 0x64D7A21BULL);
 
             const float aspect = static_cast<float>(config_.grid.width) / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.height));
+            const float zoneScale = std::max(0.08f, 0.40f / std::max(0.25f, baseFreq));
 
             for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
                 for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
@@ -208,26 +251,53 @@ void Runtime::start() {
                     const float noiseX = nx * aspect;
                     const float noiseY = ny;
 
-                    const float dx = static_cast<float>(x) - centerX;
-                    const float dy = static_cast<float>(y) - centerY;
-                    const float radius = std::sqrt((dx * dx) + (dy * dy)) /
-                        std::max(1.0f, std::sqrt(centerX * centerX + centerY * centerY));
-
                     const float warpX = fbm2D(noiseSeedA, noiseX * detailFreq, noiseY * detailFreq, 3, lacunarity, gain);
                     const float warpY = fbm2D(noiseSeedB, noiseX * detailFreq, noiseY * detailFreq, 3, lacunarity, gain);
                     const float domainX = noiseX + (warpX - 0.5f) * warpStrength;
                     const float domainY = noiseY + (warpY - 0.5f) * warpStrength;
+
+                    const ZoneSample zone = macroZoneSample(zoneSeed, domainX, domainY, zoneScale);
+                    const ZoneSample zone2 = macroZoneSample(zoneSeed2, domainX + 0.37f, domainY - 0.29f, zoneScale * 0.65f);
+                    const float zoneBias = (zone.zoneValue - 0.5f);
+                    const float zoneBias2 = (zone2.zoneValue - 0.5f);
 
                     const float continental = fbm2D(noiseSeedC, domainX * baseFreq, domainY * baseFreq, octaves, lacunarity, gain);
                     const float detail = fbm2D(noiseSeedD, domainX * detailFreq, domainY * detailFreq, octaves - 1, lacunarity, gain);
                     const float ridge = 1.0f - std::abs(2.0f * detail - 1.0f);
                     const float biomeNoise = fbm2D(noiseSeedE, noiseX * (detailFreq * 0.5f), noiseY * (detailFreq * 0.5f), 3, 2.0f, 0.6f);
 
-                    const float macroShape = std::clamp(1.0f - radius * 0.85f, 0.0f, 1.0f);
+                    const float humidityBiomeAxis = std::clamp(0.5f + 1.4f * zoneBias2 + 0.4f * (biomeNoise - 0.5f), 0.0f, 1.0f);
+                    const float mountainBiomeAxis = std::clamp(0.5f + 1.6f * zoneBias + 0.25f * (zone2.edgeBlend - 0.5f), 0.0f, 1.0f);
+
+                    const float tundraW = std::clamp((1.0f - humidityBiomeAxis) * (1.0f - mountainBiomeAxis), 0.0f, 1.0f);
+                    const float plainsW = std::clamp(humidityBiomeAxis * (1.0f - mountainBiomeAxis), 0.0f, 1.0f);
+                    const float highlandW = std::clamp((1.0f - humidityBiomeAxis) * mountainBiomeAxis, 0.0f, 1.0f);
+                    const float wetlandW = std::clamp(humidityBiomeAxis * mountainBiomeAxis, 0.0f, 1.0f);
+                    const float biomeWeightSum = std::max(1e-5f, tundraW + plainsW + highlandW + wetlandW);
+
+                    const float biomeTempBias = (
+                        tundraW * (-0.14f) +
+                        plainsW * (0.02f) +
+                        highlandW * (-0.07f) +
+                        wetlandW * (0.05f)) / biomeWeightSum;
+                    const float biomeHumidityBias = (
+                        tundraW * (-0.12f) +
+                        plainsW * (0.00f) +
+                        highlandW * (-0.04f) +
+                        wetlandW * (0.16f)) / biomeWeightSum;
+                    const float biomeReliefBias = (
+                        tundraW * (0.02f) +
+                        plainsW * (-0.04f) +
+                        highlandW * (0.16f) +
+                        wetlandW * (-0.06f)) / biomeWeightSum;
+
+                    const float regionMountains = std::clamp(0.5f + 1.8f * zoneBias, 0.0f, 1.0f);
+                    const float regionHumidity = std::clamp(0.5f - 1.4f * zoneBias, 0.0f, 1.0f);
+                    const float macroShape = std::clamp(0.45f + 0.55f * continental + 0.20f * (zone.edgeBlend - 0.5f), 0.0f, 1.0f);
                     const float elevationRaw = std::clamp(
-                        (continental * 0.62f) +
-                        (ridge * 0.28f * ridgeMix) +
-                        (macroShape * 0.10f),
+                        (continental * (0.50f + 0.18f * regionMountains)) +
+                        (ridge * (0.16f + 0.22f * ridgeMix + biomeReliefBias)) +
+                        (macroShape * 0.18f),
                         0.0f,
                         1.0f);
                     const float elevation = std::clamp(0.5f + (elevationRaw - 0.5f) * terrainAmplitude, 0.0f, 1.0f);
@@ -238,10 +308,13 @@ void Runtime::start() {
 
                     const float latitudinal = 1.0f - std::abs(2.0f * ny - 1.0f);
                     const float heightCooling = std::clamp(elevation * 0.45f, 0.0f, 1.0f);
+                    const float zoneTemperatureBias = std::clamp(0.5f + zoneBias * 0.9f, 0.0f, 1.0f);
                     const float temperature = std::clamp(
                         0.25f +
                             0.55f * latitudinal * banding * (1.0f - 0.35f * polarCooling) +
                             0.20f * (1.0f - heightCooling) +
+                            0.15f * (zoneTemperatureBias - 0.5f) +
+                            biomeTempBias +
                             (biomeNoise - 0.5f) * biomeNoiseStrength,
                         0.0f,
                         1.0f);
@@ -249,6 +322,8 @@ void Runtime::start() {
                     const float humidity = std::clamp(
                         0.20f +
                             humidityFromWater * 0.45f * water +
+                            0.20f * regionHumidity +
+                            biomeHumidityBias +
                             0.25f * (1.0f - std::abs(temperature - 0.55f)) +
                             (biomeNoise - 0.5f) * 0.2f,
                         0.0f,

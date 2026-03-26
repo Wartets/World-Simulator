@@ -32,7 +32,21 @@ ImVec4 addColors(const ImVec4& base, const ImVec4& tint) {
 } // namespace
 
 bool PrimaryButton(const char* label, const ImVec2 size) {
-    return ImGui::Button(label, size);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(56, 96, 172, 220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(72, 118, 205, 240));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(42, 78, 148, 255));
+    const bool pressed = ImGui::Button(label, size);
+    ImGui::PopStyleColor(3);
+    return pressed;
+}
+
+bool SecondaryButton(const char* label, const ImVec2 size) {
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(52, 58, 74, 180));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(68, 74, 94, 220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(44, 50, 66, 245));
+    const bool pressed = ImGui::Button(label, size);
+    ImGui::PopStyleColor(3);
+    return pressed;
 }
 
 bool NumericSliderPair(const char* label, float* value, const float minValue, const float maxValue, const char* format, const float inputWidth) {
@@ -76,10 +90,39 @@ bool NumericSliderPairInt(const char* label, int* value, const int minValue, con
 void DelayedTooltip(const char* text) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
         ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(300.0f);
+        ImGui::PushTextWrapPos(360.0f);
         ImGui::TextUnformatted(text);
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
+    }
+}
+
+void SectionHeader(const char* title, const char* subtitle) {
+    if (title != nullptr && title[0] != '\0') {
+        ImGui::TextUnformatted(title);
+    }
+    if (subtitle != nullptr && subtitle[0] != '\0') {
+        ImGui::TextDisabled("%s", subtitle);
+    }
+}
+
+void EmptyStateCard(const char* title, const char* body) {
+    ImGui::BeginChild("##empty_state", ImVec2(-1.0f, 0.0f), true);
+    ImGui::Spacing();
+    if (title != nullptr && title[0] != '\0') {
+        ImGui::TextWrapped("%s", title);
+    }
+    if (body != nullptr && body[0] != '\0') {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", body);
+    }
+    ImGui::Spacing();
+    ImGui::EndChild();
+}
+
+void LabeledHint(const char* text) {
+    if (text != nullptr && text[0] != '\0') {
+        ImGui::TextDisabled("%s", text);
     }
 }
 

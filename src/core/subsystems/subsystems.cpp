@@ -52,29 +52,11 @@ std::vector<std::string> GenerationSubsystem::declaredReadSet() const { return {
 std::vector<std::string> GenerationSubsystem::declaredWriteSet() const { return {"terrain_elevation_h"}; }
 
 void GenerationSubsystem::initialize(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
-    const ModelTier tier = tierFor(profile, name());
-    const auto h_seed = stateStore.getFieldHandle("seed_probe");
-    const auto w_terrain = writeSession.getFieldHandle("terrain_elevation_h");
-
-    forEachCell(stateStore, [&](const Cell cell) {
-        const float seedProbe = sampleCell(stateStore, h_seed, cell);
-        const float xNorm = static_cast<float>(cell.x) / static_cast<float>(std::max(1u, stateStore.grid().width - 1u));
-        const float yNorm = static_cast<float>(cell.y) / static_cast<float>(std::max(1u, stateStore.grid().height - 1u));
-        const float lowFreq = 0.5f * std::sin((xNorm + yNorm) * 3.14159265f);
-        const float highFreq = 0.25f * std::cos((xNorm - yNorm) * 6.2831853f);
-
-        float terrain = 0.0f;
-        if (tier == ModelTier::A) {
-            terrain = clampRange(0.6f + 0.2f * lowFreq + 0.05f * seedProbe, 0.0f, 1.0f);
-        } else if (tier == ModelTier::B) {
-            terrain = clampRange(0.55f + 0.2f * lowFreq + 0.15f * highFreq + 0.08f * seedProbe, 0.0f, 1.0f);
-        } else {
-            const float ridge = 0.12f * std::sin((2.0f * xNorm + yNorm) * 6.2831853f);
-            terrain = clampRange(0.50f + 0.25f * lowFreq + 0.20f * highFreq + ridge + 0.10f * seedProbe, 0.0f, 1.0f);
-        }
-
-        writeSession.setScalarFast(w_terrain, cell, terrain);
-    });
+    (void)stateStore;
+    (void)writeSession;
+    (void)profile;
+    // Terrain is produced by the runtime seed pipeline and must remain non-periodic.
+    // Keep initialize() as a no-op to avoid flattening/overwriting seeded macro-zones.
 }
 
 void GenerationSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
@@ -103,15 +85,9 @@ std::vector<std::string> HydrologySubsystem::declaredReadSet() const { return {"
 std::vector<std::string> HydrologySubsystem::declaredWriteSet() const { return {"surface_water_w"}; }
 
 void HydrologySubsystem::initialize(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
-    const ModelTier tier = tierFor(profile, name());
-    if (tier == ModelTier::A) {
-        writeSession.fillScalar("surface_water_w", 0.18f);
-    } else if (tier == ModelTier::B) {
-        writeSession.fillScalar("surface_water_w", 0.24f);
-    } else {
-        writeSession.fillScalar("surface_water_w", 0.30f);
-    }
     (void)stateStore;
+    (void)writeSession;
+    (void)profile;
 }
 
 void HydrologySubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
@@ -165,14 +141,8 @@ std::vector<std::string> TemperatureSubsystem::declaredReadSet() const { return 
 std::vector<std::string> TemperatureSubsystem::declaredWriteSet() const { return {"temperature_T"}; }
 
 void TemperatureSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
-    const ModelTier tier = tierFor(profile, name());
-    if (tier == ModelTier::A) {
-        writeSession.fillScalar("temperature_T", 285.15f);
-    } else if (tier == ModelTier::B) {
-        writeSession.fillScalar("temperature_T", 287.15f);
-    } else {
-        writeSession.fillScalar("temperature_T", 289.15f);
-    }
+    (void)writeSession;
+    (void)profile;
 }
 
 void TemperatureSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t stepIndex) {
@@ -229,14 +199,8 @@ std::vector<std::string> HumiditySubsystem::declaredReadSet() const { return {"s
 std::vector<std::string> HumiditySubsystem::declaredWriteSet() const { return {"humidity_q"}; }
 
 void HumiditySubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
-    const ModelTier tier = tierFor(profile, name());
-    if (tier == ModelTier::A) {
-        writeSession.fillScalar("humidity_q", 0.45f);
-    } else if (tier == ModelTier::B) {
-        writeSession.fillScalar("humidity_q", 0.55f);
-    } else {
-        writeSession.fillScalar("humidity_q", 0.62f);
-    }
+    (void)writeSession;
+    (void)profile;
 }
 
 void HumiditySubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
@@ -275,7 +239,7 @@ std::vector<std::string> WindSubsystem::declaredReadSet() const { return {"tempe
 std::vector<std::string> WindSubsystem::declaredWriteSet() const { return {"wind_u"}; }
 
 void WindSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile&) {
-    writeSession.fillScalar("wind_u", 0.0f);
+    (void)writeSession;
 }
 
 void WindSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
@@ -314,7 +278,7 @@ std::vector<std::string> ClimateSubsystem::declaredReadSet() const { return {"te
 std::vector<std::string> ClimateSubsystem::declaredWriteSet() const { return {"climate_index_c"}; }
 
 void ClimateSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile&) {
-    writeSession.fillScalar("climate_index_c", 0.0f);
+    (void)writeSession;
 }
 
 void ClimateSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
@@ -360,14 +324,8 @@ std::vector<std::string> SoilSubsystem::declaredReadSet() const { return {"surfa
 std::vector<std::string> SoilSubsystem::declaredWriteSet() const { return {"fertility_phi"}; }
 
 void SoilSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
-    const ModelTier tier = tierFor(profile, name());
-    if (tier == ModelTier::A) {
-        writeSession.fillScalar("fertility_phi", 0.5f);
-    } else if (tier == ModelTier::B) {
-        writeSession.fillScalar("fertility_phi", 0.6f);
-    } else {
-        writeSession.fillScalar("fertility_phi", 0.68f);
-    }
+    (void)writeSession;
+    (void)profile;
 }
 
 void SoilSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
@@ -404,7 +362,7 @@ std::vector<std::string> VegetationSubsystem::declaredReadSet() const { return {
 std::vector<std::string> VegetationSubsystem::declaredWriteSet() const { return {"vegetation_v"}; }
 
 void VegetationSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile&) {
-    writeSession.fillScalar("vegetation_v", 0.3f);
+    (void)writeSession;
 }
 
 void VegetationSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
@@ -445,14 +403,8 @@ std::vector<std::string> ResourcesSubsystem::declaredReadSet() const { return {"
 std::vector<std::string> ResourcesSubsystem::declaredWriteSet() const { return {"resource_stock_r"}; }
 
 void ResourcesSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
-    const ModelTier tier = tierFor(profile, name());
-    if (tier == ModelTier::A) {
-        writeSession.fillScalar("resource_stock_r", 0.4f);
-    } else if (tier == ModelTier::B) {
-        writeSession.fillScalar("resource_stock_r", 0.5f);
-    } else {
-        writeSession.fillScalar("resource_stock_r", 0.62f);
-    }
+    (void)writeSession;
+    (void)profile;
 }
 
 void ResourcesSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {

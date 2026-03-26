@@ -7,10 +7,20 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <filesystem>
 #include <string>
 #include <vector>
 
 namespace ws::gui {
+
+struct StoredWorldInfo {
+    std::string worldName;
+    std::filesystem::path profilePath;
+    std::filesystem::path checkpointPath;
+    bool hasCheckpoint = false;
+    std::uint64_t stepIndex = 0;
+    std::uint64_t runIdentityHash = 0;
+};
 
 class RuntimeService {
 public:
@@ -46,13 +56,27 @@ public:
     bool loadProfile(const std::string& name, std::string& message);
     bool listProfiles(std::string& message) const;
 
+    [[nodiscard]] std::vector<StoredWorldInfo> listStoredWorlds(std::string& message) const;
+    [[nodiscard]] std::string suggestNextWorldName() const;
+    bool createWorld(const std::string& worldName, const app::LaunchConfig& config, std::string& message);
+    bool openWorld(const std::string& worldName, std::string& message);
+    bool saveActiveWorld(std::string& message);
+
+    [[nodiscard]] const std::string& activeWorldName() const noexcept { return activeWorldName_; }
+
 private:
     bool requireRuntime(const char* operation, std::string& message) const;
+    [[nodiscard]] static std::filesystem::path worldProfileRoot();
+    [[nodiscard]] static std::filesystem::path worldCheckpointRoot();
+    [[nodiscard]] static std::filesystem::path checkpointPathForWorld(const std::string& worldName);
+    [[nodiscard]] static bool isDefaultWorldName(const std::string& name, int& outIndex);
 
     app::LaunchConfig config_{};
     std::unique_ptr<Runtime> runtime_;
     std::map<std::string, RuntimeCheckpoint, std::less<>> checkpoints_;
     app::ProfileStore profileStore_{};
+    app::ProfileStore worldProfileStore_{worldProfileRoot()};
+    std::string activeWorldName_;
     mutable std::recursive_mutex mutex_;
 };
 

@@ -7,6 +7,10 @@
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
 
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -28,6 +32,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <filesystem>
 #include <future>
 #include <fstream>
 
@@ -68,6 +73,7 @@ struct PanelState {
 
     int stepCount = 1;
     std::uint64_t runUntilTarget = 100;
+    bool showAdvancedStepping = false;
 
     float forceFieldScale = 1.0f;
     float forceFieldDamping = 0.15f;
@@ -118,6 +124,12 @@ enum class ColorMapMode {
     Grayscale = 1,
     Diverging = 2,
     Water = 3
+};
+
+enum class AppState {
+    SessionManager,
+    NewWorldWizard,
+    Simulation
 };
 
 struct ViewportConfig {
@@ -180,9 +192,24 @@ struct VisualizationState {
     std::unordered_map<std::string, std::pair<float, float>> stickyRanges;
 };
 
+struct SessionUiState {
+    std::vector<StoredWorldInfo> worlds;
+    int selectedWorldIndex = -1;
+    bool needsRefresh = true;
+    char pendingWorldName[128] = "";
+    char statusMessage[256] = "";
+};
+
 constexpr std::array<const char*, 3> kTierOptions = {"A (Baseline)", "B (Intermediate)", "C (Advanced)"};
 constexpr std::array<const char*, 3> kTemporalOptions = {"uniform", "phased", "multirate"};
 constexpr int kImGuiIntSafeMax = std::numeric_limits<int>::max() / 2;
+constexpr float kS1 = 4.0f;
+constexpr float kS2 = 8.0f;
+constexpr float kS3 = 12.0f;
+constexpr float kS4 = 16.0f;
+constexpr float kS5 = 24.0f;
+constexpr float kS6 = 32.0f;
+constexpr float kPageMaxWidth = 1600.0f;
 
 GLFWwindow* createGlfwWindowWithFallback() {
     struct VersionProfile {
@@ -354,6 +381,101 @@ void unpackColor(const ImU32 color, std::uint8_t& r, std::uint8_t& g, std::uint8
     a = static_cast<std::uint8_t>((color >> 24u) & 0xFFu);
 }
 
+float hashNoise(const std::uint64_t seed, const int x, const int y) {
+    std::uint64_t h = seed;
+    h = hashCombine(h, static_cast<std::uint64_t>(x * 73856093));
+    h = hashCombine(h, static_cast<std::uint64_t>(y * 19349663));
+    h ^= (h >> 33u);
+    h *= 0xff51afd7ed558ccdull;
+    h ^= (h >> 33u);
+    h *= 0xc4ceb9fe1a85ec53ull;
+    h ^= (h >> 33u);
+    const double normalized = static_cast<double>(h & 0xFFFFFFFFull) / static_cast<double>(0xFFFFFFFFull);
+    return static_cast<float>(normalized);
+}
+
+struct PreviewZoneSample {
+    float zoneValue = 0.5f;
+    float edgeBlend = 0.0f;
+};
+
+PreviewZoneSample previewZoneSample(const std::uint64_t seed, const float x, const float y, const float zoneScale) {
+    const float px = x / std::max(0.001f, zoneScale);
+    const float py = y / std::max(0.001f, zoneScale);
+    const int cx = static_cast<int>(std::floor(px));
+    const int cy = static_cast<int>(std::floor(py));
+
+    float bestDist2 = std::numeric_limits<float>::infinity();
+    float secondDist2 = std::numeric_limits<float>::infinity();
+    float bestValue = 0.5f;
+
+    for (int oy = -1; oy <= 1; ++oy) {
+        for (int ox = -1; ox <= 1; ++ox) {
+            const int sx = cx + ox;
+            const int sy = cy + oy;
+            const float jitterX = hashNoise(seed ^ 0x11ull, sx, sy) - 0.5f;
+            const float jitterY = hashNoise(seed ^ 0x37ull, sx, sy) - 0.5f;
+            const float siteX = static_cast<float>(sx) + 0.5f + 0.8f * jitterX;
+            const float siteY = static_cast<float>(sy) + 0.5f + 0.8f * jitterY;
+            const float dx = px - siteX;
+            const float dy = py - siteY;
+            const float dist2 = dx * dx + dy * dy;
+
+            if (dist2 < bestDist2) {
+                secondDist2 = bestDist2;
+                bestDist2 = dist2;
+                bestValue = hashNoise(seed ^ 0x5Bull, sx, sy);
+            } else if (dist2 < secondDist2) {
+                secondDist2 = dist2;
+            }
+        }
+    }
+
+    const float edge = std::clamp((std::sqrt(secondDist2) - std::sqrt(bestDist2)) * 0.8f, 0.0f, 1.0f);
+    return PreviewZoneSample{bestValue, edge};
+}
+
+float previewTerrainValue(const PanelState& panel, const int x, const int y, const int w, const int h) {
+    const float nx = static_cast<float>(x) / std::max(1, w - 1);
+    const float ny = static_cast<float>(y) / std::max(1, h - 1);
+
+    float freq = std::max(0.01f, panel.terrainBaseFrequency);
+    float amplitude = std::max(0.01f, panel.terrainAmplitude);
+    float value = 0.0f;
+    float ampAccum = 0.0f;
+    const int octaves = std::clamp(panel.terrainOctaves, 1, 8);
+
+    const float warpX = hashNoise(panel.seed ^ 0xABull, x / 5, y / 5) - 0.5f;
+    const float warpY = hashNoise(panel.seed ^ 0xCDull, x / 5, y / 5) - 0.5f;
+    const float zoneScale = std::max(0.08f, 0.40f / std::max(0.25f, panel.terrainBaseFrequency));
+    const PreviewZoneSample zone = previewZoneSample(panel.seed ^ 0xEFull, nx + warpX * panel.terrainWarpStrength, ny + warpY * panel.terrainWarpStrength, zoneScale);
+    const float zoneBias = zone.zoneValue - 0.5f;
+
+    for (int i = 0; i < octaves; ++i) {
+        const float sampleX = (nx + warpX * panel.terrainWarpStrength) * freq;
+        const float sampleY = (ny + warpY * panel.terrainWarpStrength) * freq;
+        const float wave = 0.5f + 0.5f * std::sin(sampleX * 6.28318f + 0.5f * std::cos(sampleY * 6.28318f));
+        const float noise = hashNoise(panel.seed + static_cast<std::uint64_t>(i * 7919), x + (i * 13), y + (i * 17));
+        const float ridge = 1.0f - std::abs(2.0f * noise - 1.0f);
+        const float mixed = (wave * (1.0f - panel.terrainRidgeMix)) + (ridge * (panel.terrainRidgeMix + 0.20f * std::clamp(zoneBias, 0.0f, 1.0f)));
+        value += mixed * amplitude;
+        ampAccum += amplitude;
+        freq *= std::max(1.0f, panel.terrainLacunarity);
+        amplitude *= std::clamp(panel.terrainGain, 0.1f, 1.0f);
+    }
+
+    if (ampAccum > 0.0f) {
+        value /= ampAccum;
+    }
+
+    const float latitude = std::abs((ny - 0.5f) * 2.0f);
+    value -= latitude * panel.polarCooling * 0.25f;
+    value += 0.15f * zoneBias;
+    value += 0.10f * (zone.edgeBlend - 0.5f);
+    value += (hashNoise(panel.seed ^ 0xA53ull, x, y) - 0.5f) * panel.biomeNoiseStrength;
+    return std::clamp(value, 0.0f, 1.0f);
+}
+
 class MainWindowImpl {
 public:
     int run() {
@@ -383,9 +505,9 @@ public:
 
         loadDisplayPrefs();
 
-        std::string startupMessage;
-        runtime_.start(startupMessage);
-        appendLog(startupMessage);
+        // std::string startupMessage;
+        // runtime_.start(startupMessage);
+        // appendLog(startupMessage);
 
         syncPanelFromConfig();
         refreshFieldNames();
@@ -408,11 +530,17 @@ public:
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
 
-            drawViewport();
-            drawSimulationCanvas();
-            drawDockSpace();
-            drawControlPanel();
-            drawPlaybackOverlay(overlay_, accessibility_.reduceMotion, ImGui::GetIO().DeltaTime);
+            if (appState_ == AppState::Simulation) {
+                drawViewport();
+                drawSimulationCanvas();
+                drawDockSpace();
+                drawControlPanel();
+                drawPlaybackOverlay(overlay_, accessibility_.reduceMotion, ImGui::GetIO().DeltaTime);
+            } else if (appState_ == AppState::SessionManager) {
+                drawSessionManager();
+            } else if (appState_ == AppState::NewWorldWizard) {
+                drawNewWorldWizard();
+            }
 
             ImGui::Render();
 
@@ -500,8 +628,8 @@ private:
         glBindTexture(GL_TEXTURE_2D, texture.id);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -739,10 +867,53 @@ private:
         const int width = static_cast<int>(grid.width);
         const int height = static_cast<int>(grid.height);
         const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+
+        if (maxTextureSize_ <= 0) {
+            GLint maxSize = 0;
+            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxSize);
+            maxTextureSize_ = std::max(256, static_cast<int>(maxSize));
+        }
+
+        const int safeCellBudget = std::max(4096, viz_.maxRenderedCells);
+        int sampleStride = 1;
+        if (pixelCount > static_cast<std::size_t>(safeCellBudget)) {
+            const double ratio = std::sqrt(static_cast<double>(pixelCount) / static_cast<double>(safeCellBudget));
+            sampleStride = std::max(1, static_cast<int>(std::ceil(ratio)));
+        }
+
+        int sampledWidth = std::max(1, static_cast<int>((grid.width + static_cast<std::uint32_t>(sampleStride) - 1u) / static_cast<std::uint32_t>(sampleStride)));
+        int sampledHeight = std::max(1, static_cast<int>((grid.height + static_cast<std::uint32_t>(sampleStride) - 1u) / static_cast<std::uint32_t>(sampleStride)));
+
+        const float aspect = static_cast<float>(std::max(1, width)) / static_cast<float>(std::max(1, height));
+        if (sampledWidth > maxTextureSize_ || sampledHeight > maxTextureSize_) {
+            const float widthScale = static_cast<float>(sampledWidth) / static_cast<float>(maxTextureSize_);
+            const float heightScale = static_cast<float>(sampledHeight) / static_cast<float>(maxTextureSize_);
+            const float scale = std::max(widthScale, heightScale);
+            sampledWidth = std::max(1, static_cast<int>(std::floor(static_cast<float>(sampledWidth) / scale)));
+            sampledHeight = std::max(1, static_cast<int>(std::floor(static_cast<float>(sampledHeight) / scale)));
+
+            if (aspect >= 1.0f) {
+                sampledHeight = std::max(1, static_cast<int>(std::round(static_cast<float>(sampledWidth) / aspect)));
+            } else {
+                sampledWidth = std::max(1, static_cast<int>(std::round(static_cast<float>(sampledHeight) * aspect)));
+            }
+        }
         
-        buffer.assign(pixelCount * 4u, 0u);
-        for (std::size_t i = 0; i < pixelCount; ++i) {
-            const float value = i < primary.size() ? primary[i] : std::numeric_limits<float>::quiet_NaN();     
+        const std::size_t sampledPixelCount = static_cast<std::size_t>(sampledWidth) * static_cast<std::size_t>(sampledHeight);
+        buffer.assign(sampledPixelCount * 4u, 0u);
+        for (int sy = 0; sy < sampledHeight; ++sy) {
+            const int gy = std::clamp(
+                static_cast<int>((static_cast<double>(sy) / static_cast<double>(std::max(1, sampledHeight - 1))) * static_cast<double>(std::max(0, height - 1))),
+                0,
+                std::max(0, height - 1));
+            for (int sx = 0; sx < sampledWidth; ++sx) {
+                const int gx = std::clamp(
+                    static_cast<int>((static_cast<double>(sx) / static_cast<double>(std::max(1, sampledWidth - 1))) * static_cast<double>(std::max(0, width - 1))),
+                    0,
+                    std::max(0, width - 1));
+
+                const std::size_t srcIdx = static_cast<std::size_t>(gy) * static_cast<std::size_t>(width) + static_cast<std::size_t>(gx);
+                const float value = srcIdx < primary.size() ? primary[srcIdx] : std::numeric_limits<float>::quiet_NaN();
             ImU32 color = IM_COL32(18, 18, 28, 255);
             if (std::isfinite(value)) {
                 const float t = (value - pMin) / (std::max(0.0001f, pMax - pMin));
@@ -750,13 +921,15 @@ private:
             }
             std::uint8_t r = 0, g = 0, b = 0, a = 0;
             unpackColor(color, r, g, b, a);
-            const std::size_t o = i * 4u;
-            buffer[o + 0] = r;
-            buffer[o + 1] = g;
-            buffer[o + 2] = b;
-            buffer[o + 3] = a;
+                const std::size_t dstIdx = static_cast<std::size_t>(sy) * static_cast<std::size_t>(sampledWidth) + static_cast<std::size_t>(sx);
+                const std::size_t o = dstIdx * 4u;
+                buffer[o + 0] = r;
+                buffer[o + 1] = g;
+                buffer[o + 2] = b;
+                buffer[o + 3] = a;
+            }
         }
-        uploadRasterTexture(raster, width, height, buffer);
+        uploadRasterTexture(raster, sampledWidth, sampledHeight, buffer);
     }
 
     void drawRasterPanel(
@@ -1016,6 +1189,9 @@ private:
     }
 
     void tickAutoRun(const float frameDt) {
+        if (appState_ != AppState::Simulation) {
+            return;
+        }
         {
             const std::lock_guard<std::mutex> lock(asyncStateMutex_);
             if (asyncErrorPending_) {
@@ -1056,6 +1232,326 @@ static_cast<double>(std::max(0.0f, frameDt));
             }
             requestSnapshotRefresh();
         });
+    }
+
+    void drawSessionManager() {
+        if (sessionUi_.needsRefresh) {
+            std::string listMessage;
+            sessionUi_.worlds = runtime_.listStoredWorlds(listMessage);
+            if (sessionUi_.selectedWorldIndex >= static_cast<int>(sessionUi_.worlds.size())) {
+                sessionUi_.selectedWorldIndex = static_cast<int>(sessionUi_.worlds.empty() ? -1 : 0);
+            }
+            if (sessionUi_.selectedWorldIndex < 0 && !sessionUi_.worlds.empty()) {
+                sessionUi_.selectedWorldIndex = 0;
+            }
+            std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", listMessage.c_str());
+            sessionUi_.needsRefresh = false;
+        }
+
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->Pos);
+        ImGui::SetNextWindowSize(viewport->Size);
+
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+        ImGui::Begin("Session Manager Space", nullptr, flags);
+
+        const float rootW = std::max(640.0f, viewport->Size.x);
+        const float rootH = std::max(420.0f, viewport->Size.y);
+        const ImVec2 rootPos(0.0f, 0.0f);
+
+        ImGui::SetCursorPos(rootPos);
+        ImGui::BeginChild("SessionRoot", ImVec2(rootW, rootH), true);
+
+        ImGui::BeginChild("SessionHeader", ImVec2(-1.0f, 88.0f), false);
+        SectionHeader("World Simulator", "Select a world or create a new one.");
+        ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x - 132.0f));
+        if (SecondaryButton("Refresh list", ImVec2(128.0f, 32.0f))) {
+            sessionUi_.needsRefresh = true;
+        }
+        DelayedTooltip("Refreshes the world list from stored profiles and checkpoints.");
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        const float actionBarH = 92.0f;
+        const float contentH = std::max(220.0f, ImGui::GetContentRegionAvail().y - actionBarH - kS3);
+        const bool narrowLayout = rootW < 1100.0f;
+
+        ImGui::BeginChild("SessionContent", ImVec2(-1.0f, contentH), false);
+        if (!narrowLayout) {
+            ImGui::Columns(2, "session_cols", false);
+            ImGui::SetColumnWidth(0, rootW * 0.38f);
+        }
+
+        SectionHeader("Saved worlds", "Choose a world to inspect or open.");
+        ImGui::Spacing();
+        ImGui::BeginChild("WorldList", ImVec2(-1.0f, narrowLayout ? 210.0f : -1.0f), true);
+        if (sessionUi_.worlds.empty()) {
+            EmptyStateCard("No saved worlds found.", "Create a new world to generate your first simulation.");
+        } else {
+            for (int i = 0; i < static_cast<int>(sessionUi_.worlds.size()); ++i) {
+                const auto& world = sessionUi_.worlds[static_cast<std::size_t>(i)];
+                const bool selected = (sessionUi_.selectedWorldIndex == i);
+                if (ImGui::Selectable(world.worldName.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0.0f, 30.0f))) {
+                    sessionUi_.selectedWorldIndex = i;
+                }
+            }
+        }
+        ImGui::EndChild();
+
+        if (!narrowLayout) {
+            ImGui::NextColumn();
+        } else {
+            ImGui::Spacing();
+        }
+
+        SectionHeader("World details", "Review world metadata before opening.");
+        ImGui::Spacing();
+        ImGui::BeginChild("WorldDetails", ImVec2(-1.0f, -1.0f), true);
+        if (sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
+            const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+            ImGui::Text("Name: %s", world.worldName.c_str());
+            ImGui::Text("Profile: %s", world.profilePath.string().c_str());
+            ImGui::Text("Checkpoint available: %s", world.hasCheckpoint ? "Yes" : "No");
+            if (world.hasCheckpoint) {
+                ImGui::Text("Last saved step: %llu", static_cast<unsigned long long>(world.stepIndex));
+                ImGui::Text("Run identity: %016llx", static_cast<unsigned long long>(world.runIdentityHash));
+            } else {
+                LabeledHint("This world will open from profile defaults because no checkpoint is available.");
+            }
+        } else {
+            EmptyStateCard("No world selected.", "Select a world from the list to enable the Open world action.");
+        }
+        ImGui::EndChild();
+
+        if (!narrowLayout) {
+            ImGui::Columns(1);
+        }
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        const bool canOpen = sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size());
+        ImGui::BeginChild("SessionActions", ImVec2(-1.0f, actionBarH), false);
+        const float w = ImGui::GetContentRegionAvail().x;
+        const float btnW = std::max(160.0f, (w - (2.0f * kS2)) / 3.0f);
+
+        if (!canOpen) {
+            ImGui::BeginDisabled();
+        }
+        if (PrimaryButton("Open world", ImVec2(btnW, 42.0f))) {
+            const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+            std::string message;
+            if (runtime_.openWorld(world.worldName, message)) {
+                appendLog(message);
+                refreshFieldNames();
+                enterSimulationPaused();
+            } else {
+                appendLog(message);
+                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+            }
+        }
+        DelayedTooltip("Loads the selected world without restarting the application.");
+        if (!canOpen) {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::SameLine();
+        if (SecondaryButton("Create world", ImVec2(btnW, 42.0f))) {
+            const std::string suggestedName = runtime_.suggestNextWorldName();
+            std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
+            syncPanelFromConfig();
+            appState_ = AppState::NewWorldWizard;
+        }
+        DelayedTooltip("Opens the creation wizard to define generation parameters.");
+
+        ImGui::SameLine();
+        if (SecondaryButton("Refresh list", ImVec2(btnW, 42.0f))) {
+            sessionUi_.needsRefresh = true;
+        }
+        DelayedTooltip("Refreshes the world list from storage.");
+
+        if (!canOpen) {
+            LabeledHint("Open world is disabled until a world is selected.");
+        }
+        if (sessionUi_.statusMessage[0] != '\0') {
+            LabeledHint(sessionUi_.statusMessage);
+        }
+
+        ImGui::EndChild();
+        ImGui::EndChild();
+        ImGui::End();
+    }
+
+    void drawNewWorldWizard() {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->Pos);
+        ImGui::SetNextWindowSize(viewport->Size);
+
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+        ImGui::Begin("New World Wizard", nullptr, flags);
+
+        const float rootW = std::min(kPageMaxWidth, viewport->Size.x - (2.0f * kS5));
+        const float rootH = std::max(420.0f, viewport->Size.y - (2.0f * kS5));
+        const ImVec2 rootPos(viewport->Size.x * 0.5f - rootW * 0.5f, kS5);
+
+        ImGui::SetCursorPos(rootPos);
+        ImGui::BeginChild("WizardRoot", ImVec2(rootW, rootH), true);
+
+        ImGui::BeginChild("WizardHeader", ImVec2(-1.0f, 88.0f), false);
+        SectionHeader("Create New World", "Configure generation parameters before simulation start.");
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        const float actionBarH = 98.0f;
+        const float contentH = std::max(240.0f, ImGui::GetContentRegionAvail().y - actionBarH - kS3);
+        const bool narrowLayout = rootW < 1150.0f;
+
+        ImGui::BeginChild("WizardContent", ImVec2(-1.0f, contentH), false);
+        if (!narrowLayout) {
+            ImGui::Columns(2, "wizard_cols", false);
+            ImGui::SetColumnWidth(0, rootW * 0.42f);
+        }
+
+        SectionHeader("Generation parameters", "Define initial conditions and model setup.");
+        ImGui::Spacing();
+        ImGui::BeginChild("WizardForm", ImVec2(-1.0f, narrowLayout ? 320.0f : -1.0f), true);
+        inputTextWithHint("World Name", sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "Name for this world. Letters, numbers, '_' and '-' are recommended.");
+        LabeledHint("World names are auto-suggested and must be unique in storage.");
+        ImGui::Spacing();
+        drawGridSetupSection();
+        ImGui::Spacing();
+        drawWorldGenerationSection();
+        ImGui::EndChild();
+
+        if (!narrowLayout) {
+            ImGui::NextColumn();
+        } else {
+            ImGui::Spacing();
+        }
+
+        SectionHeader("Generation preview", "Preview only — simulation is not running.");
+        ImGui::Spacing();
+        ImGui::BeginChild("WizardPreview", ImVec2(-1.0f, -1.0f), true);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        const ImVec2 minPos = ImGui::GetCursorScreenPos();
+        const ImVec2 maxPos(minPos.x + avail.x, minPos.y + avail.y);
+        dl->AddRectFilled(minPos, maxPos, IM_COL32(12, 14, 24, 255), 4.0f);
+
+        const int previewBaseW = std::max(48, panel_.gridWidth);
+        const int previewBaseH = std::max(48, panel_.gridHeight);
+        const std::uint64_t previewBudget = 130000ull;
+        int previewStride = 1;
+        while ((static_cast<std::uint64_t>(previewBaseW) / static_cast<std::uint64_t>(previewStride)) *
+               (static_cast<std::uint64_t>(previewBaseH) / static_cast<std::uint64_t>(previewStride)) > previewBudget) {
+            ++previewStride;
+        }
+        const int previewW = std::max(48, previewBaseW / previewStride);
+        const int previewH = std::max(48, previewBaseH / previewStride);
+        const float targetAspect = static_cast<float>(previewW) / static_cast<float>(previewH);
+        float drawW = avail.x;
+        float drawH = drawW / std::max(0.001f, targetAspect);
+        if (drawH > avail.y) {
+            drawH = avail.y;
+            drawW = drawH * targetAspect;
+        }
+        const float drawX = minPos.x + (avail.x - drawW) * 0.5f;
+        const float drawY = minPos.y + (avail.y - drawH) * 0.5f;
+        const float cellW = std::max(1.0f, drawW / static_cast<float>(previewW));
+        const float cellH = std::max(1.0f, drawH / static_cast<float>(previewH));
+
+        for (int y = 0; y < previewH; ++y) {
+            for (int x = 0; x < previewW; ++x) {
+                const float terrain = previewTerrainValue(panel_, x * previewStride, y * previewStride, previewBaseW, previewBaseH);
+                const float waterBias = std::clamp((panel_.seaLevel - terrain) * 3.0f + 0.5f, 0.0f, 1.0f);
+                const ImU32 land = colormapTurboLike(terrain);
+                const ImU32 water = colormapWater(0.4f + 0.6f * waterBias);
+                const ImU32 color = (waterBias > 0.55f) ? water : land;
+
+                const float px = drawX + static_cast<float>(x) * cellW;
+                const float py = drawY + static_cast<float>(y) * cellH;
+                dl->AddRectFilled(ImVec2(px, py), ImVec2(px + cellW + 0.7f, py + cellH + 0.7f), color);
+            }
+        }
+
+        dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2), IM_COL32(235, 240, 255, 255), "Approximate initialization preview (aspect preserved)");
+        if (previewStride > 1) {
+            const std::string quality = "Preview stride: 1/" + std::to_string(previewStride) + " for performance";
+            dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 18.0f), IM_COL32(188, 200, 226, 255), quality.c_str());
+        }
+        ImGui::EndChild();
+
+        if (!narrowLayout) {
+            ImGui::Columns(1);
+        }
+        ImGui::EndChild();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::BeginChild("WizardActions", ImVec2(-1.0f, actionBarH), false);
+        const float w = ImGui::GetContentRegionAvail().x;
+        const float btnW = std::max(170.0f, (w - (2.0f * kS2)) / 3.0f);
+
+        if (PrimaryButton("Create world", ImVec2(btnW, 44.0f))) {
+            applyConfigFromPanel();
+            std::string worldName = sessionUi_.pendingWorldName;
+            if (worldName.empty()) {
+                worldName = runtime_.suggestNextWorldName();
+            }
+
+            std::string message;
+            if (runtime_.createWorld(worldName, runtime_.config(), message)) {
+                appendLog(message);
+                refreshFieldNames();
+                enterSimulationPaused();
+                sessionUi_.needsRefresh = true;
+            } else {
+                appendLog(message);
+                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+            }
+        }
+        DelayedTooltip("Applies generation settings, creates the world, and enters simulation view.");
+
+        ImGui::SameLine();
+        if (SecondaryButton("Back to session manager", ImVec2(btnW, 44.0f))) {
+            appState_ = AppState::SessionManager;
+            sessionUi_.needsRefresh = true;
+        }
+        DelayedTooltip("Returns to the world selection page without creating a new world.");
+
+        ImGui::SameLine();
+        if (SecondaryButton("Reset parameters", ImVec2(btnW, 44.0f))) {
+            syncPanelFromConfig();
+            std::string suggestedName = runtime_.suggestNextWorldName();
+            std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
+        }
+        DelayedTooltip("Restores parameters from the current runtime configuration.");
+
+        if (sessionUi_.statusMessage[0] != '\0') {
+            LabeledHint(sessionUi_.statusMessage);
+        } else {
+            LabeledHint("Create world starts simulation only after all settings are finalized.");
+        }
+
+        ImGui::EndChild();
+        ImGui::EndChild();
+        ImGui::End();
     }
 
     void drawDockSpace() {
@@ -1132,8 +1628,6 @@ static_cast<double>(std::max(0.0f, frameDt));
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Environment")) {
-                drawGridSetupSection();
-                drawWorldGenerationSection();
                 drawPhysicsSection();
                 ImGui::EndTabItem();
             }
@@ -1152,8 +1646,29 @@ static_cast<double>(std::max(0.0f, frameDt));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(15, 18, 26, 255));
         ImGui::BeginChild("StatusHeader", ImVec2(0, 60), true);
         
-        ImGui::Columns(2, nullptr, false);
-        ImGui::SetColumnWidth(0, 200.0f);
+        ImGui::Columns(3, nullptr, false);
+        ImGui::SetColumnWidth(0, 150.0f);
+
+        if (SecondaryButton("Return to session manager", ImVec2(-1.0f, 32.0f))) {
+            std::string saveMessage;
+            if (!runtime_.activeWorldName().empty()) {
+                if (runtime_.saveActiveWorld(saveMessage)) {
+                    appendLog(saveMessage);
+                } else {
+                    appendLog(saveMessage);
+                }
+            }
+            std::string msg;
+            runtime_.stop(msg);
+            appendLog(msg);
+            viz_.autoRun = false;
+            appState_ = AppState::SessionManager;
+            sessionUi_.needsRefresh = true;
+        }
+        DelayedTooltip("Saves the active world and returns to world selection.");
+
+        ImGui::NextColumn();
+        ImGui::SetColumnWidth(1, 200.0f);
 
         StatusBadge(runtime_.isRunning() ? "RUNNING" : "STOPPED", runtime_.isRunning());
         ImGui::SameLine();
@@ -1273,16 +1788,18 @@ static_cast<double>(std::max(0.0f, frameDt));
                     }
 
                     ImGui::Spacing();
-                    
-                    int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
-                    if (sliderIntWithHint("Target Step Index", &runUntil, 0, kImGuiIntSafeMax, "Advance simulation until this absolute step index is reached.")) {
-                        panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
-                    }
-                    if (PrimaryButton("Fast-Forward to Target", ImVec2(-1.0f, 28))) {
-                        std::string message;
-                        runtime_.runUntil(panel_.runUntilTarget, message);
-                        appendLog(message);
-                        requestSnapshotRefresh();
+                    checkboxWithHint("Show advanced stepping", &panel_.showAdvancedStepping, "Shows target-step fast-forward controls for long simulation jumps.");
+                    if (panel_.showAdvancedStepping) {
+                        int runUntil = static_cast<int>(std::min<std::uint64_t>(panel_.runUntilTarget, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
+                        if (sliderIntWithHint("Target Step Index", &runUntil, 0, kImGuiIntSafeMax, "Advance simulation until this absolute step index is reached.")) {
+                            panel_.runUntilTarget = static_cast<std::uint64_t>(runUntil);
+                        }
+                        if (PrimaryButton("Fast-Forward to Target", ImVec2(-1.0f, 28))) {
+                            std::string message;
+                            runtime_.runUntil(panel_.runUntilTarget, message);
+                            appendLog(message);
+                            requestSnapshotRefresh();
+                        }
                     }
                 }
             }
@@ -1595,8 +2112,8 @@ static_cast<double>(std::max(0.0f, frameDt));
                 panel_.seed = static_cast<std::uint64_t>(seed);
             }
 
-            sliderIntWithHint("Width (Cols)", &panel_.gridWidth, 1, 1024, "Grid width in cells.");
-            sliderIntWithHint("Height (Rows)", &panel_.gridHeight, 1, 1024, "Grid height in cells.");
+            sliderIntWithHint("Width (Cols)", &panel_.gridWidth, 1, 8192, "Grid width in cells.");
+            sliderIntWithHint("Height (Rows)", &panel_.gridHeight, 1, 8192, "Grid height in cells.");
 
             if (ImGui::BeginCombo("Runtime Tier", kTierOptions[panel_.tierIndex])) {
                 for (int i = 0; i < static_cast<int>(kTierOptions.size()); ++i) {
@@ -1617,12 +2134,7 @@ static_cast<double>(std::max(0.0f, frameDt));
             }
             settingHint("Temporal integration policy used by the scheduler.");
 
-            ImGui::Spacing();
-            if (PrimaryButton("Apply Configuration & Reset", ImVec2(-1.0f, 32.0f))) {
-                applyConfigFromPanel();
-                std::string message;
-                runtime_.restart(message);
-            }
+            ImGui::TextDisabled("These values are applied when you finalize world creation.");
         }
         PopSectionTint();
     }
@@ -1630,41 +2142,32 @@ static_cast<double>(std::max(0.0f, frameDt));
     void drawWorldGenerationSection() {
         PushSectionTint(7);
         if (ImGui::CollapsingHeader("World Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
-            bool changed = false;
             ImGui::TextUnformatted("Terrain Spectrum");
-            changed |= sliderFloatWithHint("Base Frequency", &panel_.terrainBaseFrequency, 0.1f, 12.0f, "%.2f", "Low-frequency terrain structure scale (continents/hills).");
-            changed |= sliderFloatWithHint("Detail Frequency", &panel_.terrainDetailFrequency, 0.2f, 24.0f, "%.2f", "High-frequency terrain detail scale.");
-            changed |= sliderFloatWithHint("Warp Strength", &panel_.terrainWarpStrength, 0.0f, 2.0f, "%.2f", "Domain warp amount used to bend noise patterns.");
-            changed |= sliderFloatWithHint("Terrain Amplitude", &panel_.terrainAmplitude, 0.1f, 3.0f, "%.2f", "Overall elevation contrast.");
-            changed |= sliderFloatWithHint("Ridge Mix", &panel_.terrainRidgeMix, 0.0f, 1.0f, "%.2f", "Adds ridge-like structures to terrain.");
+            sliderFloatWithHint("Base Frequency", &panel_.terrainBaseFrequency, 0.1f, 12.0f, "%.2f", "Low-frequency terrain structure scale (continents/hills).");
+            sliderFloatWithHint("Detail Frequency", &panel_.terrainDetailFrequency, 0.2f, 24.0f, "%.2f", "High-frequency terrain detail scale.");
+            sliderFloatWithHint("Warp Strength", &panel_.terrainWarpStrength, 0.0f, 2.0f, "%.2f", "Domain warp amount used to bend noise patterns.");
+            sliderFloatWithHint("Terrain Amplitude", &panel_.terrainAmplitude, 0.1f, 3.0f, "%.2f", "Overall elevation contrast.");
+            sliderFloatWithHint("Ridge Mix", &panel_.terrainRidgeMix, 0.0f, 1.0f, "%.2f", "Adds ridge-like structures to terrain.");
             
             ImGui::Separator();
             ImGui::TextUnformatted("Noise Fractal Parameters (Advanced)");
             int octaves = panel_.terrainOctaves;
             if (sliderIntWithHint("Octaves", &octaves, 1, 8, "Number of detail layers added together.")) {
                 panel_.terrainOctaves = octaves;
-                changed = true;
             }
-            changed |= sliderFloatWithHint("Lacunarity", &panel_.terrainLacunarity, 1.0f, 4.0f, "%.2f", "Frequency multiplier per octave (usually ~2.0).");
-            changed |= sliderFloatWithHint("Gain", &panel_.terrainGain, 0.1f, 1.0f, "%.2f", "Amplitude multiplier per octave (usually ~0.5).");
+            sliderFloatWithHint("Lacunarity", &panel_.terrainLacunarity, 1.0f, 4.0f, "%.2f", "Frequency multiplier per octave (usually ~2.0).");
+            sliderFloatWithHint("Gain", &panel_.terrainGain, 0.1f, 1.0f, "%.2f", "Amplitude multiplier per octave (usually ~0.5).");
 
             ImGui::Separator();
             ImGui::TextUnformatted("Climate and Hydrology");
-            changed |= sliderFloatWithHint("Latitude Banding", &panel_.latitudeBanding, 0.0f, 2.0f, "%.2f", "Strength of dominant horizontal climate bands from Equator to Poles.");
-            changed |= sliderFloatWithHint("Sea Level", &panel_.seaLevel, 0.0f, 1.0f, "%.3f", "Waterline threshold used to derive initial water coverage.");
-            changed |= sliderFloatWithHint("Polar Cooling", &panel_.polarCooling, 0.0f, 1.5f, "%.2f", "Strength of temperature cooling away from warm latitudes.");
-            changed |= sliderFloatWithHint("Humidity from Water", &panel_.humidityFromWater, 0.0f, 1.5f, "%.2f", "Influence of water presence on humidity initialization.");
-            changed |= sliderFloatWithHint("Biome Noise", &panel_.biomeNoiseStrength, 0.0f, 1.0f, "%.2f", "Additional noise contribution to biome/temperature diversity.");
-
-            if (changed) {
-                applyConfigFromPanel();
-                std::string message;
-                runtime_.restart(message);
-                requestSnapshotRefresh();
-            }
+            sliderFloatWithHint("Latitude Banding", &panel_.latitudeBanding, 0.0f, 2.0f, "%.2f", "Strength of dominant horizontal climate bands from Equator to Poles.");
+            sliderFloatWithHint("Sea Level", &panel_.seaLevel, 0.0f, 1.0f, "%.3f", "Waterline threshold used to derive initial water coverage.");
+            sliderFloatWithHint("Polar Cooling", &panel_.polarCooling, 0.0f, 1.5f, "%.2f", "Strength of temperature cooling away from warm latitudes.");
+            sliderFloatWithHint("Humidity from Water", &panel_.humidityFromWater, 0.0f, 1.5f, "%.2f", "Influence of water presence on humidity initialization.");
+            sliderFloatWithHint("Biome Noise", &panel_.biomeNoiseStrength, 0.0f, 1.0f, "%.2f", "Additional noise contribution to biome/temperature diversity.");
 
             ImGui::Spacing();
-            ImGui::TextDisabled("These settings apply on Start/Restart or after applying config. A live preview is generated automatically.");
+            ImGui::TextDisabled("Preview updates from these parameters without running simulation.");
         }
         PopSectionTint();
     }
@@ -1835,6 +2338,21 @@ static_cast<double>(std::max(0.0f, frameDt));
         overlay_.alpha = 1.0f;
     }
 
+    void enterSimulationPaused() {
+        viz_.autoRun = false;
+        if (runtime_.isRunning() && !runtime_.isPaused()) {
+            std::string message;
+            if (runtime_.pause(message)) {
+                appendLog(message);
+            } else if (!message.empty()) {
+                appendLog(message);
+            }
+        }
+        requestSnapshotRefresh();
+        appState_ = AppState::Simulation;
+        triggerOverlay(OverlayIcon::Pause);
+    }
+
     void appendLog(const std::string& line) {
         if (!line.empty()) {
             logs_.push_back(line);
@@ -1846,10 +2364,12 @@ static_cast<double>(std::max(0.0f, frameDt));
 
     AccessibilityConfig accessibility_{};
     PanelState panel_{};
+    SessionUiState sessionUi_{};
     VisualParams visuals_{};
     VisualizationState viz_{};
     OverlayState overlay_{};
     std::vector<std::string> logs_;
+    AppState appState_ = AppState::SessionManager;
 
     std::thread snapshotWorker_;
     std::atomic<bool> snapshotWorkerRunning_{false};
@@ -1869,6 +2389,7 @@ static_cast<double>(std::max(0.0f, frameDt));
     std::array<RasterTexture, 4> viewportRasters_{};
     std::array<std::vector<std::uint8_t>, 4> rasterBuffers_{};
     std::array<RenderCacheState, 4> renderCaches_{};
+    int maxTextureSize_ = 0;
 
     double autoRunStepBudget_ = 0.0;
     RuntimeService runtime_;

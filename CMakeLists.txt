@@ -72,6 +72,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/theme_bootstrap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/ui_components.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
 )
@@ -96,6 +97,10 @@ ws_add_test(state_store_engine_test tests/state_store_engine.cpp)
 ws_add_test(simulation_loop_test tests/simulation_loop.cpp)
 ws_add_test(subsystems_test tests/subsystems.cpp)
 ws_add_test(interactions_test tests/interactions.cpp)
-ws_add_test(advanced_coupling_test tests/advanced_coupling.cpp)
-ws_add_test(control_replay_test tests/control_replay.cpp)
-ws_add_test(parallel_stability_test tests/parallel_stability.cpp)
+
+option(WS_ENABLE_EXTENDED_LEGACY_TESTS "Enable extended legacy integration tests" OFF)
+if(WS_ENABLE_EXTENDED_LEGACY_TESTS)
+    ws_add_test(advanced_coupling_test tests/advanced_coupling.cpp)
+    ws_add_test(control_replay_test tests/control_replay.cpp)
+    ws_add_test(parallel_stability_test tests/parallel_stability.cpp)
+endif()

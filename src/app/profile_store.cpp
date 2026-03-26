@@ -61,8 +61,12 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "gen.terrain_warp_strength=" << config.worldGen.terrainWarpStrength << '\n';
     output << "gen.terrain_amplitude=" << config.worldGen.terrainAmplitude << '\n';
     output << "gen.terrain_ridge_mix=" << config.worldGen.terrainRidgeMix << '\n';
+    output << "gen.terrain_octaves=" << config.worldGen.terrainOctaves << '\n';
+    output << "gen.terrain_lacunarity=" << config.worldGen.terrainLacunarity << '\n';
+    output << "gen.terrain_gain=" << config.worldGen.terrainGain << '\n';
     output << "gen.sea_level=" << config.worldGen.seaLevel << '\n';
     output << "gen.polar_cooling=" << config.worldGen.polarCooling << '\n';
+    output << "gen.latitude_banding=" << config.worldGen.latitudeBanding << '\n';
     output << "gen.humidity_from_water=" << config.worldGen.humidityFromWater << '\n';
     output << "gen.biome_noise_strength=" << config.worldGen.biomeNoiseStrength << '\n';
 }
@@ -134,8 +138,20 @@ LaunchConfig ProfileStore::load(const std::string& profileName) const {
     assignOptionalFloat("gen.terrain_warp_strength", config.worldGen.terrainWarpStrength);
     assignOptionalFloat("gen.terrain_amplitude", config.worldGen.terrainAmplitude);
     assignOptionalFloat("gen.terrain_ridge_mix", config.worldGen.terrainRidgeMix);
+    {
+        const auto it = kv.find("gen.terrain_octaves");
+        if (it != kv.end()) {
+            const auto parsed = parseU32(it->second);
+            if (parsed.has_value()) {
+                config.worldGen.terrainOctaves = static_cast<int>(*parsed);
+            }
+        }
+    }
+    assignOptionalFloat("gen.terrain_lacunarity", config.worldGen.terrainLacunarity);
+    assignOptionalFloat("gen.terrain_gain", config.worldGen.terrainGain);
     assignOptionalFloat("gen.sea_level", config.worldGen.seaLevel);
     assignOptionalFloat("gen.polar_cooling", config.worldGen.polarCooling);
+    assignOptionalFloat("gen.latitude_banding", config.worldGen.latitudeBanding);
     assignOptionalFloat("gen.humidity_from_water", config.worldGen.humidityFromWater);
     assignOptionalFloat("gen.biome_noise_strength", config.worldGen.biomeNoiseStrength);
 
