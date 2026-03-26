@@ -17,7 +17,19 @@ struct StoredWorldInfo {
     std::string worldName;
     std::filesystem::path profilePath;
     std::filesystem::path checkpointPath;
+    bool hasProfile = false;
     bool hasCheckpoint = false;
+    std::uint32_t gridWidth = 0;
+    std::uint32_t gridHeight = 0;
+    std::uint64_t seed = 0;
+    std::string tier;
+    std::string temporalPolicy;
+    std::uintmax_t profileBytes = 0;
+    std::uintmax_t checkpointBytes = 0;
+    std::filesystem::file_time_type profileLastWrite{};
+    std::filesystem::file_time_type checkpointLastWrite{};
+    bool hasProfileTimestamp = false;
+    bool hasCheckpointTimestamp = false;
     std::uint64_t stepIndex = 0;
     std::uint64_t runIdentityHash = 0;
 };
@@ -61,6 +73,7 @@ public:
     bool createWorld(const std::string& worldName, const app::LaunchConfig& config, std::string& message);
     bool openWorld(const std::string& worldName, std::string& message);
     bool saveActiveWorld(std::string& message);
+    bool deleteWorld(const std::string& worldName, std::string& message);
 
     [[nodiscard]] const std::string& activeWorldName() const noexcept { return activeWorldName_; }
 

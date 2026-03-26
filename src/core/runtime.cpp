@@ -88,6 +88,12 @@ struct ZoneSample {
     float edgeBlend = 0.0f;
 };
 
+struct ArchipelagoSample {
+    float landMask = 0.0f;
+    float shelfMask = 0.0f;
+    float regionBias = 0.0f;
+};
+
 ZoneSample macroZoneSample(const std::uint64_t seed, const float x, const float y, const float zoneScale) {
     const float px = x / std::max(0.001f, zoneScale);
     const float py = y / std::max(0.001f, zoneScale);
@@ -123,6 +129,65 @@ ZoneSample macroZoneSample(const std::uint64_t seed, const float x, const float 
 
     const float edge = std::clamp((std::sqrt(secondDist2) - std::sqrt(bestDist2)) * 0.8f, 0.0f, 1.0f);
     return ZoneSample{bestValue, edge};
+}
+
+ArchipelagoSample sampleArchipelago(
+    const std::uint64_t seed,
+    const float x,
+    const float y,
+    const float islandDensity,
+    const float jitter,
+    const float falloff) {
+    const float cellScale = std::clamp(0.22f - 0.12f * islandDensity, 0.07f, 0.24f);
+    const float px = x / std::max(0.001f, cellScale);
+    const float py = y / std::max(0.001f, cellScale);
+
+    const int cx = static_cast<int>(std::floor(px));
+    const int cy = static_cast<int>(std::floor(py));
+
+    float best = 0.0f;
+    float shelf = 0.0f;
+    float biasAccum = 0.0f;
+    float biasWeight = 0.0f;
+
+    for (int oy = -2; oy <= 2; ++oy) {
+        for (int ox = -2; ox <= 2; ++ox) {
+            const int sx = cx + ox;
+            const int sy = cy + oy;
+
+            const float spawn = hash01(DeterministicHash::combine(seed, 0x111ULL), sx, sy);
+            const float spawnThreshold = std::clamp(0.28f + 0.52f * islandDensity, 0.15f, 0.92f);
+            if (spawn > spawnThreshold) {
+                continue;
+            }
+
+            const float jx = (hash01(DeterministicHash::combine(seed, 0x222ULL), sx, sy) - 0.5f) * jitter;
+            const float jy = (hash01(DeterministicHash::combine(seed, 0x333ULL), sx, sy) - 0.5f) * jitter;
+            const float centerX = static_cast<float>(sx) + 0.5f + jx;
+            const float centerY = static_cast<float>(sy) + 0.5f + jy;
+
+            const float baseRadius = 0.38f + 1.25f * hash01(DeterministicHash::combine(seed, 0x444ULL), sx, sy);
+            const float radius = std::max(0.18f, baseRadius * (0.65f + 0.65f * (1.0f - islandDensity)));
+
+            const float dx = px - centerX;
+            const float dy = py - centerY;
+            const float dNorm = std::sqrt(dx * dx + dy * dy) / radius;
+
+            const float islandCore = std::clamp(1.0f - dNorm, 0.0f, 1.0f);
+            const float softIsland = std::pow(islandCore, std::max(0.55f, falloff));
+            const float shelfContribution = std::pow(std::clamp(1.0f - dNorm * 0.72f, 0.0f, 1.0f), 1.8f);
+
+            best = std::max(best, softIsland);
+            shelf = std::max(shelf, shelfContribution);
+
+            const float w = std::clamp(1.0f - dNorm, 0.0f, 1.0f);
+            biasAccum += w * (hash01(DeterministicHash::combine(seed, 0x777ULL), sx, sy) - 0.5f);
+            biasWeight += w;
+        }
+    }
+
+    const float regionalBias = (biasWeight > 1e-5f) ? (biasAccum / biasWeight) : 0.0f;
+    return ArchipelagoSample{best, shelf, regionalBias};
 }
 
 } // namespace
@@ -231,6 +296,12 @@ void Runtime::start() {
             const float banding = std::clamp(config_.worldGen.latitudeBanding, 0.0f, 2.0f);
             const float humidityFromWater = std::clamp(config_.worldGen.humidityFromWater, 0.0f, 1.5f);
             const float biomeNoiseStrength = std::clamp(config_.worldGen.biomeNoiseStrength, 0.0f, 1.0f);
+            const float islandDensity = std::clamp(config_.worldGen.islandDensity, 0.05f, 0.95f);
+            const float islandFalloff = std::clamp(config_.worldGen.islandFalloff, 0.35f, 4.5f);
+            const float coastlineSharpness = std::clamp(config_.worldGen.coastlineSharpness, 0.25f, 4.0f);
+            const float archipelagoJitter = std::clamp(config_.worldGen.archipelagoJitter, 0.0f, 1.5f);
+            const float erosionStrength = std::clamp(config_.worldGen.erosionStrength, 0.0f, 1.0f);
+            const float shelfDepth = std::clamp(config_.worldGen.shelfDepth, 0.0f, 0.8f);
 
             const std::uint64_t noiseSeedA = DeterministicHash::combine(config_.seed, 0xA1C31A5DULL);
             const std::uint64_t noiseSeedB = DeterministicHash::combine(config_.seed, 0xB73F42D1ULL);
@@ -239,6 +310,7 @@ void Runtime::start() {
             const std::uint64_t noiseSeedE = DeterministicHash::combine(config_.seed, 0xE713944BULL);
             const std::uint64_t zoneSeed = DeterministicHash::combine(config_.seed, 0x9B1D44AFULL);
             const std::uint64_t zoneSeed2 = DeterministicHash::combine(config_.seed, 0x64D7A21BULL);
+            const std::uint64_t islandSeed = DeterministicHash::combine(config_.seed, 0x14ACD95BULL);
 
             const float aspect = static_cast<float>(config_.grid.width) / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.height));
             const float zoneScale = std::max(0.08f, 0.40f / std::max(0.25f, baseFreq));
@@ -258,6 +330,13 @@ void Runtime::start() {
 
                     const ZoneSample zone = macroZoneSample(zoneSeed, domainX, domainY, zoneScale);
                     const ZoneSample zone2 = macroZoneSample(zoneSeed2, domainX + 0.37f, domainY - 0.29f, zoneScale * 0.65f);
+                    const ArchipelagoSample islands = sampleArchipelago(
+                        islandSeed,
+                        domainX,
+                        domainY,
+                        islandDensity,
+                        archipelagoJitter,
+                        islandFalloff);
                     const float zoneBias = (zone.zoneValue - 0.5f);
                     const float zoneBias2 = (zone2.zoneValue - 0.5f);
 
@@ -294,15 +373,30 @@ void Runtime::start() {
                     const float regionMountains = std::clamp(0.5f + 1.8f * zoneBias, 0.0f, 1.0f);
                     const float regionHumidity = std::clamp(0.5f - 1.4f * zoneBias, 0.0f, 1.0f);
                     const float macroShape = std::clamp(0.45f + 0.55f * continental + 0.20f * (zone.edgeBlend - 0.5f), 0.0f, 1.0f);
-                    const float elevationRaw = std::clamp(
+                    const float baseRelief = std::clamp(
                         (continental * (0.50f + 0.18f * regionMountains)) +
                         (ridge * (0.16f + 0.22f * ridgeMix + biomeReliefBias)) +
                         (macroShape * 0.18f),
                         0.0f,
                         1.0f);
+
+                    const float islandInfluence = std::clamp(0.40f + 0.90f * islands.landMask + 0.30f * islands.regionBias, 0.0f, 1.0f);
+                    const float erosion = std::clamp((biomeNoise - ridge) * erosionStrength, -0.35f, 0.35f);
+                    const float elevationRaw = std::clamp(
+                        baseRelief * 0.45f +
+                        islandInfluence * 0.55f +
+                        0.12f * islands.shelfMask +
+                        erosion,
+                        0.0f,
+                        1.0f);
                     const float elevation = std::clamp(0.5f + (elevationRaw - 0.5f) * terrainAmplitude, 0.0f, 1.0f);
 
-                    const float waterBasin = std::clamp((seaLevel - elevation) * 2.3f + 0.5f, 0.0f, 1.0f);
+                    const float seaLevelLocal = std::clamp(
+                        seaLevel - 0.12f * islands.shelfMask + shelfDepth * (0.20f - islands.shelfMask * 0.25f),
+                        0.0f,
+                        1.0f);
+                    const float coastDelta = (seaLevelLocal - elevation) * coastlineSharpness;
+                    const float waterBasin = std::clamp(0.5f + coastDelta * 2.0f + 0.18f * (1.0f - islands.landMask), 0.0f, 1.0f);
                     const float coastalNoise = (biomeNoise - 0.5f) * 0.25f;
                     const float water = std::clamp(waterBasin + coastalNoise, 0.0f, 1.0f);
 

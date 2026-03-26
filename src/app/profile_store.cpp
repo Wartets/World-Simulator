@@ -69,6 +69,12 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "gen.latitude_banding=" << config.worldGen.latitudeBanding << '\n';
     output << "gen.humidity_from_water=" << config.worldGen.humidityFromWater << '\n';
     output << "gen.biome_noise_strength=" << config.worldGen.biomeNoiseStrength << '\n';
+    output << "gen.island_density=" << config.worldGen.islandDensity << '\n';
+    output << "gen.island_falloff=" << config.worldGen.islandFalloff << '\n';
+    output << "gen.coastline_sharpness=" << config.worldGen.coastlineSharpness << '\n';
+    output << "gen.archipelago_jitter=" << config.worldGen.archipelagoJitter << '\n';
+    output << "gen.erosion_strength=" << config.worldGen.erosionStrength << '\n';
+    output << "gen.shelf_depth=" << config.worldGen.shelfDepth << '\n';
 }
 
 LaunchConfig ProfileStore::load(const std::string& profileName) const {
@@ -154,6 +160,12 @@ LaunchConfig ProfileStore::load(const std::string& profileName) const {
     assignOptionalFloat("gen.latitude_banding", config.worldGen.latitudeBanding);
     assignOptionalFloat("gen.humidity_from_water", config.worldGen.humidityFromWater);
     assignOptionalFloat("gen.biome_noise_strength", config.worldGen.biomeNoiseStrength);
+    assignOptionalFloat("gen.island_density", config.worldGen.islandDensity);
+    assignOptionalFloat("gen.island_falloff", config.worldGen.islandFalloff);
+    assignOptionalFloat("gen.coastline_sharpness", config.worldGen.coastlineSharpness);
+    assignOptionalFloat("gen.archipelago_jitter", config.worldGen.archipelagoJitter);
+    assignOptionalFloat("gen.erosion_strength", config.worldGen.erosionStrength);
+    assignOptionalFloat("gen.shelf_depth", config.worldGen.shelfDepth);
 
     return config;
 }

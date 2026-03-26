@@ -1,6 +1,8 @@
 ﻿#include "ws/gui/main_window.hpp"
 
+#include "ws/gui/display_manager.hpp"
 #include "ws/gui/runtime_service.hpp"
+#include "ws/gui/session_manager/session_manager.hpp"
 #include "ws/gui/theme_bootstrap.hpp"
 #include "ws/gui/ui_components.hpp"
 
@@ -35,6 +37,7 @@
 #include <filesystem>
 #include <future>
 #include <fstream>
+#include <random>
 
 namespace ws::gui {
 namespace {
@@ -66,6 +69,7 @@ struct VisualParams {
 
 struct PanelState {
     std::uint64_t seed = 42;
+    bool useManualSeed = false;
     int gridWidth = 128;
     int gridHeight = 128;
     int tierIndex = 0;
@@ -95,6 +99,12 @@ struct PanelState {
     float latitudeBanding = 1.0f;
     float humidityFromWater = 0.52f;
     float biomeNoiseStrength = 0.20f;
+    float islandDensity = 0.58f;
+    float islandFalloff = 1.35f;
+    float coastlineSharpness = 1.10f;
+    float archipelagoJitter = 0.85f;
+    float erosionStrength = 0.32f;
+    float shelfDepth = 0.20f;
 
     char profileName[128] = "baseline";
     char summaryVariable[128] = "temperature_T";
@@ -134,6 +144,7 @@ enum class AppState {
 
 struct ViewportConfig {
     int primaryFieldIndex = 0;
+    DisplayType displayType = DisplayType::ScalarField;
     
     NormalizationMode normalizationMode = NormalizationMode::StickyPerField;
     ColorMapMode colorMapMode = ColorMapMode::Turbo;
@@ -181,6 +192,9 @@ struct VisualizationState {
     int manualSamplingStride = 1;
     int maxRenderedCells = 180000;
 
+    DisplayType generationPreviewDisplayType = DisplayType::SurfaceCategory;
+    DisplayManagerParams displayManager{};
+
     std::vector<std::string> fieldNames;
     RuntimeCheckpoint cachedCheckpoint{};
     bool hasCachedCheckpoint = false;
@@ -190,14 +204,6 @@ struct VisualizationState {
     int framesSinceSnapshot = 0;
     char lastRuntimeError[256] = "";
     std::unordered_map<std::string, std::pair<float, float>> stickyRanges;
-};
-
-struct SessionUiState {
-    std::vector<StoredWorldInfo> worlds;
-    int selectedWorldIndex = -1;
-    bool needsRefresh = true;
-    char pendingWorldName[128] = "";
-    char statusMessage[256] = "";
 };
 
 constexpr std::array<const char*, 3> kTierOptions = {"A (Baseline)", "B (Intermediate)", "C (Advanced)"};
@@ -399,6 +405,11 @@ struct PreviewZoneSample {
     float edgeBlend = 0.0f;
 };
 
+struct PreviewIslandSample {
+    float landMask = 0.0f;
+    float shelfMask = 0.0f;
+};
+
 PreviewZoneSample previewZoneSample(const std::uint64_t seed, const float x, const float y, const float zoneScale) {
     const float px = x / std::max(0.001f, zoneScale);
     const float py = y / std::max(0.001f, zoneScale);
@@ -435,6 +446,50 @@ PreviewZoneSample previewZoneSample(const std::uint64_t seed, const float x, con
     return PreviewZoneSample{bestValue, edge};
 }
 
+PreviewIslandSample previewIslandMask(
+    const std::uint64_t seed,
+    const float nx,
+    const float ny,
+    const float density,
+    const float jitter,
+    const float falloff) {
+    const float cellScale = std::clamp(0.22f - 0.12f * density, 0.07f, 0.24f);
+    const float px = nx / std::max(0.001f, cellScale);
+    const float py = ny / std::max(0.001f, cellScale);
+    const int cx = static_cast<int>(std::floor(px));
+    const int cy = static_cast<int>(std::floor(py));
+
+    float best = 0.0f;
+    float shelf = 0.0f;
+    const float spawnThreshold = std::clamp(0.28f + 0.52f * density, 0.15f, 0.92f);
+
+    for (int oy = -2; oy <= 2; ++oy) {
+        for (int ox = -2; ox <= 2; ++ox) {
+            const int sx = cx + ox;
+            const int sy = cy + oy;
+            const float spawn = hashNoise(seed ^ 0xA9ull, sx, sy);
+            if (spawn > spawnThreshold) {
+                continue;
+            }
+
+            const float jx = (hashNoise(seed ^ 0xB4ull, sx, sy) - 0.5f) * jitter;
+            const float jy = (hashNoise(seed ^ 0xC8ull, sx, sy) - 0.5f) * jitter;
+            const float siteX = static_cast<float>(sx) + 0.5f + jx;
+            const float siteY = static_cast<float>(sy) + 0.5f + jy;
+            const float radius = std::max(0.18f, 0.38f + 1.20f * hashNoise(seed ^ 0xD1ull, sx, sy));
+
+            const float dx = px - siteX;
+            const float dy = py - siteY;
+            const float dNorm = std::sqrt(dx * dx + dy * dy) / radius;
+            const float core = std::clamp(1.0f - dNorm, 0.0f, 1.0f);
+            best = std::max(best, std::pow(core, std::max(0.5f, falloff)));
+            shelf = std::max(shelf, std::pow(std::clamp(1.0f - dNorm * 0.72f, 0.0f, 1.0f), 1.7f));
+        }
+    }
+
+    return PreviewIslandSample{best, shelf};
+}
+
 float previewTerrainValue(const PanelState& panel, const int x, const int y, const int w, const int h) {
     const float nx = static_cast<float>(x) / std::max(1, w - 1);
     const float ny = static_cast<float>(y) / std::max(1, h - 1);
@@ -448,7 +503,16 @@ float previewTerrainValue(const PanelState& panel, const int x, const int y, con
     const float warpX = hashNoise(panel.seed ^ 0xABull, x / 5, y / 5) - 0.5f;
     const float warpY = hashNoise(panel.seed ^ 0xCDull, x / 5, y / 5) - 0.5f;
     const float zoneScale = std::max(0.08f, 0.40f / std::max(0.25f, panel.terrainBaseFrequency));
-    const PreviewZoneSample zone = previewZoneSample(panel.seed ^ 0xEFull, nx + warpX * panel.terrainWarpStrength, ny + warpY * panel.terrainWarpStrength, zoneScale);
+    const float domainX = nx + warpX * panel.terrainWarpStrength;
+    const float domainY = ny + warpY * panel.terrainWarpStrength;
+    const PreviewZoneSample zone = previewZoneSample(panel.seed ^ 0xEFull, domainX, domainY, zoneScale);
+    const PreviewIslandSample islands = previewIslandMask(
+        panel.seed ^ 0x913ull,
+        domainX,
+        domainY,
+        std::clamp(panel.islandDensity, 0.05f, 0.95f),
+        std::clamp(panel.archipelagoJitter, 0.0f, 1.5f),
+        std::clamp(panel.islandFalloff, 0.35f, 4.5f));
     const float zoneBias = zone.zoneValue - 0.5f;
 
     for (int i = 0; i < octaves; ++i) {
@@ -469,9 +533,13 @@ float previewTerrainValue(const PanelState& panel, const int x, const int y, con
     }
 
     const float latitude = std::abs((ny - 0.5f) * 2.0f);
+    const float islandLift = 0.56f * islands.landMask + 0.12f * islands.shelfMask - 0.20f * (1.0f - islands.landMask);
+    const float erosion = (hashNoise(panel.seed ^ 0x6A5ull, x, y) - 0.5f) * panel.erosionStrength * 0.35f;
+    value = value * 0.58f + islandLift;
     value -= latitude * panel.polarCooling * 0.25f;
-    value += 0.15f * zoneBias;
-    value += 0.10f * (zone.edgeBlend - 0.5f);
+    value += 0.10f * zoneBias;
+    value += 0.08f * (zone.edgeBlend - 0.5f);
+    value += erosion;
     value += (hashNoise(panel.seed ^ 0xA53ull, x, y) - 0.5f) * panel.biomeNoiseStrength;
     return std::clamp(value, 0.0f, 1.0f);
 }
@@ -638,11 +706,18 @@ private:
     [[nodiscard]] std::uint64_t makeRenderConfigHash(const ViewportConfig& vp) const {
         std::uint64_t h = 1469598103934665603ull;
         h = hashCombine(h, static_cast<std::uint64_t>(vp.primaryFieldIndex));
+        h = hashCombine(h, static_cast<std::uint64_t>(vp.displayType));
         h = hashCombine(h, static_cast<std::uint64_t>(vp.normalizationMode));
         h = hashCombine(h, static_cast<std::uint64_t>(vp.colorMapMode));
         h = hashCombine(h, static_cast<std::uint64_t>(viz_.showSparseOverlay));
         h = hashCombine(h, hashFloat(vp.fixedRangeMin));
         h = hashCombine(h, hashFloat(vp.fixedRangeMax));
+        h = hashCombine(h, static_cast<std::uint64_t>(viz_.displayManager.autoWaterLevel));
+        h = hashCombine(h, hashFloat(viz_.displayManager.waterLevel));
+        h = hashCombine(h, hashFloat(viz_.displayManager.autoWaterQuantile));
+        h = hashCombine(h, hashFloat(viz_.displayManager.lowlandThreshold));
+        h = hashCombine(h, hashFloat(viz_.displayManager.highlandThreshold));
+        h = hashCombine(h, hashFloat(viz_.displayManager.waterPresenceThreshold));
         h = hashCombine(h, hashFloat(visuals_.brightness));
         h = hashCombine(h, hashFloat(visuals_.contrast));
         h = hashCombine(h, hashFloat(visuals_.gamma));
@@ -737,6 +812,41 @@ private:
         }
     }
 
+    [[nodiscard]] ImU32 mapDisplayTypeColor(const float value, const DisplayType type, const ColorMapMode scalarPalette) const {
+        if (type == DisplayType::ScalarField) {
+            return mapColor(value, scalarPalette);
+        }
+
+        if (type == DisplayType::SurfaceCategory) {
+            const int cls = static_cast<int>(std::round(value));
+            switch (cls) {
+                case 0: return IM_COL32(32, 84, 186, 255);   // water
+                case 1: return IM_COL32(206, 186, 128, 255); // beach/lowland
+                case 2: return IM_COL32(92, 162, 84, 255);   // inland
+                case 3: return IM_COL32(126, 136, 110, 255); // upland
+                default: return IM_COL32(236, 236, 236, 255); // mountain
+            }
+        }
+
+        if (type == DisplayType::RelativeElevation) {
+            const int cls = static_cast<int>(std::round(value));
+            switch (cls) {
+                case 0: return IM_COL32(28, 58, 135, 255);
+                case 1: return IM_COL32(46, 88, 180, 255);
+                case 2: return IM_COL32(73, 125, 196, 255);
+                case 3: return IM_COL32(112, 170, 104, 255);
+                case 4: return IM_COL32(162, 140, 98, 255);
+                default: return IM_COL32(242, 242, 242, 255);
+            }
+        }
+
+        const float depth = std::clamp(value, 0.0f, 1.0f);
+        if (depth <= 0.001f) {
+            return IM_COL32(0, 0, 0, 255);
+        }
+        return colormapWater(applyDisplayTransfer(depth, visuals_));
+    }
+
     void applyTheme(const bool rebuildFonts) {
         ImGuiStyle& style = ImGui::GetStyle();
         ThemeBootstrap::applyBaseTheme(style, accessibility_.uiScale);
@@ -795,7 +905,6 @@ private:
 
         for (int i = 0; i < numViewports; ++i) {
             auto& vp = viz_.viewports[i];
-            const auto& primaryField = fields[static_cast<std::size_t>(vp.primaryFieldIndex)];
             
             const std::uint64_t renderHash = makeRenderConfigHash(vp);
             auto& cache = renderCaches_[i];
@@ -803,19 +912,28 @@ private:
             const bool cacheDirty = !cache.valid || cache.snapshotGeneration != consumedSnapshotGeneration_ || cache.configHash != renderHash;
             
             if (cacheDirty) {
-                std::vector<float> primaryValues = mergedFieldValues(primaryField, viz_.showSparseOverlay);
-                float pMin = 0.0f, pMax = 1.0f;
-                minMaxFinite(primaryValues, pMin, pMax);
-                const auto pRange = resolveDisplayRange(vp, primaryField.spec.name, pMin, pMax);
+                DisplayBuffer display = buildDisplayBufferFromSnapshot(
+                    snapshot,
+                    vp.primaryFieldIndex,
+                    vp.displayType,
+                    viz_.showSparseOverlay,
+                    viz_.displayManager);
+                float pMin = display.minValue;
+                float pMax = display.maxValue;
+                if (vp.displayType == DisplayType::ScalarField) {
+                    const auto pRange = resolveDisplayRange(vp, display.label, pMin, pMax);
+                    pMin = pRange.first;
+                    pMax = pRange.second;
+                }
                 
-                rebuildRasterTexture(i, snapshot.grid, primaryValues, pRange.first, pRange.second, vp);
+                rebuildRasterTexture(i, snapshot.grid, display.values, pMin, pMax, vp);
                 
                 cache.snapshotGeneration = consumedSnapshotGeneration_;
                 cache.configHash = renderHash;
                 cache.valid = true;
-                cache.primaryMin = pRange.first;
-                cache.primaryMax = pRange.second;
-                cache.primaryName = primaryField.spec.name;
+                cache.primaryMin = pMin;
+                cache.primaryMax = pMax;
+                cache.primaryName = display.label;
             }
         }
 
@@ -914,13 +1032,16 @@ private:
 
                 const std::size_t srcIdx = static_cast<std::size_t>(gy) * static_cast<std::size_t>(width) + static_cast<std::size_t>(gx);
                 const float value = srcIdx < primary.size() ? primary[srcIdx] : std::numeric_limits<float>::quiet_NaN();
-            ImU32 color = IM_COL32(18, 18, 28, 255);
-            if (std::isfinite(value)) {
-                const float t = (value - pMin) / (std::max(0.0001f, pMax - pMin));
-                color = mapColor(t, vp.colorMapMode);
-            }
-            std::uint8_t r = 0, g = 0, b = 0, a = 0;
-            unpackColor(color, r, g, b, a);
+                ImU32 color = IM_COL32(18, 18, 28, 255);
+                if (std::isfinite(value)) {
+                    const float t = std::clamp((value - pMin) / (std::max(0.0001f, pMax - pMin)), 0.0f, 1.0f);
+                    color = mapDisplayTypeColor(
+                        (vp.displayType == DisplayType::ScalarField || vp.displayType == DisplayType::WaterDepth) ? t : value,
+                        vp.displayType,
+                        vp.colorMapMode);
+                }
+                std::uint8_t r = 0, g = 0, b = 0, a = 0;
+                unpackColor(color, r, g, b, a);
                 const std::size_t dstIdx = static_cast<std::size_t>(sy) * static_cast<std::size_t>(sampledWidth) + static_cast<std::size_t>(sx);
                 const std::size_t o = dstIdx * 4u;
                 buffer[o + 0] = r;
@@ -1297,8 +1418,11 @@ static_cast<double>(std::max(0.0f, frameDt));
             for (int i = 0; i < static_cast<int>(sessionUi_.worlds.size()); ++i) {
                 const auto& world = sessionUi_.worlds[static_cast<std::size_t>(i)];
                 const bool selected = (sessionUi_.selectedWorldIndex == i);
-                if (ImGui::Selectable(world.worldName.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0.0f, 30.0f))) {
+                if (ImGui::Selectable(world.worldName.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0.0f, 30.0f))) {
                     sessionUi_.selectedWorldIndex = i;
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        openSelectedWorld();
+                    }
                 }
             }
         }
@@ -1316,11 +1440,19 @@ static_cast<double>(std::max(0.0f, frameDt));
         if (sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
             const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
             ImGui::Text("Name: %s", world.worldName.c_str());
+            ImGui::Text("Grid: %ux%u", world.gridWidth, world.gridHeight);
+            ImGui::Text("Seed: %llu", static_cast<unsigned long long>(world.seed));
+            ImGui::Text("Tier: %s", world.tier.empty() ? "n/a" : world.tier.c_str());
+            ImGui::Text("Temporal: %s", world.temporalPolicy.empty() ? "n/a" : world.temporalPolicy.c_str());
             ImGui::Text("Profile: %s", world.profilePath.string().c_str());
+            ImGui::Text("Profile size: %s", session_manager::formatBytes(world.profileBytes).c_str());
+            ImGui::Text("Profile updated: %s", session_manager::formatFileTime(world.profileLastWrite, world.hasProfileTimestamp).c_str());
             ImGui::Text("Checkpoint available: %s", world.hasCheckpoint ? "Yes" : "No");
             if (world.hasCheckpoint) {
                 ImGui::Text("Last saved step: %llu", static_cast<unsigned long long>(world.stepIndex));
                 ImGui::Text("Run identity: %016llx", static_cast<unsigned long long>(world.runIdentityHash));
+                ImGui::Text("Checkpoint size: %s", session_manager::formatBytes(world.checkpointBytes).c_str());
+                ImGui::Text("Checkpoint updated: %s", session_manager::formatFileTime(world.checkpointLastWrite, world.hasCheckpointTimestamp).c_str());
             } else {
                 LabeledHint("This world will open from profile defaults because no checkpoint is available.");
             }
@@ -1347,16 +1479,7 @@ static_cast<double>(std::max(0.0f, frameDt));
             ImGui::BeginDisabled();
         }
         if (PrimaryButton("Open world", ImVec2(btnW, 42.0f))) {
-            const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
-            std::string message;
-            if (runtime_.openWorld(world.worldName, message)) {
-                appendLog(message);
-                refreshFieldNames();
-                enterSimulationPaused();
-            } else {
-                appendLog(message);
-                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
-            }
+            openSelectedWorld();
         }
         DelayedTooltip("Loads the selected world without restarting the application.");
         if (!canOpen) {
@@ -1368,15 +1491,51 @@ static_cast<double>(std::max(0.0f, frameDt));
             const std::string suggestedName = runtime_.suggestNextWorldName();
             std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
             syncPanelFromConfig();
+            panel_.useManualSeed = false;
+            panel_.seed = generateRandomSeed();
             appState_ = AppState::NewWorldWizard;
         }
         DelayedTooltip("Opens the creation wizard to define generation parameters.");
 
         ImGui::SameLine();
-        if (SecondaryButton("Refresh list", ImVec2(btnW, 42.0f))) {
-            sessionUi_.needsRefresh = true;
+        if (!canOpen) {
+            ImGui::BeginDisabled();
         }
-        DelayedTooltip("Refreshes the world list from storage.");
+        if (SecondaryButton("Delete world", ImVec2(btnW, 42.0f))) {
+            sessionUi_.pendingDeleteWorldIndex = sessionUi_.selectedWorldIndex;
+            ImGui::OpenPopup("Delete World Confirm");
+        }
+        DelayedTooltip("Deletes profile/checkpoint/display settings for the selected world.");
+        if (!canOpen) {
+            ImGui::EndDisabled();
+        }
+
+        if (ImGui::BeginPopupModal("Delete World Confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("Delete selected world and all associated data?");
+            if (sessionUi_.pendingDeleteWorldIndex >= 0 && sessionUi_.pendingDeleteWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingDeleteWorldIndex)];
+                ImGui::Text("World: %s", world.worldName.c_str());
+            }
+            ImGui::Separator();
+            if (PrimaryButton("Delete permanently", ImVec2(170.0f, 28.0f))) {
+                if (sessionUi_.pendingDeleteWorldIndex >= 0 && sessionUi_.pendingDeleteWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                    const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingDeleteWorldIndex)];
+                    std::string message;
+                    runtime_.deleteWorld(world.worldName, message);
+                    appendLog(message);
+                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    sessionUi_.needsRefresh = true;
+                }
+                sessionUi_.pendingDeleteWorldIndex = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Cancel", ImVec2(110.0f, 28.0f))) {
+                sessionUi_.pendingDeleteWorldIndex = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
 
         if (!canOpen) {
             LabeledHint("Open world is disabled until a world is selected.");
@@ -1474,24 +1633,49 @@ static_cast<double>(std::max(0.0f, frameDt));
         const float cellW = std::max(1.0f, drawW / static_cast<float>(previewW));
         const float cellH = std::max(1.0f, drawH / static_cast<float>(previewH));
 
+        std::vector<float> previewTerrain;
+        std::vector<float> previewWater;
+        previewTerrain.reserve(static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH));
+        previewWater.reserve(static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH));
+
         for (int y = 0; y < previewH; ++y) {
             for (int x = 0; x < previewW; ++x) {
                 const float terrain = previewTerrainValue(panel_, x * previewStride, y * previewStride, previewBaseW, previewBaseH);
-                const float waterBias = std::clamp((panel_.seaLevel - terrain) * 3.0f + 0.5f, 0.0f, 1.0f);
-                const ImU32 land = colormapTurboLike(terrain);
-                const ImU32 water = colormapWater(0.4f + 0.6f * waterBias);
-                const ImU32 color = (waterBias > 0.55f) ? water : land;
+                const float water = std::clamp((panel_.seaLevel - terrain) * 1.9f + 0.10f, 0.0f, 1.0f);
+                previewTerrain.push_back(terrain);
+                previewWater.push_back(water);
+            }
+        }
 
+        DisplayBuffer previewDisplay = buildDisplayBufferFromTerrain(
+            previewTerrain,
+            previewWater,
+            viz_.generationPreviewDisplayType,
+            viz_.displayManager,
+            "preview");
+
+        for (int y = 0; y < previewH; ++y) {
+            for (int x = 0; x < previewW; ++x) {
+                const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(previewW) + static_cast<std::size_t>(x);
+                const float value = idx < previewDisplay.values.size() ? previewDisplay.values[idx] : 0.0f;
+                const float normalized = std::clamp((value - previewDisplay.minValue) / std::max(0.0001f, previewDisplay.maxValue - previewDisplay.minValue), 0.0f, 1.0f);
+                const ImU32 color = mapDisplayTypeColor(
+                    (viz_.generationPreviewDisplayType == DisplayType::ScalarField || viz_.generationPreviewDisplayType == DisplayType::WaterDepth) ? normalized : value,
+                    viz_.generationPreviewDisplayType,
+                    ColorMapMode::Turbo);
                 const float px = drawX + static_cast<float>(x) * cellW;
                 const float py = drawY + static_cast<float>(y) * cellH;
                 dl->AddRectFilled(ImVec2(px, py), ImVec2(px + cellW + 0.7f, py + cellH + 0.7f), color);
             }
         }
 
-        dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2), IM_COL32(235, 240, 255, 255), "Approximate initialization preview (aspect preserved)");
+        const std::string previewLabel = std::string("Preview mode: ") + displayTypeLabel(viz_.generationPreviewDisplayType);
+        dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2), IM_COL32(235, 240, 255, 255), previewLabel.c_str());
+        const std::string autoLevel = "Water level: " + std::to_string(previewDisplay.effectiveWaterLevel).substr(0, 5) + (viz_.displayManager.autoWaterLevel ? " (auto)" : " (manual)");
+        dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 18.0f), IM_COL32(188, 200, 226, 255), autoLevel.c_str());
         if (previewStride > 1) {
             const std::string quality = "Preview stride: 1/" + std::to_string(previewStride) + " for performance";
-            dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 18.0f), IM_COL32(188, 200, 226, 255), quality.c_str());
+            dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 36.0f), IM_COL32(188, 200, 226, 255), quality.c_str());
         }
         ImGui::EndChild();
 
@@ -1509,6 +1693,9 @@ static_cast<double>(std::max(0.0f, frameDt));
         const float btnW = std::max(170.0f, (w - (2.0f * kS2)) / 3.0f);
 
         if (PrimaryButton("Create world", ImVec2(btnW, 44.0f))) {
+            if (!panel_.useManualSeed) {
+                panel_.seed = generateRandomSeed();
+            }
             applyConfigFromPanel();
             std::string worldName = sessionUi_.pendingWorldName;
             if (worldName.empty()) {
@@ -1519,6 +1706,8 @@ static_cast<double>(std::max(0.0f, frameDt));
             if (runtime_.createWorld(worldName, runtime_.config(), message)) {
                 appendLog(message);
                 refreshFieldNames();
+                resetDisplayConfigToDefaults();
+                loadDisplayPrefs();
                 enterSimulationPaused();
                 sessionUi_.needsRefresh = true;
             } else {
@@ -1538,6 +1727,8 @@ static_cast<double>(std::max(0.0f, frameDt));
         ImGui::SameLine();
         if (SecondaryButton("Reset parameters", ImVec2(btnW, 44.0f))) {
             syncPanelFromConfig();
+            panel_.useManualSeed = false;
+            panel_.seed = generateRandomSeed();
             std::string suggestedName = runtime_.suggestNextWorldName();
             std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
         }
@@ -1605,6 +1796,14 @@ static_cast<double>(std::max(0.0f, frameDt));
         return changed;
     }
 
+    [[nodiscard]] static std::uint64_t generateRandomSeed() {
+        std::random_device rd;
+        const std::uint64_t hi = static_cast<std::uint64_t>(rd());
+        const std::uint64_t lo = static_cast<std::uint64_t>(rd());
+        const std::uint64_t mix = (hi << 32u) ^ lo ^ static_cast<std::uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+        return mix == 0 ? 1ull : mix;
+    }
+
     void drawControlPanel() {
         ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(480.0f, 425.0f), ImGuiCond_FirstUseEver);
@@ -1650,6 +1849,7 @@ static_cast<double>(std::max(0.0f, frameDt));
         ImGui::SetColumnWidth(0, 150.0f);
 
         if (SecondaryButton("Return to session manager", ImVec2(-1.0f, 32.0f))) {
+            saveDisplayPrefs();
             std::string saveMessage;
             if (!runtime_.activeWorldName().empty()) {
                 if (runtime_.saveActiveWorld(saveMessage)) {
@@ -1884,14 +2084,72 @@ static_cast<double>(std::max(0.0f, frameDt));
         PopSectionTint();
     }
 
+    [[nodiscard]] std::filesystem::path displayPrefsPathForWorld(const std::string& worldName) const {
+        if (worldName.empty()) {
+            return {};
+        }
+        return std::filesystem::path("checkpoints") / "worlds" / (worldName + ".displayprefs");
+    }
+
+    [[nodiscard]] std::filesystem::path activeDisplayPrefsPath() const {
+        return displayPrefsPathForWorld(runtime_.activeWorldName());
+    }
+
+    void openSelectedWorld() {
+        if (sessionUi_.selectedWorldIndex < 0 || sessionUi_.selectedWorldIndex >= static_cast<int>(sessionUi_.worlds.size())) {
+            return;
+        }
+
+        const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+        std::string message;
+        if (runtime_.openWorld(world.worldName, message)) {
+            appendLog(message);
+            refreshFieldNames();
+            resetDisplayConfigToDefaults();
+            loadDisplayPrefs();
+            enterSimulationPaused();
+        } else {
+            appendLog(message);
+            std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+        }
+    }
+
+    void resetDisplayConfigToDefaults() {
+        const VisualizationState defaults{};
+        viz_.layout = defaults.layout;
+        viz_.viewports = defaults.viewports;
+        viz_.activeViewportEditor = defaults.activeViewportEditor;
+        viz_.displayManager = defaults.displayManager;
+        viz_.generationPreviewDisplayType = defaults.generationPreviewDisplayType;
+    }
+
 
     void saveDisplayPrefs() {
-        std::ofstream out("display_prefs.txt");
+        const auto path = activeDisplayPrefsPath();
+        if (path.empty()) {
+            return;
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (ec) {
+            return;
+        }
+
+        std::ofstream out(path, std::ios::trunc);
         if (!out.is_open()) return;
         out << "layout=" << static_cast<int>(viz_.layout) << "\n";
+        out << "generationPreviewDisplayType=" << static_cast<int>(viz_.generationPreviewDisplayType) << "\n";
+        out << "displayAutoWaterLevel=" << static_cast<int>(viz_.displayManager.autoWaterLevel) << "\n";
+        out << "displayWaterThreshold=" << viz_.displayManager.waterLevel << "\n";
+        out << "displayWaterQuantile=" << viz_.displayManager.autoWaterQuantile << "\n";
+        out << "displayLowlandThreshold=" << viz_.displayManager.lowlandThreshold << "\n";
+        out << "displayHighlandThreshold=" << viz_.displayManager.highlandThreshold << "\n";
+        out << "displayWaterPresenceThreshold=" << viz_.displayManager.waterPresenceThreshold << "\n";
         for (int i = 0; i < 4; ++i) {
             auto& vp = viz_.viewports[i];
             out << "vp" << i << "_primaryFieldIndex=" << vp.primaryFieldIndex << "\n";
+            out << "vp" << i << "_displayType=" << static_cast<int>(vp.displayType) << "\n";
             out << "vp" << i << "_normalizationMode=" << static_cast<int>(vp.normalizationMode) << "\n";        
             out << "vp" << i << "_colorMapMode=" << static_cast<int>(vp.colorMapMode) << "\n";
             out << "vp" << i << "_showVectorField=" << vp.showVectorField << "\n";
@@ -1902,7 +2160,12 @@ static_cast<double>(std::max(0.0f, frameDt));
     }
 
     void loadDisplayPrefs() {
-        std::ifstream in("display_prefs.txt");
+        const auto path = activeDisplayPrefsPath();
+        if (path.empty()) {
+            return;
+        }
+
+        std::ifstream in(path);
         if (!in.is_open()) return;
         std::string line;
         while (std::getline(in, line)) {
@@ -1910,14 +2173,38 @@ static_cast<double>(std::max(0.0f, frameDt));
             if (eq == std::string::npos) continue;
             std::string key = line.substr(0, eq);
             try {
+                if (key == "displayWaterThreshold") {
+                    viz_.displayManager.waterLevel = std::stof(line.substr(eq + 1));
+                    continue;
+                }
+                if (key == "displayWaterQuantile") {
+                    viz_.displayManager.autoWaterQuantile = std::stof(line.substr(eq + 1));
+                    continue;
+                }
+                if (key == "displayLowlandThreshold") {
+                    viz_.displayManager.lowlandThreshold = std::stof(line.substr(eq + 1));
+                    continue;
+                }
+                if (key == "displayHighlandThreshold") {
+                    viz_.displayManager.highlandThreshold = std::stof(line.substr(eq + 1));
+                    continue;
+                }
+                if (key == "displayWaterPresenceThreshold") {
+                    viz_.displayManager.waterPresenceThreshold = std::stof(line.substr(eq + 1));
+                    continue;
+                }
+
                 int val = std::stoi(line.substr(eq + 1));
                 if (key == "layout") viz_.layout = static_cast<ScreenLayout>(val);
+                else if (key == "generationPreviewDisplayType") viz_.generationPreviewDisplayType = static_cast<DisplayType>(val);
+                else if (key == "displayAutoWaterLevel") viz_.displayManager.autoWaterLevel = (val != 0);
                 else if (key.starts_with("vp")) {
                     int vpIdx = key[2] - '0';
                     if (vpIdx < 0 || vpIdx > 3) continue;
                     auto& vp = viz_.viewports[vpIdx];
                     std::string sub = key.substr(4);
                     if (sub == "primaryFieldIndex") vp.primaryFieldIndex = val;
+                    else if (sub == "displayType") vp.displayType = static_cast<DisplayType>(val);
                     else if (sub == "normalizationMode") vp.normalizationMode = static_cast<NormalizationMode>(val); 
                     else if (sub == "colorMapMode") vp.colorMapMode = static_cast<ColorMapMode>(val);
                     else if (sub == "showVectorField") vp.showVectorField = (val != 0);
@@ -1927,6 +2214,12 @@ static_cast<double>(std::max(0.0f, frameDt));
                 }
             } catch(...) {}
         }
+
+        viz_.displayManager.waterLevel = std::clamp(viz_.displayManager.waterLevel, 0.0f, 1.0f);
+        viz_.displayManager.autoWaterQuantile = std::clamp(viz_.displayManager.autoWaterQuantile, 0.0f, 1.0f);
+        viz_.displayManager.lowlandThreshold = std::clamp(viz_.displayManager.lowlandThreshold, 0.0f, 1.0f);
+        viz_.displayManager.highlandThreshold = std::clamp(viz_.displayManager.highlandThreshold, viz_.displayManager.lowlandThreshold + 0.01f, 1.0f);
+        viz_.displayManager.waterPresenceThreshold = std::clamp(viz_.displayManager.waterPresenceThreshold, 0.0f, 1.0f);
     }
 
     void drawDisplayMappingSection() {
@@ -1965,6 +2258,7 @@ static_cast<double>(std::max(0.0f, frameDt));
                     for (size_t i = 0; i < viz_.viewports.size(); ++i) {
                         auto& vp = viz_.viewports[i];
                         vp.primaryFieldIndex = i;
+                        vp.displayType = DisplayType::ScalarField;
                         vp.normalizationMode = NormalizationMode::StickyPerField;
                         vp.colorMapMode = (i == 1) ? ColorMapMode::Water : ColorMapMode::Turbo;
                         vp.showVectorField = false;
@@ -1977,6 +2271,40 @@ static_cast<double>(std::max(0.0f, frameDt));
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
                 ImGui::EndPopup();
+            }
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Display Type Manager");
+            static constexpr std::array<const char*, 4> displayTypeNames = {
+                "Scalar Field",
+                "Surface Category (water/land/highland)",
+                "Relative Elevation",
+                "Surface Water (dry=black)"
+            };
+
+            int previewMode = static_cast<int>(viz_.generationPreviewDisplayType);
+            if (ImGui::Combo("Generation Preview Type", &previewMode, displayTypeNames.data(), static_cast<int>(displayTypeNames.size()))) {
+                viz_.generationPreviewDisplayType = static_cast<DisplayType>(std::clamp(previewMode, 0, static_cast<int>(displayTypeNames.size()) - 1));
+            }
+            settingHint("Display interpretation used by world generation preview.");
+
+            checkboxWithHint("Auto Water Level", &viz_.displayManager.autoWaterLevel, "Automatically computes water level from elevation distribution.");
+            if (viz_.displayManager.autoWaterLevel) {
+                sliderFloatWithHint("Auto Water Quantile", &viz_.displayManager.autoWaterQuantile, 0.10f, 0.90f, "%.3f", "Target quantile used to infer water level from terrain.");
+            } else {
+                sliderFloatWithHint("Manual Water Level", &viz_.displayManager.waterLevel, 0.0f, 1.0f, "%.3f", "Manual threshold used to classify submerged areas.");
+            }
+            sliderFloatWithHint("Lowland Breakpoint", &viz_.displayManager.lowlandThreshold, 0.0f, 1.0f, "%.3f", "Elevation threshold between lowland and upland classes.");
+            sliderFloatWithHint("Highland Breakpoint", &viz_.displayManager.highlandThreshold, 0.0f, 1.0f, "%.3f", "Elevation threshold above which terrain is classified as highland.");
+            sliderFloatWithHint("Water Presence Threshold", &viz_.displayManager.waterPresenceThreshold, 0.0f, 1.0f, "%.3f", "Minimum water signal required to classify a cell as water.");
+            viz_.displayManager.waterLevel = std::clamp(viz_.displayManager.waterLevel, 0.0f, 1.0f);
+            viz_.displayManager.autoWaterQuantile = std::clamp(viz_.displayManager.autoWaterQuantile, 0.0f, 1.0f);
+            viz_.displayManager.lowlandThreshold = std::clamp(viz_.displayManager.lowlandThreshold, 0.0f, 1.0f);
+            viz_.displayManager.highlandThreshold = std::clamp(viz_.displayManager.highlandThreshold, viz_.displayManager.lowlandThreshold + 0.01f, 1.0f);
+            viz_.displayManager.waterPresenceThreshold = std::clamp(viz_.displayManager.waterPresenceThreshold, 0.0f, 1.0f);
+
+            if (PrimaryButton("Save Display Manager", ImVec2(200.0f, 24.0f))) {
+                saveDisplayPrefs();
             }
 
             ImGui::Separator();
@@ -2009,6 +2337,12 @@ static_cast<double>(std::max(0.0f, frameDt));
             ImGui::Spacing();
             
             auto& vp = viz_.viewports[viz_.activeViewportEditor];
+
+            int displayType = static_cast<int>(vp.displayType);
+            if (ImGui::Combo("Viewport Display Type", &displayType, displayTypeNames.data(), static_cast<int>(displayTypeNames.size()))) {
+                vp.displayType = static_cast<DisplayType>(std::clamp(displayType, 0, static_cast<int>(displayTypeNames.size()) - 1));
+            }
+            settingHint("Choose how this viewport interprets data: raw scalar, categories, relative elevation, or surface water.");
             
             if (!viz_.fieldNames.empty()) {
                 clampVisualizationIndices();
@@ -2034,6 +2368,10 @@ static_cast<double>(std::max(0.0f, frameDt));
             static constexpr std::array<const char*, 3> normalizationNames = {"Per-frame Auto", "Sticky Limit (per-field)", "Fixed Manual Bounds"};                                                                                           int normalization = static_cast<int>(vp.normalizationMode);
             if (ImGui::Combo("Normalization", &normalization, normalizationNames.data(), static_cast<int>(normalizationNames.size()))) {                                                                                                          vp.normalizationMode = static_cast<NormalizationMode>(std::clamp(normalization, 0, static_cast<int>(normalizationNames.size()) - 1));                                                                                       }
             settingHint("Controls how value ranges are normalized before color mapping for this specific view.");
+
+            if (vp.displayType != DisplayType::ScalarField) {
+                ImGui::TextDisabled("Category display type selected: scalar normalization/palette are secondary.");
+            }
 
             if (vp.normalizationMode == NormalizationMode::StickyPerField) {
                 if (ImGui::Button("Reset Sticky Tracking", ImVec2(170.0f, 24.0f))) {
@@ -2107,13 +2445,23 @@ static_cast<double>(std::max(0.0f, frameDt));
     void drawGridSetupSection() {
         PushSectionTint(6);
         if (ImGui::CollapsingHeader("Grid Matrix Registration", ImGuiTreeNodeFlags_DefaultOpen)) {
-            int seed = static_cast<int>(std::min<std::uint64_t>(panel_.seed, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
-            if (sliderIntWithHint("Entropy Seed", &seed, 0, kImGuiIntSafeMax, "Primary deterministic seed for world generation and initialization.")) {
-                panel_.seed = static_cast<std::uint64_t>(seed);
+            checkboxWithHint("Manual seed", &panel_.useManualSeed, "When disabled, a fresh random seed is generated at world creation.");
+            if (panel_.useManualSeed) {
+                std::uint64_t manualSeed = panel_.seed;
+                if (ImGui::InputScalar("Seed", ImGuiDataType_U64, &manualSeed)) {
+                    panel_.seed = std::max<std::uint64_t>(1ull, manualSeed);
+                }
+                settingHint("Manual deterministic seed. Same seed + same params reproduce the same world.");
+            } else {
+                ImGui::Text("Seed (auto): %llu", static_cast<unsigned long long>(panel_.seed));
+                if (SecondaryButton("Reroll Seed", ImVec2(140.0f, 24.0f))) {
+                    panel_.seed = generateRandomSeed();
+                }
+                settingHint("Auto mode uses a randomized seed on each creation. Reroll previews another one.");
             }
 
-            sliderIntWithHint("Width (Cols)", &panel_.gridWidth, 1, 8192, "Grid width in cells.");
-            sliderIntWithHint("Height (Rows)", &panel_.gridHeight, 1, 8192, "Grid height in cells.");
+            sliderIntWithHint("Width (Cols)", &panel_.gridWidth, 1, 4096, "Grid width in cells (max 4096).");
+            sliderIntWithHint("Height (Rows)", &panel_.gridHeight, 1, 4096, "Grid height in cells (max 4096).");
 
             if (ImGui::BeginCombo("Runtime Tier", kTierOptions[panel_.tierIndex])) {
                 for (int i = 0; i < static_cast<int>(kTierOptions.size()); ++i) {
@@ -2165,6 +2513,44 @@ static_cast<double>(std::max(0.0f, frameDt));
             sliderFloatWithHint("Polar Cooling", &panel_.polarCooling, 0.0f, 1.5f, "%.2f", "Strength of temperature cooling away from warm latitudes.");
             sliderFloatWithHint("Humidity from Water", &panel_.humidityFromWater, 0.0f, 1.5f, "%.2f", "Influence of water presence on humidity initialization.");
             sliderFloatWithHint("Biome Noise", &panel_.biomeNoiseStrength, 0.0f, 1.0f, "%.2f", "Additional noise contribution to biome/temperature diversity.");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Island Morphology (New)");
+            sliderFloatWithHint("Island Density", &panel_.islandDensity, 0.05f, 0.95f, "%.3f", "Controls how many islands are generated across the map.");
+            sliderFloatWithHint("Island Falloff", &panel_.islandFalloff, 0.35f, 4.5f, "%.2f", "Controls island shape falloff from center to coast.");
+            sliderFloatWithHint("Coastline Sharpness", &panel_.coastlineSharpness, 0.25f, 4.0f, "%.2f", "Controls coastline transition sharpness.");
+            sliderFloatWithHint("Archipelago Jitter", &panel_.archipelagoJitter, 0.0f, 1.5f, "%.2f", "Jitters island centers to break regular chunks.");
+            sliderFloatWithHint("Erosion Strength", &panel_.erosionStrength, 0.0f, 1.0f, "%.2f", "Applies erosion-like modulation to terrain smoothing.");
+            sliderFloatWithHint("Shelf Depth", &panel_.shelfDepth, 0.0f, 0.8f, "%.2f", "Controls continental shelf depth around coasts.");
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Display Type Manager");
+            static constexpr std::array<const char*, 4> displayTypeNames = {
+                "Scalar Field",
+                "Surface Category (water/land/highland)",
+                "Relative Elevation",
+                "Surface Water (dry=black)"
+            };
+            int mode = static_cast<int>(viz_.generationPreviewDisplayType);
+            if (ImGui::Combo("Preview Display Type", &mode, displayTypeNames.data(), static_cast<int>(displayTypeNames.size()))) {
+                viz_.generationPreviewDisplayType = static_cast<DisplayType>(std::clamp(mode, 0, static_cast<int>(displayTypeNames.size()) - 1));
+            }
+            settingHint("Uses the same display interpretation manager as simulation viewports.");
+
+            checkboxWithHint("Auto Water Level", &viz_.displayManager.autoWaterLevel, "Automatically derives display waterline from terrain values.");
+            if (viz_.displayManager.autoWaterLevel) {
+                sliderFloatWithHint("Auto Water Quantile", &viz_.displayManager.autoWaterQuantile, 0.10f, 0.90f, "%.3f", "Quantile used for automatic waterline inference.");
+            } else {
+                sliderFloatWithHint("Manual Waterline", &viz_.displayManager.waterLevel, 0.0f, 1.0f, "%.3f", "Manual shared threshold for water/land classification.");
+            }
+            sliderFloatWithHint("Lowland Threshold", &viz_.displayManager.lowlandThreshold, 0.0f, 1.0f, "%.3f", "Shared breakpoint between lowland and upland.");
+            sliderFloatWithHint("Highland Threshold", &viz_.displayManager.highlandThreshold, 0.0f, 1.0f, "%.3f", "Shared breakpoint for highland/mountain categories.");
+            sliderFloatWithHint("Water Presence Threshold", &viz_.displayManager.waterPresenceThreshold, 0.0f, 1.0f, "%.3f", "Minimum water signal before a cell is rendered as water.");
+            viz_.displayManager.waterLevel = std::clamp(viz_.displayManager.waterLevel, 0.0f, 1.0f);
+            viz_.displayManager.autoWaterQuantile = std::clamp(viz_.displayManager.autoWaterQuantile, 0.0f, 1.0f);
+            viz_.displayManager.lowlandThreshold = std::clamp(viz_.displayManager.lowlandThreshold, 0.0f, 1.0f);
+            viz_.displayManager.highlandThreshold = std::clamp(viz_.displayManager.highlandThreshold, viz_.displayManager.lowlandThreshold + 0.01f, 1.0f);
+            viz_.displayManager.waterPresenceThreshold = std::clamp(viz_.displayManager.waterPresenceThreshold, 0.0f, 1.0f);
 
             ImGui::Spacing();
             ImGui::TextDisabled("Preview updates from these parameters without running simulation.");
@@ -2273,6 +2659,7 @@ static_cast<double>(std::max(0.0f, frameDt));
     void syncPanelFromConfig() {
         const auto& config = runtime_.config();
         panel_.seed = config.seed;
+        panel_.useManualSeed = true;
         panel_.gridWidth = static_cast<int>(config.grid.width);
         panel_.gridHeight = static_cast<int>(config.grid.height);
         panel_.tierIndex = (config.tier == ModelTier::A) ? 0 : (config.tier == ModelTier::B) ? 1 : 2;
@@ -2293,12 +2680,20 @@ static_cast<double>(std::max(0.0f, frameDt));
         panel_.latitudeBanding = config.worldGen.latitudeBanding;
         panel_.humidityFromWater = config.worldGen.humidityFromWater;
         panel_.biomeNoiseStrength = config.worldGen.biomeNoiseStrength;
+        panel_.islandDensity = config.worldGen.islandDensity;
+        panel_.islandFalloff = config.worldGen.islandFalloff;
+        panel_.coastlineSharpness = config.worldGen.coastlineSharpness;
+        panel_.archipelagoJitter = config.worldGen.archipelagoJitter;
+        panel_.erosionStrength = config.worldGen.erosionStrength;
+        panel_.shelfDepth = config.worldGen.shelfDepth;
     }
 
     void applyConfigFromPanel() {
         app::LaunchConfig config = runtime_.config();
         config.seed = panel_.seed;
-        config.grid = GridSpec{static_cast<std::uint32_t>(std::max(1, panel_.gridWidth)), static_cast<std::uint32_t>(std::max(1, panel_.gridHeight))};
+        config.grid = GridSpec{
+            static_cast<std::uint32_t>(std::clamp(panel_.gridWidth, 1, 4096)),
+            static_cast<std::uint32_t>(std::clamp(panel_.gridHeight, 1, 4096))};
         config.tier = (panel_.tierIndex == 0) ? ModelTier::A : (panel_.tierIndex == 1) ? ModelTier::B : ModelTier::C;
         const auto parsedTemporal = app::parseTemporalPolicy(kTemporalOptions[panel_.temporalIndex]);
         if (parsedTemporal.has_value()) {
@@ -2318,6 +2713,12 @@ static_cast<double>(std::max(0.0f, frameDt));
         config.worldGen.latitudeBanding = panel_.latitudeBanding;
         config.worldGen.humidityFromWater = panel_.humidityFromWater;
         config.worldGen.biomeNoiseStrength = panel_.biomeNoiseStrength;
+        config.worldGen.islandDensity = panel_.islandDensity;
+        config.worldGen.islandFalloff = panel_.islandFalloff;
+        config.worldGen.coastlineSharpness = panel_.coastlineSharpness;
+        config.worldGen.archipelagoJitter = panel_.archipelagoJitter;
+        config.worldGen.erosionStrength = panel_.erosionStrength;
+        config.worldGen.shelfDepth = panel_.shelfDepth;
 
         runtime_.setConfig(config);
 
@@ -2328,7 +2729,9 @@ static_cast<double>(std::max(0.0f, frameDt));
              << " temporal=" << app::temporalPolicyToString(config.temporalPolicy)
              << " gen.base_freq=" << config.worldGen.terrainBaseFrequency
              << " gen.detail_freq=" << config.worldGen.terrainDetailFrequency
-             << " gen.sea_level=" << config.worldGen.seaLevel;
+                         << " gen.sea_level=" << config.worldGen.seaLevel
+                         << " gen.island_density=" << config.worldGen.islandDensity
+                         << " gen.coast_sharpness=" << config.worldGen.coastlineSharpness;
         appendLog(output.str());
         requestSnapshotRefresh();
     }
@@ -2364,7 +2767,7 @@ static_cast<double>(std::max(0.0f, frameDt));
 
     AccessibilityConfig accessibility_{};
     PanelState panel_{};
-    SessionUiState sessionUi_{};
+    session_manager::SessionUiState sessionUi_{};
     VisualParams visuals_{};
     VisualizationState viz_{};
     OverlayState overlay_{};

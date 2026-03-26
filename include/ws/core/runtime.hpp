@@ -29,6 +29,12 @@ struct WorldGenerationParams {
     float latitudeBanding = 1.0f;
     float humidityFromWater = 0.52f;
     float biomeNoiseStrength = 0.20f;
+    float islandDensity = 0.58f;
+    float islandFalloff = 1.35f;
+    float coastlineSharpness = 1.10f;
+    float archipelagoJitter = 0.85f;
+    float erosionStrength = 0.32f;
+    float shelfDepth = 0.20f;
 };
 
 struct RuntimeConfig {

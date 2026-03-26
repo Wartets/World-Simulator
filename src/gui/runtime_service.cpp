@@ -145,8 +145,30 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
             info.worldName = worldName;
             info.profilePath = worldProfileStore_.pathFor(worldName);
             info.checkpointPath = checkpointPathForWorld(worldName);
+            info.hasProfile = std::filesystem::exists(info.profilePath);
             info.hasCheckpoint = std::filesystem::exists(info.checkpointPath);
+
+            if (info.hasProfile) {
+                info.profileBytes = std::filesystem::file_size(info.profilePath);
+                info.profileLastWrite = std::filesystem::last_write_time(info.profilePath);
+                info.hasProfileTimestamp = true;
+
+                try {
+                    const auto launch = worldProfileStore_.load(worldName);
+                    info.gridWidth = launch.grid.width;
+                    info.gridHeight = launch.grid.height;
+                    info.seed = launch.seed;
+                    info.tier = toString(launch.tier);
+                    info.temporalPolicy = app::temporalPolicyToString(launch.temporalPolicy);
+                } catch (...) {
+                    // Keep list resilient when one profile entry is malformed.
+                }
+            }
+
             if (info.hasCheckpoint) {
+                info.checkpointBytes = std::filesystem::file_size(info.checkpointPath);
+                info.checkpointLastWrite = std::filesystem::last_write_time(info.checkpointPath);
+                info.hasCheckpointTimestamp = true;
                 const auto checkpoint = app::readCheckpointFile(info.checkpointPath);
                 info.stepIndex = checkpoint.stateSnapshot.header.stepIndex;
                 info.runIdentityHash = checkpoint.runSignature.identityHash();
@@ -281,6 +303,49 @@ bool RuntimeService::saveActiveWorld(std::string& message) {
         return true;
     } catch (const std::exception& exception) {
         message = std::string("world_save_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::deleteWorld(const std::string& worldName, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    const std::string normalized = normalizeWorldName(worldName);
+    if (normalized.empty()) {
+        message = "world name is required";
+        return false;
+    }
+
+    const auto profilePath = worldProfileStore_.pathFor(normalized);
+    const auto checkpointPath = checkpointPathForWorld(normalized);
+    bool removedAny = false;
+
+    try {
+        if (std::filesystem::exists(profilePath)) {
+            removedAny = std::filesystem::remove(profilePath) || removedAny;
+        }
+        if (std::filesystem::exists(checkpointPath)) {
+            removedAny = std::filesystem::remove(checkpointPath) || removedAny;
+        }
+
+        const auto displayPath = worldCheckpointRoot() / (normalized + ".displayprefs");
+        if (std::filesystem::exists(displayPath)) {
+            removedAny = std::filesystem::remove(displayPath) || removedAny;
+        }
+
+        if (activeWorldName_ == normalized) {
+            activeWorldName_.clear();
+        }
+
+        if (!removedAny) {
+            message = "world_delete_noop name=" + normalized;
+            return false;
+        }
+
+        message = "world_deleted name=" + normalized;
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("world_delete_failed error=") + exception.what();
         return false;
     }
 }
