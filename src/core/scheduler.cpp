@@ -66,6 +66,16 @@ void restoreFieldSnapshot(StateStore& stateStore, const FieldSnapshot& snapshot,
             throw std::runtime_error("Missing restore snapshot variable: " + variableName);
         }
         const auto& values = snapshotIt->second;
+        const auto logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
+        
+        // Bounds check: snapshot size must match current field size
+        if (values.size() != logicalCount) {
+            std::ostringstream error;
+            error << "Snapshot restore size mismatch for variable='" << variableName 
+                  << "': snapshot_size=" << values.size() << " logical_count=" << logicalCount;
+            throw std::runtime_error(error.str());
+        }
+        
         for (std::size_t i = 0; i < values.size(); ++i) {
             restoreSession.setScalar(variableName, stateStore.cellFromIndex(static_cast<std::uint64_t>(i)), values[i]);
         }
@@ -84,8 +94,23 @@ double computeDriftMetric(StateStore& stateStore, const FieldSnapshot& reference
         }
         const auto& previous = referenceIt->second;
         const auto logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
+        
+        // Bounds check: reference size must match current field size
+        if (previous.size() != logicalCount) {
+            std::ostringstream error;
+            error << "Drift metric reference size mismatch for variable='" << variableName 
+                  << "': reference_size=" << previous.size() << " logical_count=" << logicalCount;
+            throw std::runtime_error(error.str());
+        }
+        
         for (std::size_t i = 0; i < logicalCount; ++i) {
-            totalAbsDelta += std::fabs(static_cast<double>(current[i]) - static_cast<double>(previous[i]));
+            const double delta = std::fabs(static_cast<double>(current[i]) - static_cast<double>(previous[i]));
+            if (std::isfinite(delta)) {
+                totalAbsDelta += delta;
+            } else {
+                // Non-finite delta detected during drift calculation - propagate error
+                throw std::runtime_error("Non-finite value detected in drift metric calculation for variable: " + variableName);
+            }
             sampleCount += 1;
         }
     }
@@ -116,6 +141,15 @@ void applyDampingFromReference(StateStore& stateStore, const FieldSnapshot& refe
         }
         const auto& prior = referenceIt->second;
         const auto logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
+        
+        // Bounds check: reference size must match current field size
+        if (prior.size() != logicalCount) {
+            std::ostringstream error;
+            error << "Damping reference size mismatch for variable='" << variableName 
+                  << "': reference_size=" << prior.size() << " logical_count=" << logicalCount;
+            throw std::runtime_error(error.str());
+        }
+        
         for (std::size_t i = 0; i < logicalCount; ++i) {
             const float adjusted = prior[i] + dampingFactor * (current[i] - prior[i]);
             dampingWriter.setScalar(variableName, stateStore.cellFromIndex(static_cast<std::uint64_t>(i)), adjusted);

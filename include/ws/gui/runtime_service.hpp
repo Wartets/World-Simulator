@@ -4,6 +4,7 @@
 #include "ws/app/shell_support.hpp"
 #include "ws/core/runtime.hpp"
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -57,7 +58,7 @@ public:
     bool metrics(std::string& message) const;
     bool listFields(std::string& message) const;
     bool summarizeField(const std::string& variableName, std::string& message) const;
-    bool captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message, bool computeHash = true) const;
+    bool captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message, bool computeHash = false) const;
     bool fieldNames(std::vector<std::string>& names, std::string& message) const;
 
     bool createCheckpoint(const std::string& label, std::string& message);
@@ -77,7 +78,10 @@ public:
 
     [[nodiscard]] const std::string& activeWorldName() const noexcept { return activeWorldName_; }
 
+    bool applySettings(std::string& message);
+
 private:
+    void refreshCachedStateNoLock() const;
     bool requireRuntime(const char* operation, std::string& message) const;
     [[nodiscard]] static std::filesystem::path worldProfileRoot();
     [[nodiscard]] static std::filesystem::path worldCheckpointRoot();
@@ -90,6 +94,8 @@ private:
     app::ProfileStore profileStore_{};
     app::ProfileStore worldProfileStore_{worldProfileRoot()};
     std::string activeWorldName_;
+    mutable std::atomic<bool> cachedRunning_{false};
+    mutable std::atomic<bool> cachedPaused_{false};
     mutable std::recursive_mutex mutex_;
 };
 

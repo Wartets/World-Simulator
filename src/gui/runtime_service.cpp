@@ -66,14 +66,29 @@ bool RuntimeService::isDefaultWorldName(const std::string& name, int& outIndex) 
     return true;
 }
 
+void RuntimeService::refreshCachedStateNoLock() const {
+    const bool running = runtime_ && runtime_->status() == RuntimeStatus::Running;
+    const bool paused = running && runtime_->paused();
+    cachedRunning_.store(running, std::memory_order_relaxed);
+    cachedPaused_.store(paused, std::memory_order_relaxed);
+}
+
 bool RuntimeService::isRunning() const {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return runtime_ && runtime_->status() == RuntimeStatus::Running;
+    if (mutex_.try_lock()) {
+        const std::lock_guard<std::recursive_mutex> lock(mutex_, std::adopt_lock);
+        refreshCachedStateNoLock();
+        return cachedRunning_.load(std::memory_order_relaxed);
+    }
+    return cachedRunning_.load(std::memory_order_relaxed);
 }
 
 bool RuntimeService::isPaused() const {
-    const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return isRunning() && runtime_->paused();
+    if (mutex_.try_lock()) {
+        const std::lock_guard<std::recursive_mutex> lock(mutex_, std::adopt_lock);
+        refreshCachedStateNoLock();
+        return cachedPaused_.load(std::memory_order_relaxed);
+    }
+    return cachedPaused_.load(std::memory_order_relaxed);
 }
 
 bool RuntimeService::start(std::string& message) {
@@ -94,10 +109,12 @@ bool RuntimeService::start(std::string& message) {
                << " grid=" << config_.grid.width << 'x' << config_.grid.height
                << " tier=" << toString(config_.tier)
                << " temporal=" << app::temporalPolicyToString(config_.temporalPolicy);
+        refreshCachedStateNoLock();
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
         runtime_.reset();
+        refreshCachedStateNoLock();
         message = std::string("start_failed error=") + exception.what();
         return false;
     }
@@ -112,21 +129,46 @@ bool RuntimeService::restart(std::string& message) {
     return start(message);
 }
 
+bool RuntimeService::applySettings(std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!runtime_ || runtime_->status() != RuntimeStatus::Running) {
+        message = "apply_settings_failed runtime_not_active";
+        return false;
+    }
+    
+    try {
+        std::string restartMessage;
+        if (!restart(restartMessage)) {
+            message = std::string("apply_settings_failed restart_error=") + restartMessage;
+            return false;
+        }
+
+        message = "settings_applied " + restartMessage;
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("apply_settings_failed error=") + exception.what();
+        return false;
+    }
+}
+
 bool RuntimeService::stop(std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
         if (!isRunning()) {
             message = "runtime already stopped";
             runtime_.reset();
+            refreshCachedStateNoLock();
             return true;
         }
 
         runtime_->stop();
         std::ostringstream output;
         output << "runtime_stopped step_index=" << runtime_->snapshot().stateHeader.stepIndex;
+        refreshCachedStateNoLock();
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
+        refreshCachedStateNoLock();
         message = std::string("stop_failed error=") + exception.what();
         return false;
     }
@@ -371,9 +413,11 @@ bool RuntimeService::step(const std::uint32_t count, std::string& message) {
                << " state_hash=" << snapshot.stateHash
                << " events_applied=" << diagnostics.eventsApplied
                << " reproducibility=" << toString(snapshot.reproducibilityClass);
+        refreshCachedStateNoLock();
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
+        refreshCachedStateNoLock();
         message = std::string("step_failed error=") + exception.what();
         return false;
     }
@@ -420,9 +464,11 @@ bool RuntimeService::pause(std::string& message) {
             return false;
         }
         runtime_->pause();
+        refreshCachedStateNoLock();
         message = "runtime paused";
         return true;
     } catch (const std::exception& exception) {
+        refreshCachedStateNoLock();
         message = std::string("pause_failed error=") + exception.what();
         return false;
     }
@@ -435,9 +481,11 @@ bool RuntimeService::resume(std::string& message) {
             return false;
         }
         runtime_->resume();
+        refreshCachedStateNoLock();
         message = "runtime resumed";
         return true;
     } catch (const std::exception& exception) {
+        refreshCachedStateNoLock();
         message = std::string("resume_failed error=") + exception.what();
         return false;
     }
@@ -724,4 +772,3 @@ bool RuntimeService::requireRuntime(const char* operation, std::string& message)
 }
 
 } // namespace ws::gui
-

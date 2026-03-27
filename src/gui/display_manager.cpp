@@ -83,6 +83,9 @@ DisplayBuffer buildDisplayBufferCore(
     const std::vector<float>& primary,
     const std::vector<float>& terrain,
     const std::vector<float>& water,
+    const std::vector<float>& humidity,
+    const std::vector<float>& windU,
+    const std::vector<float>& windV,
     DisplayType displayType,
     const DisplayManagerParams& params,
     const std::string& label) {
@@ -94,6 +97,8 @@ DisplayBuffer buildDisplayBufferCore(
     tuned.lowlandThreshold = std::clamp(tuned.lowlandThreshold, 0.0f, 1.0f);
     tuned.highlandThreshold = std::clamp(tuned.highlandThreshold, tuned.lowlandThreshold + 0.01f, 1.0f);
     tuned.waterPresenceThreshold = std::clamp(tuned.waterPresenceThreshold, 0.0f, 1.0f);
+    tuned.shallowWaterDepth = std::clamp(tuned.shallowWaterDepth, 0.0f, 0.5f);
+    tuned.highMoistureThreshold = std::clamp(tuned.highMoistureThreshold, 0.0f, 1.0f);
 
     result.effectiveWaterLevel = tuned.autoWaterLevel
         ? quantileFinite(terrain, tuned.autoWaterQuantile)
@@ -108,22 +113,29 @@ DisplayBuffer buildDisplayBufferCore(
 
     if (displayType == DisplayType::SurfaceCategory) {
         result.minValue = 0.0f;
-        result.maxValue = 4.0f;
+        result.maxValue = 6.0f;
         result.label = "Surface Category";
         for (std::size_t i = 0; i < result.values.size(); ++i) {
             const float t = (i < terrain.size() && std::isfinite(terrain[i])) ? terrain[i] : 0.0f;
             const float w = (i < water.size() && std::isfinite(water[i])) ? water[i] : 0.0f;
+            const float q = (i < humidity.size() && std::isfinite(humidity[i])) ? humidity[i] : 0.0f;
             const float depth = std::max(0.0f, result.effectiveWaterLevel - t);
-            if (depth > 0.02f || w > tuned.waterPresenceThreshold) {
-                result.values[i] = 0.0f; // water
+            const float wetness = std::clamp(w * 0.5f, 0.0f, 1.0f);
+
+            if (depth > tuned.shallowWaterDepth) {
+                result.values[i] = 0.0f; // deep water
+            } else if (depth > 0.02f) {
+                result.values[i] = 1.0f; // shallow water
+            } else if (wetness > tuned.waterPresenceThreshold || q > tuned.highMoistureThreshold) {
+                result.values[i] = 2.0f; // shoreline / wet
             } else if (t < tuned.lowlandThreshold) {
-                result.values[i] = 1.0f; // shoreline/lowland
+                result.values[i] = 3.0f; // lowland
             } else if (t < tuned.highlandThreshold) {
-                result.values[i] = 2.0f; // inland
-            } else if (t < tuned.highlandThreshold + 0.10f) {
-                result.values[i] = 3.0f; // upland
+                result.values[i] = 4.0f; // inland / midland
+            } else if (t < tuned.highlandThreshold + 0.15f) {
+                result.values[i] = 5.0f; // highland
             } else {
-                result.values[i] = 4.0f; // mountain
+                result.values[i] = 6.0f; // mountain
             }
         }
         return result;
@@ -142,6 +154,33 @@ DisplayBuffer buildDisplayBufferCore(
             else if (rel < 0.18f) result.values[i] = 3.0f;
             else if (rel < 0.33f) result.values[i] = 4.0f;
             else result.values[i] = 5.0f;
+        }
+        return result;
+    }
+
+    if (displayType == DisplayType::MoistureMap) {
+        result.minValue = 0.0f;
+        result.maxValue = 1.0f;
+        result.label = "Moisture Map";
+        for (std::size_t i = 0; i < result.values.size(); ++i) {
+            const float w = (i < water.size() && std::isfinite(water[i])) ? water[i] : 0.0f;
+            const float q = (i < humidity.size() && std::isfinite(humidity[i])) ? humidity[i] : 0.0f;
+            const float wetness = std::clamp(w * 0.5f, 0.0f, 1.0f);
+            result.values[i] = std::clamp(0.7f * q + 0.3f * wetness, 0.0f, 1.0f);
+        }
+        return result;
+    }
+
+    if (displayType == DisplayType::WindField) {
+        constexpr float kMaxWindMagnitude = 11.313708f;
+        result.minValue = 0.0f;
+        result.maxValue = 1.0f;
+        result.label = "Wind Field";
+        for (std::size_t i = 0; i < result.values.size(); ++i) {
+            const float u = (i < windU.size() && std::isfinite(windU[i])) ? windU[i] : 0.0f;
+            const float v = (i < windV.size() && std::isfinite(windV[i])) ? windV[i] : 0.0f;
+            const float magnitude = std::sqrt(u * u + v * v);
+            result.values[i] = std::clamp(magnitude / kMaxWindMagnitude, 0.0f, 1.0f);
         }
         return result;
     }
@@ -167,6 +206,8 @@ const char* displayTypeLabel(const DisplayType type) {
         case DisplayType::SurfaceCategory: return "Surface Category";
         case DisplayType::RelativeElevation: return "Relative Elevation";
         case DisplayType::WaterDepth: return "Surface Water";
+        case DisplayType::MoistureMap: return "Moisture Map";
+        case DisplayType::WindField: return "Wind Field";
         default: return "Scalar Field";
     }
 }
@@ -188,8 +229,11 @@ DisplayBuffer buildDisplayBufferFromSnapshot(
 
     const auto primary = mergedFieldValues(fields[static_cast<std::size_t>(clampedPrimary)], includeSparseOverlay);
 
-    const int terrainIdx = findFieldIndexByKeyword(fields, {"elevation", "terrain", "height", "altitude"});
-    const int waterIdx = findFieldIndexByKeyword(fields, {"water", "surface_water", "hydro", "moisture"});
+    const int terrainIdx = findFieldIndexByKeyword(fields, {"terrain_elevation", "elevation", "terrain", "height", "altitude"});
+    const int waterIdx = findFieldIndexByKeyword(fields, {"surface_water", "water", "hydro"});
+    const int humidityIdx = findFieldIndexByKeyword(fields, {"humidity_q", "humidity", "humid", "moisture"});
+    const int windUIdx = findFieldIndexByKeyword(fields, {"wind_u", "wind"});
+    const int windVIdx = findFieldIndexByKeyword(fields, {"wind_v"});
 
     const std::vector<float> terrain = (terrainIdx >= 0)
         ? mergedFieldValues(fields[static_cast<std::size_t>(terrainIdx)], includeSparseOverlay)
@@ -197,8 +241,17 @@ DisplayBuffer buildDisplayBufferFromSnapshot(
     const std::vector<float> water = (waterIdx >= 0)
         ? mergedFieldValues(fields[static_cast<std::size_t>(waterIdx)], includeSparseOverlay)
         : std::vector<float>(primary.size(), 0.0f);
+    const std::vector<float> humidity = (humidityIdx >= 0)
+        ? mergedFieldValues(fields[static_cast<std::size_t>(humidityIdx)], includeSparseOverlay)
+        : std::vector<float>(primary.size(), 0.0f);
+    const std::vector<float> windU = (windUIdx >= 0)
+        ? mergedFieldValues(fields[static_cast<std::size_t>(windUIdx)], includeSparseOverlay)
+        : std::vector<float>(primary.size(), 0.0f);
+    const std::vector<float> windV = (windVIdx >= 0)
+        ? mergedFieldValues(fields[static_cast<std::size_t>(windVIdx)], includeSparseOverlay)
+        : std::vector<float>(primary.size(), 0.0f);
 
-    return buildDisplayBufferCore(primary, terrain, water, displayType, params, fields[static_cast<std::size_t>(clampedPrimary)].spec.name);
+    return buildDisplayBufferCore(primary, terrain, water, humidity, windU, windV, displayType, params, fields[static_cast<std::size_t>(clampedPrimary)].spec.name);
 }
 
 DisplayBuffer buildDisplayBufferFromTerrain(
@@ -218,7 +271,23 @@ DisplayBuffer buildDisplayBufferFromTerrain(
         }
     }
 
-    return buildDisplayBufferCore(safeTerrain, safeTerrain, safeWater, displayType, params, label == nullptr ? "preview" : label);
+    std::vector<float> safeHumidity(safeTerrain.size(), 0.0f);
+    for (std::size_t i = 0; i < safeHumidity.size(); ++i) {
+        const float wetness = (i < safeWater.size()) ? std::clamp(safeWater[i] * 0.5f, 0.0f, 1.0f) : 0.0f;
+        const float elevation = (i < safeTerrain.size() && std::isfinite(safeTerrain[i])) ? safeTerrain[i] : 0.0f;
+        safeHumidity[i] = std::clamp(0.65f * wetness + 0.35f * (1.0f - std::abs(elevation - 0.5f)), 0.0f, 1.0f);
+    }
+
+    return buildDisplayBufferCore(
+        safeTerrain,
+        safeTerrain,
+        safeWater,
+        safeHumidity,
+        std::vector<float>(safeTerrain.size(), 0.0f),
+        std::vector<float>(safeTerrain.size(), 0.0f),
+        displayType,
+        params,
+        label == nullptr ? "preview" : label);
 }
 
 } // namespace ws::gui

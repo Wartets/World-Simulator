@@ -7,6 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
+option(WS_ENABLE_OPENMP "Enable OpenMP acceleration for eligible simulation loops" OFF)
+
 add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/profile_resolver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/interactions.cpp
@@ -21,6 +23,18 @@ add_library(ws_core
 )
 
 target_include_directories(ws_core PUBLIC include)
+if(WS_ENABLE_OPENMP)
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(ws_core PUBLIC OpenMP::OpenMP_CXX)
+        target_compile_definitions(ws_core PUBLIC WS_ENABLE_OPENMP=1)
+    else()
+        message(WARNING "WS_ENABLE_OPENMP was requested, but OpenMP was not found. Building without OpenMP acceleration.")
+        target_compile_definitions(ws_core PUBLIC WS_ENABLE_OPENMP=0)
+    endif()
+else()
+    target_compile_definitions(ws_core PUBLIC WS_ENABLE_OPENMP=0)
+endif()
 
 add_executable(world_sim
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp

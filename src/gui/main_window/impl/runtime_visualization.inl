@@ -13,6 +13,11 @@ static constexpr std::size_t kHistoryCapacity = 512;
 std::unordered_map<std::string, std::vector<FieldHistoryEntry>> fieldHistory_;
 std::uint64_t lastHistoryStep_ = std::numeric_limits<std::uint64_t>::max();
 
+struct HistoryBounds {
+    float minValue = 0.0f;
+    float maxValue = 1.0f;
+};
+
 void updateFieldHistory(const ws::StateStoreSnapshot& snapshot) {
     if (snapshot.header.stepIndex == lastHistoryStep_) return;
     lastHistoryStep_ = snapshot.header.stepIndex;
@@ -33,30 +38,37 @@ void updateFieldHistory(const ws::StateStoreSnapshot& snapshot) {
     }
 }
 
-// Draw a compact sparkline using ImDrawList
-static void drawSparkline(ImDrawList* dl, const ImVec2 pos, const float w, const float h,
-                          const std::vector<FieldHistoryEntry>& hist,
-                          const ImU32 lineColor, const ImU32 rangeColor) {
-    if (hist.size() < 2) return;
+[[nodiscard]] static bool computeHistoryBounds(const std::vector<FieldHistoryEntry>& hist, HistoryBounds& bounds) {
+    if (hist.size() < 2) return false;
 
-    // Find global min/max for normalization
     float gMin =  std::numeric_limits<float>::infinity();
     float gMax = -std::numeric_limits<float>::infinity();
     for (const auto& e : hist) {
         gMin = std::min(gMin, e.minVal);
         gMax = std::max(gMax, e.maxVal);
     }
-    if (!std::isfinite(gMin) || !std::isfinite(gMax) || gMax - gMin < 1e-9f) return;
-    const float range = gMax - gMin;
+    if (!std::isfinite(gMin) || !std::isfinite(gMax) || gMax - gMin < 1e-9f) return false;
+    bounds.minValue = gMin;
+    bounds.maxValue = gMax;
+    return true;
+}
+
+// Draw a compact sparkline using ImDrawList
+static void drawSparkline(ImDrawList* dl, const ImVec2 pos, const float w, const float h,
+                          const std::vector<FieldHistoryEntry>& hist,
+                          const ImU32 lineColor, const ImU32 rangeColor) {
+    HistoryBounds bounds;
+    if (!computeHistoryBounds(hist, bounds)) return;
+    const float range = bounds.maxValue - bounds.minValue;
 
     // Range band (fill between min and max)
     for (std::size_t i = 0; i + 1 < hist.size(); ++i) {
         const float x0 = pos.x + w * static_cast<float>(i)     / static_cast<float>(hist.size() - 1);
         const float x1 = pos.x + w * static_cast<float>(i + 1) / static_cast<float>(hist.size() - 1);
-        const float lo0 = pos.y + h * (1.0f - (hist[i].minVal     - gMin) / range);
-        const float hi0 = pos.y + h * (1.0f - (hist[i].maxVal     - gMin) / range);
-        const float lo1 = pos.y + h * (1.0f - (hist[i+1].minVal   - gMin) / range);
-        const float hi1 = pos.y + h * (1.0f - (hist[i+1].maxVal   - gMin) / range);
+        const float lo0 = pos.y + h * (1.0f - (hist[i].minVal     - bounds.minValue) / range);
+        const float hi0 = pos.y + h * (1.0f - (hist[i].maxVal     - bounds.minValue) / range);
+        const float lo1 = pos.y + h * (1.0f - (hist[i+1].minVal   - bounds.minValue) / range);
+        const float hi1 = pos.y + h * (1.0f - (hist[i+1].maxVal   - bounds.minValue) / range);
         dl->AddQuadFilled(
             ImVec2(x0, std::clamp(hi0, pos.y, pos.y+h)),
             ImVec2(x1, std::clamp(hi1, pos.y, pos.y+h)),
@@ -69,12 +81,16 @@ static void drawSparkline(ImDrawList* dl, const ImVec2 pos, const float w, const
     for (std::size_t i = 0; i + 1 < hist.size(); ++i) {
         const float x0 = pos.x + w * static_cast<float>(i)     / static_cast<float>(hist.size() - 1);
         const float x1 = pos.x + w * static_cast<float>(i + 1) / static_cast<float>(hist.size() - 1);
-        const float y0 = pos.y + h * (1.0f - (hist[i].avg     - gMin) / range);
-        const float y1 = pos.y + h * (1.0f - (hist[i+1].avg   - gMin) / range);
+        const float y0 = pos.y + h * (1.0f - (hist[i].avg     - bounds.minValue) / range);
+        const float y1 = pos.y + h * (1.0f - (hist[i+1].avg   - bounds.minValue) / range);
         dl->AddLine(ImVec2(x0, std::clamp(y0, pos.y, pos.y+h)),
                     ImVec2(x1, std::clamp(y1, pos.y, pos.y+h)),
                     lineColor, 1.5f);
     }
+
+    const FieldHistoryEntry& last = hist.back();
+    const float dotY = pos.y + h * (1.0f - (last.avg - bounds.minValue) / range);
+    dl->AddCircleFilled(ImVec2(pos.x + w, std::clamp(dotY, pos.y, pos.y + h)), 2.5f, lineColor);
 }
 
 // Field history panel - shown as a floating window when requested
@@ -94,6 +110,8 @@ void drawFieldHistoryWindow() {
     if (SecondaryButton("Clear history", ImVec2(110.0f, 20.0f)))
         fieldHistory_.clear();
 
+    ImGui::Separator();
+    ImGui::TextDisabled("[range band] min/max envelope   [line] average   [dot] latest step");
     ImGui::Separator();
 
     const float lineW = ImGui::GetContentRegionAvail().x;
@@ -123,9 +141,20 @@ void drawFieldHistoryWindow() {
         dl->AddRect(sparkPos,
             ImVec2(sparkPos.x + kSparkW, sparkPos.y + kSparkH),
             IM_COL32(55, 65, 90, 255), 2.0f);
+        HistoryBounds bounds;
+        const bool haveBounds = computeHistoryBounds(hist, bounds);
         drawSparkline(dl, sparkPos, kSparkW, kSparkH, hist,
             IM_COL32(100, 200, 255, 230),
             IM_COL32(40, 80, 120, 80));
+        if (haveBounds) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.4g", bounds.maxValue);
+            dl->AddText(ImVec2(sparkPos.x + kSparkW + 6.0f, sparkPos.y), IM_COL32(140,160,200,220), buf);
+            std::snprintf(buf, sizeof(buf), "%.4g", bounds.minValue);
+            dl->AddText(ImVec2(sparkPos.x + kSparkW + 6.0f, sparkPos.y + kSparkH - 12.0f), IM_COL32(140,160,200,220), buf);
+            std::snprintf(buf, sizeof(buf), "avg %.4g", last.avg);
+            dl->AddText(ImVec2(sparkPos.x + kSparkW + 6.0f, sparkPos.y + kSparkH * 0.45f - 6.0f), IM_COL32(100,200,255,220), buf);
+        }
         ImGui::Dummy(ImVec2(kSparkW, kSparkH));
         if (ImGui::IsItemHovered()) {
             // Show value at hover position
@@ -195,6 +224,9 @@ void uploadRasterTexture(RasterTexture& tex, int w, int h,
     h = hashCombine(h, hashFloat(viz_.displayManager.lowlandThreshold));
     h = hashCombine(h, hashFloat(viz_.displayManager.highlandThreshold));
     h = hashCombine(h, hashFloat(viz_.displayManager.waterPresenceThreshold));
+    h = hashCombine(h, hashFloat(viz_.displayManager.shallowWaterDepth));
+    h = hashCombine(h, hashFloat(viz_.displayManager.highMoistureThreshold));
+    h = hashCombine(h, static_cast<std::uint64_t>(vp.showWindMagnitudeBackground));
     h = hashCombine(h, hashFloat(visuals_.brightness));
     h = hashCombine(h, hashFloat(visuals_.contrast));
     h = hashCombine(h, hashFloat(visuals_.gamma));
@@ -276,12 +308,14 @@ void uploadRasterTexture(RasterTexture& tex, int w, int h,
 
     if (type == DisplayType::SurfaceCategory) {
         switch (static_cast<int>(std::round(value))) {
-            case 0: return IM_COL32(28,  75, 196, 255);  // deep water
-            case 1: return IM_COL32(210,185, 118, 255);  // beach
-            case 2: return IM_COL32( 78,155,  72, 255);  // inland
-            case 3: return IM_COL32(118,128,  96, 255);  // upland
-            case 4: return IM_COL32(235,235,235, 255);  // mountain
-            default:return IM_COL32( 42, 92, 210, 255);
+            case 0: return IM_COL32( 28,  75, 196, 255); // deep water
+            case 1: return IM_COL32( 58, 122, 200, 255); // shallow water
+            case 2: return IM_COL32(212, 192, 144, 255); // shoreline / wet
+            case 3: return IM_COL32( 78, 155,  72, 255); // lowland
+            case 4: return IM_COL32(122, 135,  96, 255); // inland
+            case 5: return IM_COL32(136, 112,  96, 255); // highland
+            case 6: return IM_COL32(235, 235, 235, 255); // mountain
+            default:return IM_COL32( 42,  92, 210, 255);
         }
     }
     if (type == DisplayType::RelativeElevation) {
@@ -294,11 +328,113 @@ void uploadRasterTexture(RasterTexture& tex, int w, int h,
             default:return IM_COL32(238,238,238, 255);
         }
     }
+    if (type == DisplayType::MoistureMap) {
+        if (value < 0.2f) return IM_COL32(217, 194, 122, 255); // arid
+        if (value < 0.4f) return IM_COL32(168, 184,  96, 255); // semi-arid
+        if (value < 0.6f) return IM_COL32( 96, 160,  96, 255); // moderate
+        if (value < 0.8f) return IM_COL32( 64, 144, 122, 255); // humid
+        return IM_COL32( 40, 120,  88, 255); // wet / tropical
+    }
+    if (type == DisplayType::WindField) {
+        const float t = std::clamp(value, 0.0f, 1.0f);
+        const int r = static_cast<int>(228.0f + (34.0f - 228.0f) * t);
+        const int g = static_cast<int>(234.0f + (76.0f - 234.0f) * t);
+        const int b = static_cast<int>(242.0f + (138.0f - 242.0f) * t);
+        return IM_COL32(r, g, b, 255);
+    }
     // WaterDepth
     const float d = std::clamp(value, 0.0f, 1.0f);
     if (d <= 0.001f) return IM_COL32(0,0,0,255);
     return colormapWater(applyDisplayTransfer(d, visuals_.brightness, visuals_.contrast,
                                                visuals_.gamma, visuals_.invertColors));
+}
+
+void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float h,
+                   const DisplayType type, const ColorMapMode palette,
+                   const float minV, const float maxV, bool horizontal = true) const {
+    if (!horizontal) {
+        // Original vertical mode (for backward compatibility if needed)
+        dl.AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(10, 12, 20, 220), 3.0f);
+        dl.AddRect(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(60, 70, 96, 255), 3.0f);
+        auto drawLabel = [&](const float y, const char* text) {
+            dl.AddText(ImVec2(pos.x - 4.0f, y), IM_COL32(205,215,235,230), text);
+        };
+        if (type == DisplayType::ScalarField || type == DisplayType::WaterDepth || type == DisplayType::WindField) {
+            constexpr int kSteps = 24;
+            for (int i = 0; i < kSteps; ++i) {
+                const float t0 = static_cast<float>(i) / static_cast<float>(kSteps);
+                const float t1 = static_cast<float>(i + 1) / static_cast<float>(kSteps);
+                const float y0 = pos.y + h * (1.0f - t1);
+                const float y1 = pos.y + h * (1.0f - t0);
+                const ImU32 color = mapDisplayTypeColor(t0, type, palette);
+                dl.AddRectFilled(ImVec2(pos.x + 1.0f, y0), ImVec2(pos.x + w - 1.0f, y1), color);
+            }
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.3g", maxV);
+            drawLabel(pos.y - 2.0f, buf);
+            std::snprintf(buf, sizeof(buf), "%.3g", minV);
+            drawLabel(pos.y + h - 12.0f, buf);
+        }
+        return;
+    }
+
+    // Horizontal mode - optimized for top display
+    dl.AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(10, 12, 20, 220), 2.0f);
+    dl.AddRect(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(60, 70, 96, 200), 1.5f);
+
+    if (type == DisplayType::ScalarField || type == DisplayType::WaterDepth || type == DisplayType::WindField) {
+        constexpr int kSteps = 48;  // More steps for horizontal gives smoother gradient
+        for (int i = 0; i < kSteps; ++i) {
+            const float t0 = static_cast<float>(i) / static_cast<float>(kSteps);
+            const float t1 = static_cast<float>(i + 1) / static_cast<float>(kSteps);
+            const float x0 = pos.x + w * t0;
+            const float x1 = pos.x + w * t1;
+            const ImU32 color = mapDisplayTypeColor(t0, type, palette);
+            dl.AddRectFilled(ImVec2(x0 + 1.0f, pos.y + 1.0f), ImVec2(x1 - 0.5f, pos.y + h - 1.0f), color);
+        }
+        return;
+    }
+
+    if (type == DisplayType::SurfaceCategory) {
+        static constexpr std::array<const char*, 7> labels = {
+            "Mountain", "Highland", "Inland", "Lowland", "Wet", "Shallow", "Deep"
+        };
+        const float boxW = w / static_cast<float>(labels.size());
+        for (std::size_t i = 0; i < labels.size(); ++i) {
+            const float x = pos.x + boxW * static_cast<float>(i);
+            const int category = static_cast<int>(i);
+            dl.AddRectFilled(ImVec2(x + 1.0f, pos.y + 1.0f), ImVec2(x + boxW - 1.0f, pos.y + h - 1.0f),
+                             mapDisplayTypeColor(static_cast<float>(category), type, palette));
+        }
+        return;
+    }
+
+    if (type == DisplayType::MoistureMap) {
+        static constexpr std::array<const char*, 5> labels = {
+            "Wet", "Humid", "Moderate", "Semi-arid", "Arid"
+        };
+        static constexpr std::array<float, 5> values = {0.9f, 0.7f, 0.5f, 0.3f, 0.1f};
+        const float boxW = w / static_cast<float>(labels.size());
+        for (std::size_t i = 0; i < labels.size(); ++i) {
+            const float x = pos.x + boxW * static_cast<float>(i);
+            dl.AddRectFilled(ImVec2(x + 1.0f, pos.y + 1.0f), ImVec2(x + boxW - 1.0f, pos.y + h - 1.0f),
+                             mapDisplayTypeColor(values[i], type, palette));
+        }
+        return;
+    }
+
+    if (type == DisplayType::RelativeElevation) {
+        static constexpr std::array<const char*, 6> labels = {
+            "High", "Upland", "Coast", "Shelf", "Shallow", "Deep"
+        };
+        const float boxW = w / static_cast<float>(labels.size());
+        for (std::size_t i = 0; i < labels.size(); ++i) {
+            const float x = pos.x + boxW * static_cast<float>(i);
+            const int category = static_cast<int>(i);
+            dl.AddRectFilled(ImVec2(x + 1.0f, pos.y + 1.0f), ImVec2(x + boxW - 1.0f, pos.y + h - 1.0f),
+                             mapDisplayTypeColor(static_cast<float>(category), type, palette));
+        }
+    }
 }
 
 // Theme application
@@ -392,6 +528,9 @@ void drawSimulationCanvas() {
         dKey = hashCombine(dKey, hashFloat(viz_.displayManager.lowlandThreshold));
         dKey = hashCombine(dKey, hashFloat(viz_.displayManager.highlandThreshold));
         dKey = hashCombine(dKey, hashFloat(viz_.displayManager.waterPresenceThreshold));
+        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.shallowWaterDepth));
+        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.highMoistureThreshold));
+        dKey = hashCombine(dKey, static_cast<std::uint64_t>(vp.showWindMagnitudeBackground));
 
         auto it = snapshotDisplayCache_.find(dKey);
         if (it == snapshotDisplayCache_.end()) {
@@ -428,7 +567,8 @@ void drawSimulationCanvas() {
         auto& c  = renderCaches_[i];
         drawRasterPanel(*dl, pMin, pMax, snapshot.grid,
             c.primaryName, viewportRasters_[i], c.primaryMin, c.primaryMax, vp);
-        if (vp.showVectorField) drawVectorOverlay(*dl, pMin, pMax, snapshot.grid, vp);
+        if (vp.displayType == DisplayType::WindField) drawWindFieldOverlay(*dl, pMin, pMax, snapshot.grid, vp);
+        else if (vp.showVectorField) drawVectorOverlay(*dl, pMin, pMax, snapshot.grid, vp);
     };
 
     if      (viz_.layout == ScreenLayout::Single)
@@ -503,11 +643,15 @@ void rebuildRasterTexture(int vi, const GridSpec grid,
             const float val = src < primary.size() ? primary[src] : std::numeric_limits<float>::quiet_NaN();
             ImU32 color = IM_COL32(18,18,28,255);
             if (std::isfinite(val)) {
-                const float t = std::clamp((val - pMin) / std::max(0.0001f, pMax - pMin), 0.0f, 1.0f);
-                color = mapDisplayTypeColor(
-                    (vp.displayType == DisplayType::ScalarField ||
-                     vp.displayType == DisplayType::WaterDepth) ? t : val,
-                    vp.displayType, vp.colorMapMode);
+                if (vp.displayType == DisplayType::WindField && !vp.showWindMagnitudeBackground) {
+                    color = IM_COL32(18,18,28,255);
+                } else {
+                    const float t = std::clamp((val - pMin) / std::max(0.0001f, pMax - pMin), 0.0f, 1.0f);
+                    color = mapDisplayTypeColor(
+                        (vp.displayType == DisplayType::ScalarField ||
+                         vp.displayType == DisplayType::WaterDepth) ? t : val,
+                        vp.displayType, vp.colorMapMode);
+                }
             }
             std::uint8_t r,g,b,a;
             unpackColor(color, r, g, b, a);
@@ -570,31 +714,60 @@ void drawRasterPanel(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
     dl.AddText(ImVec2(min.x+8.0f, min.y+8.0f), IM_COL32(240,245,255,255), title.c_str());
 
     if (vp.showLegend) {
-        char buf[128];
-        std::snprintf(buf, sizeof(buf), "min=%.4g  max=%.4g", minV, maxV);
-        dl.AddText(ImVec2(min.x+8.0f, min.y+26.0f), IM_COL32(200,215,240,230), buf);
-
+        const char* mode =
+            (vp.normalizationMode == NormalizationMode::PerFrameAuto)  ? "auto" :
+            (vp.normalizationMode == NormalizationMode::StickyPerField) ? "sticky" : "fixed";
+        
+        // Info area layout: mode text on first line
+        const float infoLeft = min.x + 8.0f;
+        const float infoY = min.y + 26.0f;
+        
         if (vp.showRangeDetails) {
-            const char* mode =
-                (vp.normalizationMode == NormalizationMode::PerFrameAuto)  ? "auto" :
-                (vp.normalizationMode == NormalizationMode::StickyPerField) ? "sticky" : "fixed";
-            dl.AddText(ImVec2(min.x+8.0f, min.y+44.0f), IM_COL32(165,185,225,200), mode);
+            dl.AddText(ImVec2(infoLeft, infoY), IM_COL32(165,185,225,200), mode);
         }
 
-        // Sparkline overlay (bottom-right corner of viewport)
+        // Horizontal colorbar below the info text
+        const float colorbarY = infoY + (vp.showRangeDetails ? 20.0f : 0.0f);
+        const float colorbarW = std::min(200.0f, pw * 0.35f);
+        const float colorbarH = 16.0f;
+        const ImVec2 colorbarPos(infoLeft, colorbarY);
+        
+        drawLegendBar(dl, colorbarPos, colorbarW, colorbarH, vp.displayType, vp.colorMapMode, minV, maxV, true);
+
+        // Min/max labels below colorbar, left and right aligned
+        char minBuf[24], maxBuf[24];
+        std::snprintf(minBuf, sizeof(minBuf), "%.3g", minV);
+        std::snprintf(maxBuf, sizeof(maxBuf), "%.3g", maxV);
+        const float labelY = colorbarY + colorbarH + 2.0f;
+        dl.AddText(ImVec2(colorbarPos.x, labelY), IM_COL32(150,170,210,210), minBuf);
+        dl.AddText(ImVec2(colorbarPos.x + colorbarW - 32.0f, labelY), IM_COL32(150,170,210,210), maxBuf);
+
+        // History sparkline below colorbar and labels
         const auto histIt = fieldHistory_.find(title);
         if (histIt != fieldHistory_.end() && histIt->second.size() >= 4) {
-            const float sW = std::min(120.0f, pw * 0.25f);
-            const float sH = 24.0f;
-            const ImVec2 sPos(m.viewportMax.x - sW - 6.0f, m.viewportMax.y - sH - 6.0f);
-            if (sPos.x > m.viewportMin.x + sW * 2 && sPos.y > m.viewportMin.y + sH * 2) {
-                dl.AddRectFilled(sPos, ImVec2(sPos.x+sW, sPos.y+sH),
-                    IM_COL32(12,14,24,180), 2.0f);
+            const float sW = std::min(200.0f, pw * 0.35f);
+            const float sH = 18.0f;
+            const ImVec2 sPos(infoLeft, labelY + 18.0f);
+            if (sPos.x + sW < m.viewportMax.x - 8.0f) {
+                dl.AddRectFilled(sPos, ImVec2(sPos.x+sW, sPos.y+sH), IM_COL32(12,14,24,185), 2.0f);
                 drawSparkline(&dl, sPos, sW, sH, histIt->second,
                     IM_COL32(100,200,255,220), IM_COL32(40,80,120,60));
+                dl.AddText(ImVec2(sPos.x + 4.0f, sPos.y + sH + 2.0f), IM_COL32(150,170,210,180), "history");
             }
         }
     }
+}
+
+[[nodiscard]] std::pair<int, int> findWindFieldIndices() const {
+    const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
+    int windUIdx = -1;
+    int windVIdx = -1;
+    for (int i = 0; i < static_cast<int>(fields.size()); ++i) {
+        const std::string& name = fields[static_cast<std::size_t>(i)].spec.name;
+        if (windUIdx < 0 && name.find("wind_u") != std::string::npos) windUIdx = i;
+        if (windVIdx < 0 && name.find("wind_v") != std::string::npos) windVIdx = i;
+    }
+    return {windUIdx, windVIdx};
 }
 
 // Vector overlay
@@ -656,6 +829,59 @@ void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
     dl.PopClipRect();
 }
 
+void drawWindFieldOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
+                          const GridSpec grid, const ViewportConfig& vp) const {
+    const auto [windUIdx, windVIdx] = findWindFieldIndices();
+    const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
+    if (windUIdx < 0 || windVIdx < 0 ||
+        windUIdx >= static_cast<int>(fields.size()) ||
+        windVIdx >= static_cast<int>(fields.size())) return;
+
+    const auto xVals = mergedFieldValues(fields[static_cast<std::size_t>(windUIdx)], viz_.showSparseOverlay);
+    const auto yVals = mergedFieldValues(fields[static_cast<std::size_t>(windVIdx)], viz_.showSparseOverlay);
+    const ViewMapping m = makeViewMapping(min, max, grid);
+    const int stride = std::max(std::max(1, vp.vectorStride), m.samplingStride);
+    constexpr float kWindComponentMax = 8.0f;
+
+    dl.PushClipRect(m.viewportMin, m.viewportMax, true);
+
+    for (std::uint32_t cy = 0; cy < grid.height; cy += stride) {
+        for (std::uint32_t cx = 0; cx < grid.width; cx += stride) {
+            const std::size_t idx = static_cast<std::size_t>(cy) * grid.width + cx;
+            if (idx >= xVals.size() || idx >= yVals.size()) continue;
+            if (!std::isfinite(xVals[idx]) || !std::isfinite(yVals[idx])) continue;
+
+            const float nx = std::clamp(xVals[idx] / kWindComponentMax, -1.0f, 1.0f);
+            const float ny = std::clamp(yVals[idx] / kWindComponentMax, -1.0f, 1.0f);
+            const float mag = std::sqrt(nx * nx + ny * ny);
+
+            const ImVec2 ctr(
+                m.contentMin.x + (static_cast<float>(cx) + 0.5f) * m.cellW,
+                m.contentMin.y + (static_cast<float>(cy) + 0.5f) * m.cellH);
+            const float len = std::min(m.cellW, m.cellH) * stride * vp.vectorScale;
+            const ImVec2 tip(ctr.x + nx * len, ctr.y + ny * len);
+
+            const int r = static_cast<int>(std::clamp(100.0f + 120.0f * mag, 100.0f, 240.0f));
+            const int g = static_cast<int>(std::clamp(210.0f - 100.0f * mag, 90.0f, 210.0f));
+            const ImU32 arrowColor = IM_COL32(r, g, 110, 220);
+            dl.AddLine(ctr, tip, arrowColor, 1.6f);
+
+            if (mag > 0.05f && len > 4.0f) {
+                const float ax = nx / std::max(0.001f, mag);
+                const float ay = ny / std::max(0.001f, mag);
+                const float headLen = std::min(len * 0.35f, 8.0f);
+                const ImVec2 h1(tip.x - ax * headLen + ay * headLen * 0.45f,
+                                tip.y - ay * headLen - ax * headLen * 0.45f);
+                const ImVec2 h2(tip.x - ax * headLen - ay * headLen * 0.45f,
+                                tip.y - ay * headLen + ax * headLen * 0.45f);
+                dl.AddTriangleFilled(tip, h1, h2, arrowColor);
+            }
+        }
+    }
+
+    dl.PopClipRect();
+}
+
 // Index clamping
 void clampVisualizationIndices() {
     if (viz_.fieldNames.empty()) return;
@@ -680,90 +906,203 @@ void refreshFieldNames() {
     }
 }
 
-//
+[[nodiscard]] float estimatedSimulationStepsPerSecond() const {
+    const float batchMs = simulationLastBatchDurationMs_.load();
+    const int batchSteps = simulationLastBatchSteps_.load();
+    if (batchMs <= 0.01f || batchSteps <= 0) return 0.0f;
+    return (static_cast<float>(batchSteps) * 1000.0f) / batchMs;
+}
+
+[[nodiscard]] float estimatedDisplayRefreshesPerSecond() const {
+    const float stepsPerSecond = estimatedSimulationStepsPerSecond();
+    if (stepsPerSecond <= 0.0f) return 0.0f;
+    return stepsPerSecond / static_cast<float>(std::max(1, viz_.displayRefreshEveryNSteps));
+}
+
+// Simulation worker
+void cancelPendingSimulationSteps() {
+    simulationAutoRunEnabled_.store(false);
+    simulationWakeCV_.notify_all();
+    simulationWorkerBusy_.store(false);
+}
+
+void startSimulationWorker() {
+    stopSimulationWorker();
+    simulationAutoRunEnabled_.store(false);
+    simulationWorkerBusy_.store(false);
+    simulationDisplayRefreshEveryNSteps_.store(std::max(1, viz_.displayRefreshEveryNSteps));
+    simulationUnlimitedSpeed_.store(viz_.unlimitedSimSpeed);
+    simulationLastBatchDurationMs_.store(0.0f);
+    simulationLastBatchSteps_.store(0);
+    simulationThreadRunning_.store(true);
+    simulationThread_ = std::thread([this] { simulationWorkerLoop(); });
+}
+
+void stopSimulationWorker() {
+    simulationAutoRunEnabled_.store(false);
+    simulationThreadRunning_.store(false);
+    simulationWakeCV_.notify_all();
+    if (simulationThread_.joinable()) simulationThread_.join();
+    simulationWorkerBusy_.store(false);
+}
+
+void simulationWorkerLoop() {
+    int adaptiveBatchSize = 1;
+    int stepsUntilDisplayRefresh = std::max(1, simulationDisplayRefreshEveryNSteps_.load());
+
+        while (true) {
+            {
+                std::unique_lock<std::mutex> lock(simulationWakeMutex_);
+                simulationWakeCV_.wait(lock, [this] {
+                    return !simulationThreadRunning_.load() || simulationAutoRunEnabled_.load();
+                });
+                if (!simulationThreadRunning_.load()) break;
+            }
+
+            adaptiveBatchSize = 1;
+            stepsUntilDisplayRefresh = std::max(1, simulationDisplayRefreshEveryNSteps_.load());
+
+            while (simulationThreadRunning_.load() && simulationAutoRunEnabled_.load()) {
+                    if (!runtime_.isRunning() || runtime_.isPaused()) {
+                        simulationAutoRunEnabled_.store(false);
+                        break;
+                    }
+
+                    const int refreshInterval = std::max(1, simulationDisplayRefreshEveryNSteps_.load());
+                    const int maxBatch = simulationUnlimitedSpeed_.load() ? 128 : 16;
+                    const int batchCap = std::max(1, std::min(refreshInterval, maxBatch));
+                    const int stepsToRun = std::clamp(adaptiveBatchSize, 1, batchCap);
+
+                    simulationWorkerBusy_.store(true);
+                    const auto t0 = std::chrono::steady_clock::now();
+                    std::string msg;
+                    const bool ok = runtime_.step(static_cast<std::uint32_t>(stepsToRun), msg);
+                    const float batchMs = static_cast<float>(
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - t0).count());
+                    simulationLastBatchDurationMs_.store(batchMs);
+                    simulationLastBatchSteps_.store(stepsToRun);
+
+                    if (!ok) {
+                        std::lock_guard<std::mutex> lock(asyncStateMutex_);
+                        asyncErrorMessage_ = msg;
+                        asyncErrorPending_ = true;
+                        simulationAutoRunEnabled_.store(false);
+                        simulationWorkerBusy_.store(false);
+                        break;
+                    }
+
+                    stepsUntilDisplayRefresh -= stepsToRun;
+                    if (stepsUntilDisplayRefresh <= 0) {
+                        requestSnapshotRefresh();
+                        stepsUntilDisplayRefresh = refreshInterval;
+                    }
+
+                    if (batchMs < 2.0f && adaptiveBatchSize < batchCap) {
+                        adaptiveBatchSize = std::min(batchCap, adaptiveBatchSize + 1);
+                    } else if (batchMs > 8.0f && adaptiveBatchSize > 1) {
+                        adaptiveBatchSize = std::max(1, adaptiveBatchSize - 1);
+                    } else {
+                        adaptiveBatchSize = std::clamp(adaptiveBatchSize, 1, batchCap);
+                    }
+
+                    simulationWorkerBusy_.store(false);
+
+                    if (!simulationUnlimitedSpeed_.load()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+            }
+
+            simulationWorkerBusy_.store(false);
+        }
+}
+
 // Snapshot worker
-//
 void requestSnapshotRefresh() {
     snapshotRequestPending_.store(true);
     viz_.snapshotDirty = true;
+    snapshotWakeCV_.notify_one();
 }
 
 void startSnapshotWorker() {
     stopSnapshotWorker();
-    snapshotRefreshHzAtomic_.store(std::max(1.0f, viz_.snapshotRefreshHz));
     snapshotWorkerRunning_.store(true);
     snapshotRequestPending_.store(true);
+    snapshotWakeCV_.notify_all();
     snapshotWorker_ = std::thread([this]{ snapshotWorkerLoop(); });
 }
 
 void stopSnapshotWorker() {
     snapshotWorkerRunning_.store(false);
+    snapshotWakeCV_.notify_all();
     if (snapshotWorker_.joinable()) snapshotWorker_.join();
 }
 
 void snapshotWorkerLoop() {
-    using Clk = std::chrono::steady_clock;
-    auto nextCapture = Clk::now();
-
     while (snapshotWorkerRunning_.load()) {
-        const float hz = std::max(1.0f, snapshotRefreshHzAtomic_.load());
-        const auto period = std::chrono::duration_cast<Clk::duration>(
-            std::chrono::duration<double>(1.0 / hz));
-
-        const bool continuous = snapshotContinuousMode_.load();
-        const auto now = Clk::now();
-        const bool forced = snapshotRequestPending_.exchange(false);
-
-        if (!forced && !continuous) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(8)); continue;
+        {
+            std::unique_lock<std::mutex> lk(snapshotWakeMutex_);
+            snapshotWakeCV_.wait(lk, [this] {
+                return !snapshotWorkerRunning_.load() || snapshotRequestPending_.load();
+            });
+            if (!snapshotWorkerRunning_.load()) {
+                break;
+            }
         }
-        if (!forced && now < nextCapture) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2)); continue;
+
+        if (!snapshotRequestPending_.exchange(false)) {
+            continue;
         }
 
         RuntimeCheckpoint cp;
         std::string msg;
-        const auto t0 = Clk::now();
-        const bool ok = runtime_.captureCheckpoint(cp, msg);
-        const float dur = static_cast<float>(
-            std::chrono::duration<double,std::milli>(Clk::now()-t0).count());
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool ok = runtime_.captureCheckpoint(cp, msg, false /* computeHash */);
+        const float durMs = static_cast<float>(
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count());
 
         if (ok) {
             const int front = snapshotFrontIndex_.load();
-            const int back  = 1 - front;
-            { std::lock_guard<std::mutex> lk(snapshotBufferMutex_);
-              snapshotBuffers_[back] = std::move(cp);
-              snapshotBufferValid_[back] = true; }
+            const int back = 1 - front;
+            {
+                std::lock_guard<std::mutex> lk(snapshotBufferMutex_);
+                snapshotBuffers_[back] = std::move(cp);
+                snapshotBufferValid_[back] = true;
+            }
             snapshotFrontIndex_.store(back);
             snapshotGeneration_.fetch_add(1);
-            snapshotDurationMsAtomic_.store(dur);
-            { std::lock_guard<std::mutex> lk(snapshotErrorMutex_); snapshotWorkerError_.clear(); }
-        } else if (!msg.empty()) {
+            snapshotDurationMsAtomic_.store(durMs);
+            std::lock_guard<std::mutex> lk(snapshotErrorMutex_);
+            snapshotWorkerError_.clear();
+        } else {
             std::lock_guard<std::mutex> lk(snapshotErrorMutex_);
             snapshotWorkerError_ = msg;
         }
-
-        nextCapture = Clk::now() + period;
     }
 }
 
 void consumeSnapshotFromWorker() {
-    snapshotRefreshHzAtomic_.store(std::max(1.0f, viz_.snapshotRefreshHz));
-
     const int gen = snapshotGeneration_.load();
     if (gen != consumedSnapshotGeneration_) {
         const int front = snapshotFrontIndex_.load();
         RuntimeCheckpoint cp;
         bool hasFrame = false;
-        { std::lock_guard<std::mutex> lk(snapshotBufferMutex_);
-          if (snapshotBufferValid_[front]) { cp = snapshotBuffers_[front]; hasFrame = true; } }
+        {
+            std::lock_guard<std::mutex> lk(snapshotBufferMutex_);
+            if (snapshotBufferValid_[front]) {
+                cp = snapshotBuffers_[front];
+                hasFrame = true;
+            }
+        }
+
         if (hasFrame) {
-            viz_.cachedCheckpoint     = std::move(cp);
-            viz_.hasCachedCheckpoint  = true;
-            viz_.snapshotDirty        = false;
-            viz_.lastSnapshotTimeSec  = glfwGetTime();
+            viz_.cachedCheckpoint = std::move(cp);
+            viz_.hasCachedCheckpoint = true;
+            viz_.snapshotDirty = false;
+            viz_.lastSnapshotTimeSec = glfwGetTime();
             viz_.lastSnapshotDurationMs = snapshotDurationMsAtomic_.load();
-            viz_.framesSinceSnapshot  = 0;
+            viz_.framesSinceSnapshot = 0;
         }
         consumedSnapshotGeneration_ = gen;
     } else {
@@ -771,16 +1110,23 @@ void consumeSnapshotFromWorker() {
     }
 
     std::string err;
-    { std::lock_guard<std::mutex> lk(snapshotErrorMutex_); err = snapshotWorkerError_; }
-    if (!err.empty())
+    {
+        std::lock_guard<std::mutex> lk(snapshotErrorMutex_);
+        err = snapshotWorkerError_;
+    }
+    if (!err.empty()) {
         std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", err.c_str());
-    else
+    } else {
         viz_.lastRuntimeError[0] = '\0';
+    }
 }
 
 // Auto-run tick
-void tickAutoRun(const float frameDt) {
-    if (appState_ != AppState::Simulation) return;
+void tickAutoRun() {
+    if (appState_ != AppState::Simulation) {
+        cancelPendingSimulationSteps();
+        return;
+    }
 
     { std::lock_guard<std::mutex> lk(asyncStateMutex_);
       if (asyncErrorPending_) {
@@ -791,37 +1137,18 @@ void tickAutoRun(const float frameDt) {
           asyncErrorPending_ = false;
       } }
 
-    snapshotContinuousMode_.store(viz_.autoRun && runtime_.isRunning());
+    simulationDisplayRefreshEveryNSteps_.store(std::max(1, viz_.displayRefreshEveryNSteps));
+    simulationUnlimitedSpeed_.store(viz_.unlimitedSimSpeed);
 
-    if (!viz_.autoRun || !runtime_.isRunning() || runtime_.isPaused()) return;
-
-    if (autoRunFuture_.valid() &&
-        autoRunFuture_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    if (!viz_.autoRun || !runtime_.isRunning() || runtime_.isPaused()) {
+        cancelPendingSimulationSteps();
+        return;
+    }
 
     if (uiParameterChangedThisFrame_) requestSnapshotRefresh();
-
-    const bool uiHot = glfwGetTime() < uiInteractionHotUntilSec_;
-    autoRunStepBudget_ += static_cast<double>(std::max(1, viz_.simulationTickHz)) * frameDt;
-    const double cap = std::max(16.0, static_cast<double>(std::max(1, viz_.simulationTickHz)) * 2.0);
-    autoRunStepBudget_ = std::min(autoRunStepBudget_, cap);
-    const int maxBatch = uiHot ? 2 : 8;
-    const int batch = std::min(maxBatch, static_cast<int>(std::floor(autoRunStepBudget_)));
-    if (batch <= 0) return;
-    autoRunStepBudget_ -= batch;
-
-    const int stepsPerTick  = std::clamp(viz_.autoStepsPerFrame, 1, 512);
-    const int maxDispatch   = uiHot ? 2048 : 16384;
-    const int stepsToRun    = std::min(maxDispatch, stepsPerTick * batch);
-
-    autoRunFuture_ = std::async(std::launch::async, [this, stepsToRun]() {
-        std::string msg;
-        if (!runtime_.step(static_cast<std::uint32_t>(stepsToRun), msg)) {
-            std::lock_guard<std::mutex> lk(asyncStateMutex_);
-            asyncErrorMessage_ = msg;
-            asyncErrorPending_ = true;
-        }
-        requestSnapshotRefresh();
-    });
+    if (!simulationAutoRunEnabled_.exchange(true)) {
+        simulationWakeCV_.notify_one();
+    }
 }
 
 #endif // WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT

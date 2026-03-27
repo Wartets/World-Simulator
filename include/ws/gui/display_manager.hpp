@@ -11,7 +11,9 @@ enum class DisplayType {
     ScalarField = 0,
     SurfaceCategory = 1,
     RelativeElevation = 2,
-    WaterDepth = 3
+    WaterDepth = 3,
+    MoistureMap = 4,
+    WindField = 5
 };
 
 struct DisplayManagerParams {
@@ -21,6 +23,8 @@ struct DisplayManagerParams {
     float lowlandThreshold = 0.58f;
     float highlandThreshold = 0.75f;
     float waterPresenceThreshold = 0.12f;
+    float shallowWaterDepth = 0.05f;
+    float highMoistureThreshold = 0.65f;
 };
 
 struct DisplayBuffer {

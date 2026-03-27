@@ -126,6 +126,15 @@
         if (PrimaryButton("Open world", ImVec2(btnW, 42.0f))) {
             openSelectedWorld();
         }
+        // Debug: log button state
+        static bool lastFrameHovered = false;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (!lastFrameHovered) {
+                lastFrameHovered = true;
+            }
+        } else {
+            lastFrameHovered = false;
+        }
         DelayedTooltip("Loads the selected world without restarting the application.");
         if (!canOpen) {
             ImGui::EndDisabled();
@@ -238,6 +247,8 @@
         ImGui::Spacing();
         drawGridSetupSection();
         ImGui::Spacing();
+        drawTierSelector();
+        ImGui::Spacing();
         drawWorldGenerationSection();
         ImGui::EndChild();
 
@@ -288,6 +299,8 @@
         previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.lowlandThreshold));
         previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.highlandThreshold));
         previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.waterPresenceThreshold));
+        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.shallowWaterDepth));
+        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.highMoistureThreshold));
         previewHash = hashCombine(previewHash, hashFloat(panel_.terrainBaseFrequency));
         previewHash = hashCombine(previewHash, hashFloat(panel_.terrainDetailFrequency));
         previewHash = hashCombine(previewHash, hashFloat(panel_.terrainWarpStrength));

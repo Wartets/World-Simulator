@@ -12,6 +12,7 @@ void handleKeyboardShortcuts() {
                 std::string msg;
                 if (runtime_.resume(msg)) { viz_.autoRun = true; appendLog(msg); triggerOverlay(OverlayIcon::Play); }
             } else {
+                cancelPendingSimulationSteps();
                 std::string msg;
                 if (runtime_.pause(msg)) { viz_.autoRun = false; appendLog(msg); triggerOverlay(OverlayIcon::Pause); }
             }
@@ -29,6 +30,7 @@ void handleKeyboardShortcuts() {
 
     // Right arrow -> single step (when paused)
     if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) && runtime_.isRunning() && runtime_.isPaused()) {
+        cancelPendingSimulationSteps();
         std::string msg;
         runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), msg);
         appendLog(msg);
@@ -97,6 +99,7 @@ void drawStatusHeader() {
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(30, 65, 115, 255));
         if (ImGui::Button(label, ImVec2(160.0f, 30.0f))) {
             viz_.autoRun = false;
+            cancelPendingSimulationSteps();
             if (hasWorld && running) {
                 std::string saveMsg;
                 bool saved = runtime_.saveActiveWorld(saveMsg);
@@ -140,6 +143,7 @@ void drawStatusHeader() {
                 std::string msg; runtime_.resume(msg); viz_.autoRun = true;
                 appendLog(msg); requestSnapshotRefresh(); triggerOverlay(OverlayIcon::Play);
             } else {
+                cancelPendingSimulationSteps();
                 std::string msg; runtime_.pause(msg); viz_.autoRun = false;
                 appendLog(msg); triggerOverlay(OverlayIcon::Pause);
             }
@@ -255,7 +259,7 @@ void drawTierSelector() {
 
     if (isRunning) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 0.3f, 1.0f));
-        ImGui::TextWrapped("Warning: tier changes apply on next Restart. You can restart via the Restart button below.");
+        ImGui::TextWrapped("Warning: tier changes take effect after you restart the simulation using the button below.");
         ImGui::PopStyleColor();
         ImGui::Spacing();
     }
@@ -313,17 +317,29 @@ void drawTierSelector() {
     }
 
     ImGui::Spacing();
-    if (PrimaryButton("Restart with these settings", ImVec2(-1.0f, 30.0f))) {
-        applyConfigFromPanel();
-        std::string msg;
-        if (runtime_.restart(msg)) {
-            appendLog(msg); viz_.autoRun = true;
-            refreshFieldNames(); requestSnapshotRefresh();
-            triggerOverlay(OverlayIcon::Play);
-        } else appendLog(msg);
+    if (isRunning) {
+        if (PrimaryButton("Restart with these settings", ImVec2(-1.0f, 30.0f))) {
+            applyConfigFromPanel();
+            std::string msg;
+            if (runtime_.restart(msg)) {
+                viz_.autoRun = false;
+                appendLog(msg);
+                requestSnapshotRefresh();
+                enterSimulationPaused();
+            } else {
+                appendLog(msg);
+            }
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Restarts the simulation with new tier/policy settings.\nThe simulation will be paused after restart.");
+    } else {
+        if (PrimaryButton("Apply these settings", ImVec2(-1.0f, 30.0f))) {
+            applyConfigFromPanel();
+            appendLog("Tier and temporal policy settings applied. Use 'Start Simulation' to begin.");
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Applies tier/policy settings without starting the simulation.\nUse 'Start Simulation' button to begin.");
     }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip("Stops the current run, applies tier/policy settings, and starts a fresh simulation.\nWorld profile is saved automatically before restart.");
 }
 
 void drawPlaybackSection() {
@@ -360,6 +376,7 @@ void drawPlaybackSection() {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(160, 125, 30, 240));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(100, 80, 15, 255));
             if (ImGui::Button("Pause [Space]", ImVec2(halfW, 34.0f))) {
+                cancelPendingSimulationSteps();
                 std::string msg; runtime_.pause(msg); viz_.autoRun = false;
                 appendLog(msg); triggerOverlay(OverlayIcon::Pause);
             }
@@ -374,6 +391,7 @@ void drawPlaybackSection() {
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(95, 30, 30, 255));
         if (ImGui::Button("Stop & Reset", ImVec2(-1.0f, 34.0f))) {
             viz_.autoRun = false;
+            cancelPendingSimulationSteps();
             std::string msg; runtime_.stop(msg); appendLog(msg);
             requestSnapshotRefresh(); triggerOverlay(OverlayIcon::Pause);
         }
@@ -388,12 +406,20 @@ void drawPlaybackSection() {
         // Auto-run speed controls (only shown when playing)
         if (!paused && viz_.autoRun) {
             ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Continuous auto-run");
-            sliderIntWithHint("Tick rate (Hz)", &viz_.simulationTickHz, 1, 960,
-                "Target number of simulation ticks per second.\nHigher values increase CPU usage.");
-            sliderIntWithHint("Steps per tick", &viz_.autoStepsPerFrame, 1, 4096,
-                "Steps executed every tick.\nMultiply by tick rate for effective steps/sec.");
-            ImGui::TextDisabled("Effective: ~%d steps/sec",
-                std::min(viz_.simulationTickHz * viz_.autoStepsPerFrame, 999999));
+            checkboxWithHint("Unlimited simulation speed", &viz_.unlimitedSimSpeed,
+                "Run the simulation thread at full speed.\n"
+                "Disable this to insert a small yield between batches and keep the UI more relaxed.");
+            sliderIntWithHint("Steps between display updates", &viz_.displayRefreshEveryNSteps, 1, 1000,
+                "Refresh the display after every N simulation steps.\n"
+                "1 = update every step. Higher values favor simulation throughput over visual refresh rate.");
+            const float estStepsPerSec = estimatedSimulationStepsPerSecond();
+            const float estRefreshesPerSec = estimatedDisplayRefreshesPerSecond();
+            if (estStepsPerSec > 0.0f) {
+                ImGui::TextDisabled("Estimated: ~%.0f sim steps/sec, ~%.1f display updates/sec",
+                    estStepsPerSec, estRefreshesPerSec);
+            } else {
+                ImGui::TextDisabled("Estimated: waiting for a completed auto-run batch...");
+            }
         } else {
             ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Manual / Paused");
             ImGui::TextDisabled("Use Step Controls below, or press Space to resume.");
@@ -411,6 +437,7 @@ void drawStepControlsSection() {
         "Number of steps to advance per manual step press.\nShortcut: right arrow when paused.");
 
     if (PrimaryButton("Step Forward", ImVec2(-1.0f, 28.0f))) {
+        cancelPendingSimulationSteps();
         std::string msg;
         runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), msg);
         appendLog(msg); requestSnapshotRefresh();
@@ -437,6 +464,7 @@ void drawStepControlsSection() {
                 ImGui::TextColored(ImVec4(1.0f,0.5f,0.5f,1.0f), "Target is behind current step.");
         }
         if (PrimaryButton("Fast-Forward", ImVec2(-1.0f, 28.0f))) {
+            cancelPendingSimulationSteps();
             std::string msg;
             runtime_.runUntil(panel_.runUntilTarget, msg);
             appendLog(msg); requestSnapshotRefresh();
@@ -463,6 +491,7 @@ void drawCheckpointSection() {
         ImGui::SetTooltip("Save the current state under this label (in-memory only).");
     ImGui::SameLine(0,4);
     if (PrimaryButton("Restore##cp", ImVec2(btnW, 26.0f))) {
+        cancelPendingSimulationSteps();
         std::string msg;
         runtime_.restoreCheckpoint(panel_.checkpointLabel, msg);
         appendLog(msg); requestSnapshotRefresh();
@@ -550,7 +579,7 @@ void drawLayoutSection() {
     ImGui::Spacing();
     ImGui::TextDisabled("World generation preview style:");
     static constexpr const char* dispTypeNames[] = {
-        "Scalar Field", "Surface Category", "Relative Elevation", "Surface Water"};
+        "Scalar Field", "Surface Category", "Relative Elevation", "Surface Water", "Moisture Map"};
     int previewMode = static_cast<int>(viz_.generationPreviewDisplayType);
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::Combo("##prevtype", &previewMode, dispTypeNames,
@@ -585,10 +614,16 @@ void drawLayoutSection() {
     sliderFloatWithHint("Highland breakpoint", &viz_.displayManager.highlandThreshold,
         0.0f, 1.0f, "%.3f",
         "Elevation above which land is classified as 'highland/mountain'.");
-    sliderFloatWithHint("Water presence threshold",
+    sliderFloatWithHint("Shallow water depth", &viz_.displayManager.shallowWaterDepth,
+        0.0f, 0.20f, "%.3f",
+        "Depth threshold used to split shallow coastal water from deeper ocean water.");
+    sliderFloatWithHint("Surface wetness threshold",
         &viz_.displayManager.waterPresenceThreshold, 0.0f, 0.5f, "%.3f",
-        "Minimum surface_water_w value before a cell is considered 'wet'.\n"
-        "Lower = more cells shown as water.");
+        "Normalized surface-water threshold before above-water land is treated as wet shoreline.\n"
+        "Lower = more cells rendered as wet coastal terrain.");
+    sliderFloatWithHint("High humidity threshold", &viz_.displayManager.highMoistureThreshold,
+        0.0f, 1.0f, "%.3f",
+        "Humidity above which land is highlighted as wet in Surface Category mode.");
 }
 
 void drawViewportSettingsSection() {
@@ -621,7 +656,7 @@ void drawViewportSettingsSection() {
 
 void drawSingleViewportEditor(ViewportConfig& vp) {
     static constexpr const char* dispTypeNames[] = {
-        "Scalar Field", "Surface Category", "Relative Elevation", "Surface Water"};
+        "Scalar Field", "Surface Category", "Relative Elevation", "Surface Water", "Moisture Map", "Wind Field"};
     static constexpr const char* colorMapNames[] = {
         "Turbo", "Grayscale", "Diverging", "Water"};
     static constexpr const char* normNames[] = {
@@ -651,43 +686,54 @@ void drawSingleViewportEditor(ViewportConfig& vp) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip(
             "Scalar Field - raw normalized values.\n"
-            "Surface Category - water / beach / inland / highland / mountain.\n"
+            "Surface Category - deep/shallow water, wet shoreline, and landform bands.\n"
             "Relative Elevation - depth-banded elevation relative to water level.\n"
-            "Surface Water - water depth visualization.");
+            "Surface Water - water depth visualization.\n"
+            "Moisture Map - blended humidity and surface wetness.\n"
+            "Wind Field - automatic wind_u/wind_v background and arrows.");
 
     // Color map
-    int cm = static_cast<int>(vp.colorMapMode);
-    ImGui::SetNextItemWidth(-80.0f);
-    if (ImGui::Combo("Palette##cm", &cm, colorMapNames,
-            static_cast<int>(std::size(colorMapNames))))
-        vp.colorMapMode = static_cast<ColorMapMode>(cm);
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip(
-            "Turbo - rainbow heatmap, good for scalar fields.\n"
-            "Grayscale - luminance-only, perception-accurate.\n"
-            "Diverging - red-grey-blue for centered data.\n"
-            "Water - blue depth gradient, good for hydrology.");
+    const bool windFieldMode = (vp.displayType == DisplayType::WindField);
+    if (!windFieldMode) {
+        int cm = static_cast<int>(vp.colorMapMode);
+        ImGui::SetNextItemWidth(-80.0f);
+        if (ImGui::Combo("Palette##cm", &cm, colorMapNames,
+                static_cast<int>(std::size(colorMapNames))))
+            vp.colorMapMode = static_cast<ColorMapMode>(cm);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip(
+                "Turbo - rainbow heatmap, good for scalar fields.\n"
+                "Grayscale - luminance-only, perception-accurate.\n"
+                "Diverging - red-grey-blue for centered data.\n"
+                "Water - blue depth gradient, good for hydrology.");
+    } else {
+        ImGui::TextDisabled("Wind Field uses a dedicated calm-to-storm palette.");
+    }
 
     // Normalization
-    int nm = static_cast<int>(vp.normalizationMode);
-    ImGui::SetNextItemWidth(-80.0f);
-    if (ImGui::Combo("Range##nm", &nm, normNames,
-            static_cast<int>(std::size(normNames))))
-        vp.normalizationMode = static_cast<NormalizationMode>(nm);
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip(
-            "Per-frame auto - recomputes min/max every frame.\n"
-            "Sticky per-field - range only expands, never contracts (smoother).\n"
-            "Fixed manual - you specify exact min/max below.");
-    if (vp.normalizationMode == NormalizationMode::StickyPerField) {
-        if (SecondaryButton("Reset sticky##rst", ImVec2(130.0f, 22.0f)))
-            vp.stickyRanges.clear();
-        ImGui::SameLine();
-        checkboxWithHint("Show range HUD", &vp.showRangeDetails,
-            "Show current min/max/normalization mode on the viewport.");
-    } else if (vp.normalizationMode == NormalizationMode::FixedManual) {
-        NumericSliderPair("Min##fr", &vp.fixedRangeMin, -500.0f, 500.0f, "%.3f", 70.0f);
-        NumericSliderPair("Max##fr", &vp.fixedRangeMax, -500.0f, 500.0f, "%.3f", 70.0f);
+    if (!windFieldMode) {
+        int nm = static_cast<int>(vp.normalizationMode);
+        ImGui::SetNextItemWidth(-80.0f);
+        if (ImGui::Combo("Range##nm", &nm, normNames,
+                static_cast<int>(std::size(normNames))))
+            vp.normalizationMode = static_cast<NormalizationMode>(nm);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip(
+                "Per-frame auto - recomputes min/max every frame.\n"
+                "Sticky per-field - range only expands, never contracts (smoother).\n"
+                "Fixed manual - you specify exact min/max below.");
+        if (vp.normalizationMode == NormalizationMode::StickyPerField) {
+            if (SecondaryButton("Reset sticky##rst", ImVec2(130.0f, 22.0f)))
+                vp.stickyRanges.clear();
+            ImGui::SameLine();
+            checkboxWithHint("Show range HUD", &vp.showRangeDetails,
+                "Show current min/max/normalization mode on the viewport.");
+        } else if (vp.normalizationMode == NormalizationMode::FixedManual) {
+            NumericSliderPair("Min##fr", &vp.fixedRangeMin, -500.0f, 500.0f, "%.3f", 70.0f);
+            NumericSliderPair("Max##fr", &vp.fixedRangeMax, -500.0f, 500.0f, "%.3f", 70.0f);
+        }
+    } else {
+        ImGui::TextDisabled("Wind Field normalizes from the fixed wind vector range.");
     }
 
     checkboxWithHint("Show legend", &vp.showLegend,
@@ -695,34 +741,47 @@ void drawSingleViewportEditor(ViewportConfig& vp) {
 
     // Vector overlay
     ImGui::Separator();
-    checkboxWithHint("Vector field overlay", &vp.showVectorField,
-        "Draw arrows from two scalar fields to indicate direction/magnitude.\n"
-        "Useful for wind_u, gradients, etc.");
-    if (vp.showVectorField) {
+    if (windFieldMode) {
         ImGui::Indent();
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::BeginCombo("X-axis field##vx",
-                viz_.fieldNames.at(
-                    static_cast<std::size_t>(vp.vectorXFieldIndex)).c_str())) {
-            for (int i = 0; i < (int)viz_.fieldNames.size(); ++i)
-                if (ImGui::Selectable(viz_.fieldNames[i].c_str(), vp.vectorXFieldIndex==i))
-                    vp.vectorXFieldIndex = i;
-            ImGui::EndCombo();
-        }
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::BeginCombo("Y-axis field##vy",
-                viz_.fieldNames.at(
-                    static_cast<std::size_t>(vp.vectorYFieldIndex)).c_str())) {
-            for (int i = 0; i < (int)viz_.fieldNames.size(); ++i)
-                if (ImGui::Selectable(viz_.fieldNames[i].c_str(), vp.vectorYFieldIndex==i))
-                    vp.vectorYFieldIndex = i;
-            ImGui::EndCombo();
-        }
-        NumericSliderPairInt("Arrow stride##vs", &vp.vectorStride, 1, 64, "%d", 55.0f);
+        checkboxWithHint("Show magnitude background", &vp.showWindMagnitudeBackground,
+            "Render wind speed magnitude behind the arrows.\n"
+            "Disable for a cleaner vector-only view.");
+        NumericSliderPairInt("Arrow density##wind", &vp.vectorStride, 1, 64, "%d", 55.0f);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             ImGui::SetTooltip("Sample one arrow every N cells. Higher = fewer, larger arrows.");
-        NumericSliderPair("Arrow scale##vsc", &vp.vectorScale, 0.02f, 3.0f, "%.2f", 70.0f);
+        NumericSliderPair("Arrow scale##wind", &vp.vectorScale, 0.02f, 3.0f, "%.2f", 70.0f);
+        ImGui::TextDisabled("Uses wind_u for east/west and wind_v for north/south automatically.");
         ImGui::Unindent();
+    } else {
+        checkboxWithHint("Vector field overlay", &vp.showVectorField,
+            "Draw arrows from two scalar fields to indicate direction/magnitude.\n"
+            "Useful for wind_u, gradients, etc.");
+        if (vp.showVectorField) {
+            ImGui::Indent();
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo("X-axis field##vx",
+                    viz_.fieldNames.at(
+                        static_cast<std::size_t>(vp.vectorXFieldIndex)).c_str())) {
+                for (int i = 0; i < (int)viz_.fieldNames.size(); ++i)
+                    if (ImGui::Selectable(viz_.fieldNames[i].c_str(), vp.vectorXFieldIndex==i))
+                        vp.vectorXFieldIndex = i;
+                ImGui::EndCombo();
+            }
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::BeginCombo("Y-axis field##vy",
+                    viz_.fieldNames.at(
+                        static_cast<std::size_t>(vp.vectorYFieldIndex)).c_str())) {
+                for (int i = 0; i < (int)viz_.fieldNames.size(); ++i)
+                    if (ImGui::Selectable(viz_.fieldNames[i].c_str(), vp.vectorYFieldIndex==i))
+                        vp.vectorYFieldIndex = i;
+                ImGui::EndCombo();
+            }
+            NumericSliderPairInt("Arrow stride##vs", &vp.vectorStride, 1, 64, "%d", 55.0f);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Sample one arrow every N cells. Higher = fewer, larger arrows.");
+            NumericSliderPair("Arrow scale##vsc", &vp.vectorScale, 0.02f, 3.0f, "%.2f", 70.0f);
+            ImGui::Unindent();
+        }
     }
 }
 
@@ -898,14 +957,24 @@ void drawMetricsSection() {
     ImGui::Text("%.1f", ImGui::GetIO().Framerate); ImGui::NextColumn();
     ImGui::TextDisabled("Snapshot time:"); ImGui::NextColumn();
     ImGui::Text("%.2f ms", viz_.lastSnapshotDurationMs); ImGui::NextColumn();
-    ImGui::TextDisabled("Refresh Hz:"); ImGui::NextColumn();
-    ImGui::Text("%.0f", viz_.snapshotRefreshHz); ImGui::NextColumn();
+    ImGui::TextDisabled("Batch step time:"); ImGui::NextColumn();
+    ImGui::Text("%.2f ms", simulationLastBatchDurationMs_.load()); ImGui::NextColumn();
+    ImGui::TextDisabled("Display interval:"); ImGui::NextColumn();
+    ImGui::Text("Every %d step(s)", std::max(1, viz_.displayRefreshEveryNSteps)); ImGui::NextColumn();
     ImGui::Columns(1);
 
     ImGui::Spacing();
-    sliderFloatWithHint("Snapshot refresh (Hz)", &viz_.snapshotRefreshHz, 1.0f, 240.0f, "%.0f",
-        "How often the GUI reads a new snapshot from the simulation.\n"
-        "Higher = more responsive display, slightly more CPU overhead.");
+    checkboxWithHint("Unlimited simulation speed##metrics", &viz_.unlimitedSimSpeed,
+        "Run the simulation thread unthrottled.\n"
+        "Disable to yield between batches and reduce CPU pressure.");
+    sliderIntWithHint("Steps between display updates##metrics", &viz_.displayRefreshEveryNSteps, 1, 1000,
+        "Refresh the display after every N simulation steps.");
+    const float estStepsPerSec = estimatedSimulationStepsPerSecond();
+    const float estRefreshesPerSec = estimatedDisplayRefreshesPerSecond();
+    if (estStepsPerSec > 0.0f) {
+        ImGui::TextDisabled("Estimated throughput: %.0f steps/sec, %.1f display updates/sec",
+            estStepsPerSec, estRefreshesPerSec);
+    }
     checkboxWithHint("Adaptive render sampling", &viz_.adaptiveSampling,
         "Automatically skip cells when zoomed out to keep rendering fast.");
     if (!viz_.adaptiveSampling) {
@@ -1300,6 +1369,7 @@ void triggerOverlay(const OverlayIcon icon) {
 
 void enterSimulationPaused() {
     viz_.autoRun = false;
+    cancelPendingSimulationSteps();
     if (runtime_.isRunning() && !runtime_.isPaused()) {
         std::string msg;
         runtime_.pause(msg);
@@ -1326,9 +1396,12 @@ void appendLog(const std::string& line) {
 }
 
 void openSelectedWorld() {
+    appendLog("open_world_button_clicked");
     if (sessionUi_.selectedWorldIndex < 0 ||
-        sessionUi_.selectedWorldIndex >= static_cast<int>(sessionUi_.worlds.size()))
+        sessionUi_.selectedWorldIndex >= static_cast<int>(sessionUi_.worlds.size())) {
+        appendLog("open_world_error selected_index_invalid");
         return;
+    }
     const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
     std::string msg;
     if (runtime_.openWorld(world.worldName, msg)) {
@@ -1348,6 +1421,8 @@ void resetDisplayConfigToDefaults() {
     viz_.layout                      = defaults.layout;
     viz_.viewports                   = defaults.viewports;
     viz_.activeViewportEditor        = defaults.activeViewportEditor;
+    viz_.displayRefreshEveryNSteps   = defaults.displayRefreshEveryNSteps;
+    viz_.unlimitedSimSpeed           = defaults.unlimitedSimSpeed;
     viz_.displayManager              = defaults.displayManager;
     viz_.generationPreviewDisplayType = defaults.generationPreviewDisplayType;
 }
@@ -1369,6 +1444,10 @@ void saveDisplayPrefs() {
     out << "displayLowlandThreshold="   << viz_.displayManager.lowlandThreshold                  << "\n";
     out << "displayHighlandThreshold="  << viz_.displayManager.highlandThreshold                 << "\n";
     out << "displayWaterPresenceThreshold=" << viz_.displayManager.waterPresenceThreshold        << "\n";
+    out << "displayShallowWaterDepth="  << viz_.displayManager.shallowWaterDepth                 << "\n";
+    out << "displayHighMoistureThreshold=" << viz_.displayManager.highMoistureThreshold          << "\n";
+    out << "displayRefreshEveryNSteps=" << viz_.displayRefreshEveryNSteps                       << "\n";
+    out << "unlimitedSimSpeed="         << static_cast<int>(viz_.unlimitedSimSpeed)             << "\n";
 
     for (int i = 0; i < 4; ++i) {
         const auto& vp = viz_.viewports[i];
@@ -1376,6 +1455,7 @@ void saveDisplayPrefs() {
         out << "vp" << i << "_displayType="        << static_cast<int>(vp.displayType)  << "\n";
         out << "vp" << i << "_normalizationMode="  << static_cast<int>(vp.normalizationMode) << "\n";
         out << "vp" << i << "_colorMapMode="       << static_cast<int>(vp.colorMapMode)  << "\n";
+        out << "vp" << i << "_showWindMagnitudeBackground=" << vp.showWindMagnitudeBackground << "\n";
         out << "vp" << i << "_showVectorField="    << vp.showVectorField                << "\n";
         out << "vp" << i << "_vectorXFieldIndex="  << vp.vectorXFieldIndex              << "\n";
         out << "vp" << i << "_vectorYFieldIndex="  << vp.vectorYFieldIndex              << "\n";
@@ -1405,6 +1485,10 @@ void loadDisplayPrefs() {
             else if (key == "displayLowlandThreshold") viz_.displayManager.lowlandThreshold = std::stof(val);
             else if (key == "displayHighlandThreshold")viz_.displayManager.highlandThreshold = std::stof(val);
             else if (key == "displayWaterPresenceThreshold") viz_.displayManager.waterPresenceThreshold = std::stof(val);
+            else if (key == "displayShallowWaterDepth") viz_.displayManager.shallowWaterDepth = std::stof(val);
+            else if (key == "displayHighMoistureThreshold") viz_.displayManager.highMoistureThreshold = std::stof(val);
+            else if (key == "displayRefreshEveryNSteps") viz_.displayRefreshEveryNSteps = std::stoi(val);
+            else if (key == "unlimitedSimSpeed")       viz_.unlimitedSimSpeed = (std::stoi(val) != 0);
             else if (key.size() > 3 && key[0]=='v' && key[1]=='p' && key[3]=='_') {
                 int vi = key[2] - '0';
                 if (vi < 0 || vi > 3) continue;
@@ -1414,6 +1498,7 @@ void loadDisplayPrefs() {
                 else if (sub == "displayType")        vp.displayType        = static_cast<DisplayType>(std::stoi(val));
                 else if (sub == "normalizationMode")  vp.normalizationMode  = static_cast<NormalizationMode>(std::stoi(val));
                 else if (sub == "colorMapMode")       vp.colorMapMode       = static_cast<ColorMapMode>(std::stoi(val));
+                else if (sub == "showWindMagnitudeBackground") vp.showWindMagnitudeBackground = (std::stoi(val) != 0);
                 else if (sub == "showVectorField")    vp.showVectorField    = (std::stoi(val) != 0);
                 else if (sub == "vectorXFieldIndex")  vp.vectorXFieldIndex  = std::stoi(val);
                 else if (sub == "vectorYFieldIndex")  vp.vectorYFieldIndex  = std::stoi(val);
@@ -1432,6 +1517,11 @@ void loadDisplayPrefs() {
         viz_.displayManager.lowlandThreshold + 0.01f, 1.0f);
     viz_.displayManager.waterPresenceThreshold = std::clamp(
         viz_.displayManager.waterPresenceThreshold, 0.0f, 1.0f);
+    viz_.displayManager.shallowWaterDepth = std::clamp(
+        viz_.displayManager.shallowWaterDepth, 0.0f, 0.5f);
+    viz_.displayManager.highMoistureThreshold = std::clamp(
+        viz_.displayManager.highMoistureThreshold, 0.0f, 1.0f);
+    viz_.displayRefreshEveryNSteps = std::clamp(viz_.displayRefreshEveryNSteps, 1, 1000);
 }
 
 #endif // WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT

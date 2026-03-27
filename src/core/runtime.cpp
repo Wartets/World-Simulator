@@ -270,6 +270,7 @@ void Runtime::start() {
                 "temperature_T",
                 "humidity_q",
                 "wind_u",
+                "wind_v",
                 "climate_index_c",
                 "fertility_phi",
                 "vegetation_v",
@@ -429,6 +430,11 @@ void Runtime::start() {
                             0.30f * std::abs(temperature - 0.5f),
                         0.0f,
                         1.0f);
+                    const float windV = std::clamp(
+                        (fbm2D(noiseSeedD, noiseX * 4.0f + 19.0f, noiseY * 4.0f + 13.0f, 3, 2.0f, 0.6f) - 0.5f) * 2.0f +
+                            0.25f * (humidity - 0.5f),
+                        -1.0f,
+                        1.0f);
 
                     const float climate = std::clamp(0.45f * temperature + 0.55f * humidity, 0.0f, 1.0f);
                     const float fertility = std::clamp(0.25f + 0.55f * humidity + 0.20f * (1.0f - std::abs(elevation - seaLevel)), 0.0f, 1.0f);
@@ -441,6 +447,7 @@ void Runtime::start() {
                     seedWriter.setScalar("temperature_T", Cell{x, y}, temperature);
                     seedWriter.setScalar("humidity_q", Cell{x, y}, humidity);
                     seedWriter.setScalar("wind_u", Cell{x, y}, wind);
+                    seedWriter.setScalar("wind_v", Cell{x, y}, windV);
                     seedWriter.setScalar("climate_index_c", Cell{x, y}, climate);
                     seedWriter.setScalar("fertility_phi", Cell{x, y}, fertility);
                     seedWriter.setScalar("vegetation_v", Cell{x, y}, vegetation);
@@ -753,7 +760,8 @@ void Runtime::allocateCanonicalFields() {
         {10, "event_water_delta"},
         {11, "event_temperature_delta"},
         {12, "bootstrap_marker"},
-        {13, "seed_probe"}
+        {13, "seed_probe"},
+        {14, "wind_v"}
     };
 
     for (const auto& spec : specs) {

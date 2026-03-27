@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -38,7 +39,6 @@
 #include <thread>
 #include <vector>
 #include <filesystem>
-#include <future>
 #include <fstream>
 #include <random>
 
@@ -88,6 +88,7 @@ struct ViewportConfig {
 
     bool showLegend      = true;
     bool showRangeDetails = true;
+    bool showWindMagnitudeBackground = true;
 
     bool  showVectorField  = false;
     int   vectorXFieldIndex = 0;
@@ -111,9 +112,8 @@ struct VisualizationState {
     bool  showCellGrid      = false;
     bool  showSparseOverlay = true;
     bool  autoRun           = true;
-    int   autoStepsPerFrame  = 1;
-    int   simulationTickHz   = 120;
-    float snapshotRefreshHz  = 120.0f;
+    int   displayRefreshEveryNSteps = 1;
+    bool  unlimitedSimSpeed = true;
     bool  adaptiveSampling   = true;
     int   manualSamplingStride = 1;
     int   maxRenderedCells    = 220000;
@@ -214,16 +214,11 @@ public:
         refreshFieldNames();
         requestSnapshotRefresh();
         startSnapshotWorker();
-
-        double prevTime = glfwGetTime();
+        startSimulationWorker();
 
         while (!glfwWindowShouldClose(window)) {
-            const double now = glfwGetTime();
-            const float  dt  = static_cast<float>(now - prevTime);
-            prevTime = now;
-
             glfwPollEvents();
-            tickAutoRun(dt);
+            tickAutoRun();
             consumeSnapshotFromWorker();
 
             ImGui_ImplOpenGL3_NewFrame();
@@ -254,6 +249,7 @@ public:
             glfwSwapBuffers(window);
         }
 
+        stopSimulationWorker();
         stopSnapshotWorker();
         destroyRasterResources();
         ImGui_ImplOpenGL3_Shutdown();
@@ -280,8 +276,17 @@ private:
         std::string primaryName;
     };
 
-    // async auto-run
-    std::future<void> autoRunFuture_;
+    // persistent auto-run worker
+    std::thread simulationThread_;
+    std::mutex simulationWakeMutex_;
+    std::condition_variable simulationWakeCV_;
+    std::atomic<bool> simulationThreadRunning_{false};
+    std::atomic<bool> simulationAutoRunEnabled_{false};
+    std::atomic<bool> simulationWorkerBusy_{false};
+    std::atomic<int>  simulationDisplayRefreshEveryNSteps_{1};
+    std::atomic<bool> simulationUnlimitedSpeed_{true};
+    std::atomic<float> simulationLastBatchDurationMs_{0.0f};
+    std::atomic<int>   simulationLastBatchSteps_{0};
     std::mutex asyncStateMutex_;
     std::string asyncErrorMessage_;
     bool asyncErrorPending_ = false;
@@ -305,10 +310,10 @@ private:
 
     // snapshot double-buffer
     std::thread       snapshotWorker_;
+    std::mutex        snapshotWakeMutex_;
+    std::condition_variable snapshotWakeCV_;
     std::atomic<bool> snapshotWorkerRunning_{false};
     std::atomic<bool> snapshotRequestPending_{true};
-    std::atomic<bool> snapshotContinuousMode_{false};
-    std::atomic<float> snapshotRefreshHzAtomic_{120.0f};
     std::atomic<float> snapshotDurationMsAtomic_{0.0f};
     std::atomic<int>   snapshotFrontIndex_{0};
     std::atomic<int>   snapshotGeneration_{0};
@@ -339,7 +344,6 @@ private:
     bool   uiParameterChangedThisFrame_    = false;
     bool   uiParameterInteractingThisFrame_ = false;
     double uiInteractionHotUntilSec_       = 0.0;
-    double autoRunStepBudget_              = 0.0;
 
     RuntimeService runtime_;
 };
