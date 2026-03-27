@@ -57,7 +57,7 @@ public:
     bool metrics(std::string& message) const;
     bool listFields(std::string& message) const;
     bool summarizeField(const std::string& variableName, std::string& message) const;
-    bool captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message) const;
+    bool captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message, bool computeHash = true) const;
     bool fieldNames(std::vector<std::string>& names, std::string& message) const;
 
     bool createCheckpoint(const std::string& label, std::string& message);

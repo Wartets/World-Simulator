@@ -336,7 +336,8 @@ void StateStore::invalidateScalarInternal(const std::string& variableName, const
 StateStoreSnapshot StateStore::createSnapshot(
     const std::uint64_t runIdentityHash,
     const std::uint64_t profileFingerprint,
-    std::string checkpointLabel) const {
+    std::string checkpointLabel,
+    bool computeHash) const {
     if (checkpointLabel.empty()) {
         checkpointLabel = "state_checkpoint";
     }
@@ -377,7 +378,11 @@ StateStoreSnapshot StateStore::createSnapshot(
     }
 
     snapshot.payloadBytes = payloadBytes;
-    snapshot.stateHash = stateHash();
+    if (computeHash) {
+        snapshot.stateHash = stateHash();
+    } else {
+        snapshot.stateHash = 0; // Explicitly zero when not computed
+    }
     return snapshot;
 }
 
@@ -481,4 +486,18 @@ const std::vector<float>& StateStore::scalarFieldFast(FieldHandle handle) const 
     return scalarFields_[handle].values;
 }
 
+const float* StateStore::scalarFieldRawPtr(FieldHandle handle) const noexcept {
+    if (handle == InvalidHandle || handle >= scalarFields_.size()) return nullptr;
+    return scalarFields_[handle].values.data();
+}
+
+float* StateStore::scalarFieldRawPtrMut(FieldHandle handle) const noexcept {
+    if (handle == InvalidHandle || handle >= scalarFields_.size()) return nullptr;
+    return const_cast<float*>(scalarFields_[handle].values.data());
+}
+
+const std::uint8_t* StateStore::validityMaskRawPtr(FieldHandle handle) const noexcept {
+    if (handle == InvalidHandle || handle >= scalarFields_.size()) return nullptr;
+    return scalarFields_[handle].validityMask.data();
+}
 } // namespace ws

@@ -98,6 +98,13 @@ public:
     [[nodiscard]] std::vector<FieldStorageMetadata> fieldMetadata() const;
     [[nodiscard]] std::uint64_t stateHash() const noexcept;
 
+    // Fast raw-buffer accessors for performance-critical inner loops.
+    // Returns a pointer to the flat float array for the given handle.
+    // The pointer is valid as long as no allocateScalarField() calls are made.
+    [[nodiscard]] const float* scalarFieldRawPtr(FieldHandle handle) const noexcept;
+    [[nodiscard]] float* scalarFieldRawPtrMut(FieldHandle handle) const noexcept;
+    [[nodiscard]] const std::uint8_t* validityMaskRawPtr(FieldHandle handle) const noexcept;
+
     void setAccessObserver(AccessObserver observer);
     void clearAccessObserver();
 
@@ -113,10 +120,14 @@ public:
     [[nodiscard]] const StateHeader& header() const noexcept { return header_; }
     void setHeader(const StateHeader& header) noexcept { header_ = header; }
 
+    // computeHash=false skips the O(fields*cells) state hash — use for display
+    // snapshots. Set computeHash=true only when saving to disk or running
+    // determinism checks.
     [[nodiscard]] StateStoreSnapshot createSnapshot(
         std::uint64_t runIdentityHash,
         std::uint64_t profileFingerprint,
-        std::string checkpointLabel) const;
+        std::string checkpointLabel,
+        bool computeHash = true) const;
     void loadSnapshot(const StateStoreSnapshot& snapshot, std::uint64_t expectedRunIdentityHash, std::uint64_t expectedProfileFingerprint);
 
     [[nodiscard]] FieldHandle getFieldHandle(const std::string& name) const noexcept;

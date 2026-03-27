@@ -293,7 +293,7 @@ bool RuntimeService::saveActiveWorld(std::string& message) {
 
     try {
         worldProfileStore_.save(activeWorldName_, config_);
-        const auto checkpoint = runtime_->createCheckpoint(activeWorldName_);
+        const auto checkpoint = runtime_->createCheckpoint(activeWorldName_, true /* computeHash */);
         const auto checkpointPath = checkpointPathForWorld(activeWorldName_);
         app::writeCheckpointFile(checkpoint, checkpointPath);
         std::ostringstream output;
@@ -501,7 +501,7 @@ bool RuntimeService::listFields(std::string& message) const {
             return false;
         }
 
-        const auto checkpoint = runtime_->createCheckpoint("fields_probe");
+        const auto checkpoint = runtime_->createCheckpoint("fields_probe", false /* computeHash */);
         std::ostringstream output;
         output << "fields count=" << checkpoint.stateSnapshot.fields.size();
         for (const auto& field : checkpoint.stateSnapshot.fields) {
@@ -526,7 +526,7 @@ bool RuntimeService::summarizeField(const std::string& variableName, std::string
             return false;
         }
 
-        const auto checkpoint = runtime_->createCheckpoint("summary_probe");
+        const auto checkpoint = runtime_->createCheckpoint("summary_probe", false /* computeHash */);
         const auto& fields = checkpoint.stateSnapshot.fields;
         const auto it = std::find_if(fields.begin(), fields.end(), [&](const auto& field) {
             return field.spec.name == variableName;
@@ -553,14 +553,14 @@ bool RuntimeService::summarizeField(const std::string& variableName, std::string
     }
 }
 
-bool RuntimeService::captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message) const {
+bool RuntimeService::captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message, const bool computeHash) const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
         if (!requireRuntime("visualization", message)) {
             return false;
         }
 
-        checkpoint = runtime_->createCheckpoint("visualization_probe");
+        checkpoint = runtime_->createCheckpoint("visualization_probe", computeHash);
         message = "visualization_snapshot_ready";
         return true;
     } catch (const std::exception& exception) {
@@ -576,7 +576,7 @@ bool RuntimeService::fieldNames(std::vector<std::string>& names, std::string& me
             return false;
         }
 
-        const auto checkpoint = runtime_->createCheckpoint("field_name_probe");
+        const auto checkpoint = runtime_->createCheckpoint("field_name_probe", false /* computeHash */);
         names.clear();
         names.reserve(checkpoint.stateSnapshot.fields.size());
         for (const auto& field : checkpoint.stateSnapshot.fields) {
@@ -601,7 +601,7 @@ bool RuntimeService::createCheckpoint(const std::string& label, std::string& mes
             return false;
         }
 
-        checkpoints_[label] = runtime_->createCheckpoint(label);
+        checkpoints_[label] = runtime_->createCheckpoint(label, true /* computeHash */);
         std::ostringstream output;
         output << "checkpoint_saved=" << label
                << " step_index=" << runtime_->snapshot().stateHeader.stepIndex;

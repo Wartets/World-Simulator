@@ -678,7 +678,7 @@ void Runtime::stop() {
     status_ = RuntimeStatus::Terminated;
 }
 
-RuntimeCheckpoint Runtime::createCheckpoint(const std::string& label) const {
+RuntimeCheckpoint Runtime::createCheckpoint(const std::string& label, const bool computeHash) const {
     if (status_ == RuntimeStatus::Created || status_ == RuntimeStatus::Error) {
         throw std::runtime_error("Runtime checkpoint creation requires Initialized, Running, or Terminated state");
     }
@@ -690,7 +690,8 @@ RuntimeCheckpoint Runtime::createCheckpoint(const std::string& label) const {
         stateStore_.createSnapshot(
             snapshot_.runSignature.identityHash(),
             profileFingerprint,
-            label)};
+            label,
+            computeHash)};
     return checkpoint;
 }
 

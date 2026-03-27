@@ -60,8 +60,9 @@ _deps/
 *.userosscache
 *.sln.docstates
 
+plans
 .idea/
-
+.kilocode
 .vscode
 !.vscode/extensions.json
 !.vscode/settings.json

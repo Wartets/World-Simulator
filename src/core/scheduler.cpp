@@ -412,11 +412,22 @@ StepDiagnostics Scheduler::step(
         subsystem->preStep(profile, stepIndex);
     }
 
+    // Only capture pre-step values when actually needed:
+    // - MultiRateC uses it for drift reference / damping / fallback restore
+    // - boundedIncrementEnabled uses it in the constraint pass
+    // Skipping this copy for UniformA/PhasedB without boundedIncrement cuts a full
+    // O(fields * cells) allocation and memcpy per step.
+    const bool needsPreStepCapture =
+        (temporalPolicy == TemporalPolicy::MultiRateC) ||
+        guardrailPolicy.boundedIncrementEnabled;
+
     std::unordered_map<std::string, std::vector<float>> preStepValues;
-    for (const auto& variableName : stateStore.variableNames()) {
-        const auto& field = stateStore.scalarField(variableName);
-        const std::size_t logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
-        preStepValues.emplace(variableName, std::vector<float>(field.begin(), field.begin() + static_cast<std::ptrdiff_t>(logicalCount)));
+    if (needsPreStepCapture) {
+        for (const auto& variableName : stateStore.variableNames()) {
+            const auto& field = stateStore.scalarField(variableName);
+            const std::size_t logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
+            preStepValues.emplace(variableName, std::vector<float>(field.begin(), field.begin() + static_cast<std::ptrdiff_t>(logicalCount)));
+        }
     }
 
     diagnostics.orderingLog.push_back("pipeline:subsystem_updates");
@@ -689,44 +700,72 @@ StepDiagnostics Scheduler::step(
     diagnostics.orderingLog.push_back("pipeline:constraint_pass");
     stateStore.clearAccessObserver();
 
-    StateStore::WriteSession constraintSession(stateStore, "constraint_pass", stateStore.variableNames());
-    for (const auto& variableName : stateStore.variableNames()) {
-        const auto& postValues = stateStore.scalarField(variableName);
-        const auto& preValues = preStepValues.at(variableName);
-        const std::size_t logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
+    // Skip full constraint writes when no guardrails are active — the NaN scan below
+    // still runs as a safety net. This is the hot path for UniformA/PhasedB.
+    const bool needsConstraintPass = guardrailPolicy.clampEnabled ||
+                                     guardrailPolicy.boundedIncrementEnabled;
 
-        for (std::size_t i = 0; i < logicalCount; ++i) {
-            const float currentValue = postValues[i];
+    if (needsConstraintPass) {
+        StateStore::WriteSession constraintSession(stateStore, "constraint_pass", stateStore.variableNames());
+        for (const auto& variableName : stateStore.variableNames()) {
+            const auto& postValues = stateStore.scalarField(variableName);
+            const std::size_t logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
 
-            if (!std::isfinite(currentValue)) {
-                std::ostringstream error;
-                error << "Numerical fail-fast: non-finite value for variable='" << variableName << "' index=" << i;
-                throw std::runtime_error(error.str());
-            }
-
-            float adjusted = currentValue;
-            if (guardrailPolicy.clampEnabled) {
-                const float clamped = std::clamp(adjusted, guardrailPolicy.clampMin, guardrailPolicy.clampMax);
-                if (clamped != adjusted) {
-                    diagnostics.constraintViolations.push_back(
-                        "clamp:" + variableName + ":index=" + std::to_string(i));
-                    adjusted = clamped;
-                }
-            }
-
+            // Only look up preValues when boundedIncrement actually needs them.
+            const std::vector<float>* preValuesPtr = nullptr;
             if (guardrailPolicy.boundedIncrementEnabled) {
-                const float previous = preValues[i];
-                const float delta = adjusted - previous;
-                if (std::fabs(delta) > guardrailPolicy.maxAbsDeltaPerStep) {
-                    const float signedLimit = (delta < 0.0f ? -guardrailPolicy.maxAbsDeltaPerStep : guardrailPolicy.maxAbsDeltaPerStep);
-                    adjusted = previous + signedLimit;
-                    diagnostics.stabilityAlerts.push_back(
-                        "bounded_increment:" + variableName + ":index=" + std::to_string(i));
+                const auto it = preStepValues.find(variableName);
+                if (it != preStepValues.end()) {
+                    preValuesPtr = &it->second;
                 }
             }
 
-            if (adjusted != currentValue) {
-                constraintSession.setScalar(variableName, stateStore.cellFromIndex(static_cast<std::uint64_t>(i)), adjusted);
+            for (std::size_t i = 0; i < logicalCount; ++i) {
+                const float currentValue = postValues[i];
+
+                if (!std::isfinite(currentValue)) {
+                    std::ostringstream error;
+                    error << "Numerical fail-fast: non-finite value for variable='" << variableName << "' index=" << i;
+                    throw std::runtime_error(error.str());
+                }
+
+                float adjusted = currentValue;
+                if (guardrailPolicy.clampEnabled) {
+                    const float clamped = std::clamp(adjusted, guardrailPolicy.clampMin, guardrailPolicy.clampMax);
+                    if (clamped != adjusted) {
+                        diagnostics.constraintViolations.push_back(
+                            "clamp:" + variableName + ":index=" + std::to_string(i));
+                        adjusted = clamped;
+                    }
+                }
+
+                if (guardrailPolicy.boundedIncrementEnabled && preValuesPtr != nullptr) {
+                    const float previous = (*preValuesPtr)[i];
+                    const float delta = adjusted - previous;
+                    if (std::fabs(delta) > guardrailPolicy.maxAbsDeltaPerStep) {
+                        const float signedLimit = (delta < 0.0f ? -guardrailPolicy.maxAbsDeltaPerStep : guardrailPolicy.maxAbsDeltaPerStep);
+                        adjusted = previous + signedLimit;
+                        diagnostics.stabilityAlerts.push_back(
+                            "bounded_increment:" + variableName + ":index=" + std::to_string(i));
+                    }
+                }
+
+                if (adjusted != currentValue) {
+                    constraintSession.setScalar(variableName, stateStore.cellFromIndex(static_cast<std::uint64_t>(i)), adjusted);
+                }
+            }
+        }
+    } else {
+        // Fast-path: still scan for NaN/Inf to catch numerical instabilities early.
+        for (const auto& variableName : stateStore.variableNames()) {
+            const auto& postValues = stateStore.scalarField(variableName);
+            const std::size_t logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
+            for (std::size_t i = 0; i < logicalCount; ++i) {
+                if (!std::isfinite(postValues[i])) {
+                    std::ostringstream error;
+                    error << "Numerical fail-fast: non-finite value for variable='" << variableName << "' index=" << i;
+                    throw std::runtime_error(error.str());
+                }
             }
         }
     }

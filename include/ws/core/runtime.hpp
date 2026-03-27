@@ -113,7 +113,7 @@ public:
     void stop();
     void queueInput(RuntimeInputFrame inputFrame);
     void enqueueEvent(RuntimeEvent event);
-    [[nodiscard]] RuntimeCheckpoint createCheckpoint(const std::string& label) const;
+    [[nodiscard]] RuntimeCheckpoint createCheckpoint(const std::string& label, bool computeHash = true) const;
     void loadCheckpoint(const RuntimeCheckpoint& checkpoint);
     void resetToCheckpoint(const RuntimeCheckpoint& checkpoint);
 
