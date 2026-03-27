@@ -83,7 +83,7 @@ The seed pipeline uses four core mathematical primitives.
 1) **Smooth interpolation kernel**
 
 $$
-smooth\_step(t)=x^2(3-2x),\quad x=clamp(t,0,1)
+smooth\_{step}(t)=x^2(3-2x),\quad x=clamp(t,0,1)
 $$
 
 This produces a $C^1$-smooth curve between 0 and 1 and avoids sharp interpolation seams.
@@ -102,7 +102,7 @@ $$
 n(x,y)=lerp(lerp(n_{00},n_{10},t_x),lerp(n_{01},n_{11},t_x),t_y)
 $$
 
-with $t_x=smooth\_step(x-\lfloor x\rfloor)$ and similarly for $t_y$. In words: sample four corner lattice values and smoothly interpolate within the cell.
+with $t_x=smooth\_{step}(x-\lfloor x\rfloor)$ and similarly for $t_y$. In words: sample four corner lattice values and smoothly interpolate within the cell.
 
 4) **Fractal Brownian motion (fBm)**
 
