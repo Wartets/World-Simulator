@@ -186,11 +186,11 @@ struct VisualizationState {
     bool showSparseOverlay = true;
     bool autoRun = true;
     int autoStepsPerFrame = 1;
-    int simulationTickHz = 30;
-    float snapshotRefreshHz = 12.0f;
+    int simulationTickHz = 120;
+    float snapshotRefreshHz = 120.0f;
     bool adaptiveSampling = true;
     int manualSamplingStride = 1;
-    int maxRenderedCells = 180000;
+    int maxRenderedCells = 220000;
 
     DisplayType generationPreviewDisplayType = DisplayType::SurfaceCategory;
     DisplayManagerParams displayManager{};
@@ -598,11 +598,14 @@ public:
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
 
+            uiParameterChangedThisFrame_ = false;
+            uiParameterInteractingThisFrame_ = false;
+
             if (appState_ == AppState::Simulation) {
                 drawViewport();
-                drawSimulationCanvas();
                 drawDockSpace();
                 drawControlPanel();
+                drawSimulationCanvas();
                 drawPlaybackOverlay(overlay_, accessibility_.reduceMotion, ImGui::GetIO().DeltaTime);
             } else if (appState_ == AppState::SessionManager) {
                 drawSessionManager();
@@ -676,9 +679,14 @@ private:
         for (auto& raster : viewportRasters_) {
             destroyRasterTexture(raster);
         }
+        destroyRasterTexture(wizardPreviewTexture_);
+        wizardPreviewPixels_.clear();
+        wizardPreviewHash_ = 0;
         for (auto& cache : renderCaches_) {
             cache.valid = false;
         }
+        snapshotDisplayCache_.clear();
+        snapshotDisplayCacheGeneration_ = -1;
     }
 
     void uploadRasterTexture(RasterTexture& texture, const int width, const int height, const std::vector<std::uint8_t>& rgba) {
@@ -903,7 +911,25 @@ private:
             numViewports = 4;
         }
 
-        for (int i = 0; i < numViewports; ++i) {
+        if (snapshotDisplayCacheGeneration_ != consumedSnapshotGeneration_) {
+            snapshotDisplayCache_.clear();
+            snapshotDisplayCacheGeneration_ = consumedSnapshotGeneration_;
+        }
+
+        using frame_clock = std::chrono::steady_clock;
+        const auto rebuildWindowStart = frame_clock::now();
+        const bool isContinuousRunning = viz_.autoRun && runtime_.isRunning() && !runtime_.isPaused();
+        const bool uiInteracting = uiParameterInteractingThisFrame_ || (glfwGetTime() < uiInteractionHotUntilSec_);
+        const int maxRebuildsPerFrame = isContinuousRunning ? (uiInteracting ? 2 : 1) : 4;
+        const double rebuildBudgetMs = isContinuousRunning ? (uiInteracting ? 4.5 : 2.5) : 9.0;
+        int rebuildCount = 0;
+        const int viewportCount = std::max(1, numViewports);
+        const int startIndex = uiInteracting
+            ? std::clamp(viz_.activeViewportEditor, 0, viewportCount - 1)
+            : (isContinuousRunning ? (nextViewportRebuildCursor_ % viewportCount) : 0);
+
+        for (int pass = 0; pass < numViewports; ++pass) {
+            const int i = (startIndex + pass) % viewportCount;
             auto& vp = viz_.viewports[i];
             
             const std::uint64_t renderHash = makeRenderConfigHash(vp);
@@ -912,12 +938,37 @@ private:
             const bool cacheDirty = !cache.valid || cache.snapshotGeneration != consumedSnapshotGeneration_ || cache.configHash != renderHash;
             
             if (cacheDirty) {
-                DisplayBuffer display = buildDisplayBufferFromSnapshot(
-                    snapshot,
-                    vp.primaryFieldIndex,
-                    vp.displayType,
-                    viz_.showSparseOverlay,
-                    viz_.displayManager);
+                if (rebuildCount >= maxRebuildsPerFrame) {
+                    continue;
+                }
+
+                const double elapsedMs = std::chrono::duration<double, std::milli>(frame_clock::now() - rebuildWindowStart).count();
+                if (rebuildCount > 0 && elapsedMs >= rebuildBudgetMs) {
+                    continue;
+                }
+
+                std::uint64_t displayKey = 1469598103934665603ull;
+                displayKey = hashCombine(displayKey, static_cast<std::uint64_t>(vp.primaryFieldIndex));
+                displayKey = hashCombine(displayKey, static_cast<std::uint64_t>(vp.displayType));
+                displayKey = hashCombine(displayKey, static_cast<std::uint64_t>(viz_.showSparseOverlay));
+                displayKey = hashCombine(displayKey, static_cast<std::uint64_t>(viz_.displayManager.autoWaterLevel));
+                displayKey = hashCombine(displayKey, hashFloat(viz_.displayManager.waterLevel));
+                displayKey = hashCombine(displayKey, hashFloat(viz_.displayManager.autoWaterQuantile));
+                displayKey = hashCombine(displayKey, hashFloat(viz_.displayManager.lowlandThreshold));
+                displayKey = hashCombine(displayKey, hashFloat(viz_.displayManager.highlandThreshold));
+                displayKey = hashCombine(displayKey, hashFloat(viz_.displayManager.waterPresenceThreshold));
+
+                auto it = snapshotDisplayCache_.find(displayKey);
+                if (it == snapshotDisplayCache_.end()) {
+                    DisplayBuffer computed = buildDisplayBufferFromSnapshot(
+                        snapshot,
+                        vp.primaryFieldIndex,
+                        vp.displayType,
+                        viz_.showSparseOverlay,
+                        viz_.displayManager);
+                    it = snapshotDisplayCache_.emplace(displayKey, std::move(computed)).first;
+                }
+                const DisplayBuffer& display = it->second;
                 float pMin = display.minValue;
                 float pMax = display.maxValue;
                 if (vp.displayType == DisplayType::ScalarField) {
@@ -934,7 +985,14 @@ private:
                 cache.primaryMin = pMin;
                 cache.primaryMax = pMax;
                 cache.primaryName = display.label;
+                ++rebuildCount;
             }
+        }
+
+        if (isContinuousRunning) {
+            nextViewportRebuildCursor_ = (startIndex + 1) % viewportCount;
+        } else {
+            nextViewportRebuildCursor_ = 0;
         }
 
         // Layout evaluation
@@ -1333,17 +1391,27 @@ private:
             return;
         }
 
+        if (uiParameterChangedThisFrame_) {
+            requestSnapshotRefresh();
+        }
+
+        const bool prioritizeUi = glfwGetTime() < uiInteractionHotUntilSec_;
+
         autoRunStepBudget_ += static_cast<double>(std::max(1, viz_.simulationTickHz)) *
-static_cast<double>(std::max(0.0f, frameDt));
-        autoRunStepBudget_ = std::min(autoRunStepBudget_, 4.0);
-        const int batch = std::min(2, static_cast<int>(std::floor(autoRunStepBudget_)));
+            static_cast<double>(std::max(0.0f, frameDt));
+        const double budgetCap = std::max(16.0, static_cast<double>(std::max(1, viz_.simulationTickHz)) * 2.0);
+        autoRunStepBudget_ = std::min(autoRunStepBudget_, budgetCap);
+        const int maxBatch = prioritizeUi ? 2 : 8;
+        const int batch = std::min(maxBatch, static_cast<int>(std::floor(autoRunStepBudget_)));
         if (batch <= 0) {
             return;
         }
 
         autoRunStepBudget_ -= static_cast<double>(batch);
 
-        const int stepsToRun = std::min(64, std::max(1, viz_.autoStepsPerFrame * batch));
+        const int stepsPerTick = std::clamp(viz_.autoStepsPerFrame, 1, 512);
+        const int maxDispatchSteps = prioritizeUi ? 2048 : 8192;
+        const int stepsToRun = std::min(maxDispatchSteps, std::max(1, stepsPerTick * batch));
         autoRunFuture_ = std::async(std::launch::async, [this, stepsToRun]() {
             std::string message;
             if (!runtime_.step(static_cast<std::uint32_t>(stepsToRun), message)) {
@@ -1613,7 +1681,8 @@ static_cast<double>(std::max(0.0f, frameDt));
 
         const int previewBaseW = std::max(48, panel_.gridWidth);
         const int previewBaseH = std::max(48, panel_.gridHeight);
-        const std::uint64_t previewBudget = 130000ull;
+        const bool interactivePreview = uiParameterInteractingThisFrame_ || ImGui::IsAnyItemActive();
+        const std::uint64_t previewBudget = interactivePreview ? 70000ull : 130000ull;
         int previewStride = 1;
         while ((static_cast<std::uint64_t>(previewBaseW) / static_cast<std::uint64_t>(previewStride)) *
                (static_cast<std::uint64_t>(previewBaseH) / static_cast<std::uint64_t>(previewStride)) > previewBudget) {
@@ -1630,51 +1699,101 @@ static_cast<double>(std::max(0.0f, frameDt));
         }
         const float drawX = minPos.x + (avail.x - drawW) * 0.5f;
         const float drawY = minPos.y + (avail.y - drawH) * 0.5f;
-        const float cellW = std::max(1.0f, drawW / static_cast<float>(previewW));
-        const float cellH = std::max(1.0f, drawH / static_cast<float>(previewH));
+        std::uint64_t previewHash = 1469598103934665603ull;
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.seed));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewBaseW));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewBaseH));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewStride));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(viz_.generationPreviewDisplayType));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(viz_.displayManager.autoWaterLevel));
+        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.waterLevel));
+        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.autoWaterQuantile));
+        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.lowlandThreshold));
+        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.highlandThreshold));
+        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.waterPresenceThreshold));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.terrainBaseFrequency));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.terrainDetailFrequency));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.terrainWarpStrength));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.terrainAmplitude));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.terrainRidgeMix));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.terrainOctaves));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.terrainLacunarity));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.terrainGain));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.seaLevel));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.polarCooling));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.latitudeBanding));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.humidityFromWater));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.biomeNoiseStrength));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.islandDensity));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.islandFalloff));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.coastlineSharpness));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.archipelagoJitter));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.erosionStrength));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.shelfDepth));
 
-        std::vector<float> previewTerrain;
-        std::vector<float> previewWater;
-        previewTerrain.reserve(static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH));
-        previewWater.reserve(static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH));
+        if (previewHash != wizardPreviewHash_ || wizardPreviewW_ != previewW || wizardPreviewH_ != previewH) {
+            std::vector<float> previewTerrain;
+            std::vector<float> previewWater;
+            previewTerrain.reserve(static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH));
+            previewWater.reserve(static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH));
 
-        for (int y = 0; y < previewH; ++y) {
-            for (int x = 0; x < previewW; ++x) {
-                const float terrain = previewTerrainValue(panel_, x * previewStride, y * previewStride, previewBaseW, previewBaseH);
-                const float water = std::clamp((panel_.seaLevel - terrain) * 1.9f + 0.10f, 0.0f, 1.0f);
-                previewTerrain.push_back(terrain);
-                previewWater.push_back(water);
+            for (int y = 0; y < previewH; ++y) {
+                for (int x = 0; x < previewW; ++x) {
+                    const float terrain = previewTerrainValue(panel_, x * previewStride, y * previewStride, previewBaseW, previewBaseH);
+                    const float water = std::clamp((panel_.seaLevel - terrain) * 1.9f + 0.10f, 0.0f, 1.0f);
+                    previewTerrain.push_back(terrain);
+                    previewWater.push_back(water);
+                }
             }
-        }
 
-        DisplayBuffer previewDisplay = buildDisplayBufferFromTerrain(
-            previewTerrain,
-            previewWater,
-            viz_.generationPreviewDisplayType,
-            viz_.displayManager,
-            "preview");
+            DisplayBuffer previewDisplay = buildDisplayBufferFromTerrain(
+                previewTerrain,
+                previewWater,
+                viz_.generationPreviewDisplayType,
+                viz_.displayManager,
+                "preview");
 
-        for (int y = 0; y < previewH; ++y) {
-            for (int x = 0; x < previewW; ++x) {
-                const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(previewW) + static_cast<std::size_t>(x);
+            const std::size_t pixelCount = static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH);
+            wizardPreviewPixels_.assign(pixelCount * 4u, 0u);
+            for (std::size_t idx = 0; idx < pixelCount; ++idx) {
                 const float value = idx < previewDisplay.values.size() ? previewDisplay.values[idx] : 0.0f;
                 const float normalized = std::clamp((value - previewDisplay.minValue) / std::max(0.0001f, previewDisplay.maxValue - previewDisplay.minValue), 0.0f, 1.0f);
                 const ImU32 color = mapDisplayTypeColor(
                     (viz_.generationPreviewDisplayType == DisplayType::ScalarField || viz_.generationPreviewDisplayType == DisplayType::WaterDepth) ? normalized : value,
                     viz_.generationPreviewDisplayType,
                     ColorMapMode::Turbo);
-                const float px = drawX + static_cast<float>(x) * cellW;
-                const float py = drawY + static_cast<float>(y) * cellH;
-                dl->AddRectFilled(ImVec2(px, py), ImVec2(px + cellW + 0.7f, py + cellH + 0.7f), color);
+                std::uint8_t r = 0, g = 0, b = 0, a = 0;
+                unpackColor(color, r, g, b, a);
+                const std::size_t o = idx * 4u;
+                wizardPreviewPixels_[o + 0] = r;
+                wizardPreviewPixels_[o + 1] = g;
+                wizardPreviewPixels_[o + 2] = b;
+                wizardPreviewPixels_[o + 3] = a;
             }
+
+            uploadRasterTexture(wizardPreviewTexture_, previewW, previewH, wizardPreviewPixels_);
+            wizardPreviewWaterLevel_ = previewDisplay.effectiveWaterLevel;
+            wizardPreviewStride_ = previewStride;
+            wizardPreviewW_ = previewW;
+            wizardPreviewH_ = previewH;
+            wizardPreviewHash_ = previewHash;
+        }
+
+        if (wizardPreviewTexture_.id != 0) {
+            dl->AddImage(
+                static_cast<ImTextureID>(wizardPreviewTexture_.id),
+                ImVec2(drawX, drawY),
+                ImVec2(drawX + drawW, drawY + drawH),
+                ImVec2(0.0f, 0.0f),
+                ImVec2(1.0f, 1.0f));
         }
 
         const std::string previewLabel = std::string("Preview mode: ") + displayTypeLabel(viz_.generationPreviewDisplayType);
         dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2), IM_COL32(235, 240, 255, 255), previewLabel.c_str());
-        const std::string autoLevel = "Water level: " + std::to_string(previewDisplay.effectiveWaterLevel).substr(0, 5) + (viz_.displayManager.autoWaterLevel ? " (auto)" : " (manual)");
+        const std::string autoLevel = "Water level: " + std::to_string(wizardPreviewWaterLevel_).substr(0, 5) + (viz_.displayManager.autoWaterLevel ? " (auto)" : " (manual)");
         dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 18.0f), IM_COL32(188, 200, 226, 255), autoLevel.c_str());
-        if (previewStride > 1) {
-            const std::string quality = "Preview stride: 1/" + std::to_string(previewStride) + " for performance";
+        if (wizardPreviewStride_ > 1) {
+            const std::string quality = "Preview stride: 1/" + std::to_string(wizardPreviewStride_) + " for performance";
             dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 36.0f), IM_COL32(188, 200, 226, 255), quality.c_str());
         }
         ImGui::EndChild();
@@ -1772,26 +1891,40 @@ static_cast<double>(std::max(0.0f, frameDt));
         }
     }
 
+    void markParameterInteraction(const bool changed) {
+        if (changed) {
+            uiParameterChangedThisFrame_ = true;
+        }
+        if (ImGui::IsItemActive() || ImGui::IsItemFocused()) {
+            uiParameterInteractingThisFrame_ = true;
+            uiInteractionHotUntilSec_ = std::max(uiInteractionHotUntilSec_, glfwGetTime() + 0.18);
+        }
+    }
+
     bool checkboxWithHint(const char* label, bool* value, const char* hint) {
         const bool changed = ImGui::Checkbox(label, value);
+        markParameterInteraction(changed);
         settingHint(hint);
         return changed;
     }
 
     bool sliderFloatWithHint(const char* label, float* value, const float minV, const float maxV, const char* format, const char* hint) {
         const bool changed = NumericSliderPair(label, value, minV, maxV, format);
+        markParameterInteraction(changed);
         settingHint(hint);
         return changed;
     }
 
     bool sliderIntWithHint(const char* label, int* value, const int minV, const int maxV, const char* hint) {
         const bool changed = NumericSliderPairInt(label, value, minV, maxV);
+        markParameterInteraction(changed);
         settingHint(hint);
         return changed;
     }
 
     bool inputTextWithHint(const char* label, char* buffer, const std::size_t size, const char* hint) {
         const bool changed = ImGui::InputText(label, buffer, size);
+        markParameterInteraction(changed);
         settingHint(hint);
         return changed;
     }
@@ -1974,8 +2107,8 @@ static_cast<double>(std::max(0.0f, frameDt));
 
                 if (isPlaying) {
                     ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Mode: Continuous Auto-Run");
-                    sliderIntWithHint("Simulation Speed (Hz)", &viz_.simulationTickHz, 1, 240, "Target background tick frequency.");
-                    sliderIntWithHint("Steps per Tick", &viz_.autoStepsPerFrame, 1, 128, "How many simulation steps are executed each tick.");
+                    sliderIntWithHint("Simulation Tick Rate (Hz)", &viz_.simulationTickHz, 1, 480, "Target simulation stepping rate while auto-run is active.");
+                    sliderIntWithHint("Steps per Tick", &viz_.autoStepsPerFrame, 1, 512, "How many simulation steps are executed each tick.");
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Mode: Manual Stepping / Paused");
                     
@@ -2013,24 +2146,14 @@ static_cast<double>(std::max(0.0f, frameDt));
             ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
             ImGui::Text("Snapshot mapping time: %.2f ms", viz_.lastSnapshotDurationMs);
             
-            sliderFloatWithHint("Snapshot target Hz", &viz_.snapshotRefreshHz, 1.0f, 120.0f, "%.1f", "Target frequency for background snapshot captures.");
+            sliderFloatWithHint("Viewport Refresh Rate (Hz)", &viz_.snapshotRefreshHz, 1.0f, 120.0f, "%.1f", "Target rate used to refresh rendered snapshots in the interface.");
+            ImGui::TextDisabled("Simulation tick rate and viewport refresh rate are independent on purpose.");
 
             checkboxWithHint("Adaptive Render Sampling", &viz_.adaptiveSampling, "Automatically increases sampling stride when zoomed out to keep rendering responsive.");
             if (!viz_.adaptiveSampling) {
                 sliderIntWithHint("Manual stride", &viz_.manualSamplingStride, 1, 64, "Render one cell every N cells when adaptive sampling is disabled.");
             }
             sliderIntWithHint("Max rendered cells", &viz_.maxRenderedCells, 1000, 2000000, "Hard cap on drawn cells per frame across panels.");
-
-            if (PrimaryButton("Apply Interactive Preset", ImVec2(-1.0f, 24.0f))) {
-                viz_.simulationTickHz = 40;
-                viz_.snapshotRefreshHz = 18.0f;
-                viz_.adaptiveSampling = true;
-                viz_.manualSamplingStride = 1;
-                viz_.maxRenderedCells = 220000;
-                viz_.autoStepsPerFrame = 1;
-                appendLog("performance_preset=interactive");
-                requestSnapshotRefresh();
-            }
 
             if (PrimaryButton("Force Snapshot Refresh", ImVec2(-1.0f, 24.0f))) {
                 requestSnapshotRefresh();
@@ -2778,7 +2901,7 @@ static_cast<double>(std::max(0.0f, frameDt));
     std::atomic<bool> snapshotWorkerRunning_{false};
     std::atomic<bool> snapshotRequestPending_{true};
     std::atomic<bool> snapshotContinuousMode_{false};
-    std::atomic<float> snapshotRefreshHzAtomic_{12.0f};
+    std::atomic<float> snapshotRefreshHzAtomic_{120.0f};
     std::atomic<float> snapshotDurationMsAtomic_{0.0f};
     std::atomic<int> snapshotFrontIndex_{0};
     std::atomic<int> snapshotGeneration_{0};
@@ -2791,8 +2914,22 @@ static_cast<double>(std::max(0.0f, frameDt));
 
     std::array<RasterTexture, 4> viewportRasters_{};
     std::array<std::vector<std::uint8_t>, 4> rasterBuffers_{};
+    RasterTexture wizardPreviewTexture_{};
+    std::vector<std::uint8_t> wizardPreviewPixels_{};
+    std::uint64_t wizardPreviewHash_ = 0;
+    int wizardPreviewW_ = 0;
+    int wizardPreviewH_ = 0;
+    int wizardPreviewStride_ = 1;
+    float wizardPreviewWaterLevel_ = 0.0f;
     std::array<RenderCacheState, 4> renderCaches_{};
+    std::unordered_map<std::uint64_t, DisplayBuffer> snapshotDisplayCache_{};
+    int snapshotDisplayCacheGeneration_ = -1;
     int maxTextureSize_ = 0;
+    int nextViewportRebuildCursor_ = 0;
+
+    bool uiParameterChangedThisFrame_ = false;
+    bool uiParameterInteractingThisFrame_ = false;
+    double uiInteractionHotUntilSec_ = 0.0;
 
     double autoRunStepBudget_ = 0.0;
     RuntimeService runtime_;
