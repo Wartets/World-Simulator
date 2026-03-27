@@ -247,7 +247,7 @@
             ImGui::Spacing();
         }
 
-        SectionHeader("Generation preview", "Preview only — simulation is not running.");
+        SectionHeader("Generation preview", "Preview only - simulation is not running.");
         ImGui::Spacing();
         ImGui::BeginChild("WizardPreview", ImVec2(-1.0f, -1.0f), true);
         ImDrawList* dl = ImGui::GetWindowDrawList();
