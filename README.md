@@ -6,8 +6,6 @@ World-Simulator is a deterministic, grid-based world simulation framework with:
 - a CLI frontend (`world_sim`),
 - a GUI frontend (`world_sim_gui`).
 
-This README is a complete operational guide to the simulation model: state variables, interactions, tiered model behavior, temporal execution policies, numerical guardrails, and all exposed runtime parameters.
-
 ---
 
 ## 1. Core Architecture
@@ -85,7 +83,7 @@ The seed pipeline uses four core mathematical primitives.
 1) **Smooth interpolation kernel**
 
 $$
-\operatorname{smoothStep}(t)=x^2(3-2x),\quad x=\operatorname{clamp}(t,0,1)
+smooth\_step(t)=x^2(3-2x),\quad x=clamp(t,0,1)
 $$
 
 This produces a $C^1$-smooth curve between 0 and 1 and avoids sharp interpolation seams.
@@ -93,7 +91,7 @@ This produces a $C^1$-smooth curve between 0 and 1 and avoids sharp interpolatio
 2) **Hash-based deterministic sample**
 
 $$
-h_{01}(s,x,y)=\frac{\text{top24bits}(\operatorname{mix64}(\operatorname{hash}(s,x,y)))}{2^{24}-1}
+h_{01}(s,x,y)=\frac{\text{top24bits}(mix64(hash(s,x,y)))}{2^{24}-1}
 $$
 
 Given integer lattice coordinates $(x,y)$ and seed $s$, this returns a deterministic pseudo-random scalar in $[0,1]$.
@@ -101,15 +99,15 @@ Given integer lattice coordinates $(x,y)$ and seed $s$, this returns a determini
 3) **Bilinear value-noise reconstruction**
 
 $$
-n(x,y)=\operatorname{lerp}(\operatorname{lerp}(n_{00},n_{10},t_x),\operatorname{lerp}(n_{01},n_{11},t_x),t_y)
+n(x,y)=lerp(lerp(n_{00},n_{10},t_x),lerp(n_{01},n_{11},t_x),t_y)
 $$
 
-with $t_x=\operatorname{smoothStep}(x-\lfloor x\rfloor)$ and similarly for $t_y$. In words: sample four corner lattice values and smoothly interpolate within the cell.
+with $t_x=smooth\_step(x-\lfloor x\rfloor)$ and similarly for $t_y$. In words: sample four corner lattice values and smoothly interpolate within the cell.
 
 4) **Fractal Brownian motion (fBm)**
 
 $$
-\operatorname{fBm}(x,y)=\frac{\sum_{i=0}^{o-1} a_i\,n_i(f_i x,f_i y)}{\sum_{i=0}^{o-1} a_i},\quad
+fBm(x,y)=\frac{\sum_{i=0}^{o-1} a_i\,n_i(f_i x,f_i y)}{\sum_{i=0}^{o-1} a_i},\quad
 f_i=\lambda^i,\; a_i=g^i
 $$
 
@@ -120,7 +118,7 @@ where $o$ is octave count, $\lambda$ is lacunarity, and $g$ is gain. Lower octav
 Before evaluating terrain/climate fields, coordinates are warped by additional fBm channels:
 
 $$
-w_x=\operatorname{fBm}(x\,f_d,y\,f_d),\quad w_y=\operatorname{fBm}(x\,f_d,y\,f_d)
+w_x=fBm(x\,f_d,y\,f_d),\quad w_y=fBm(x\,f_d,y\,f_d)
 $$
 
 $$
@@ -136,62 +134,62 @@ The seeded fields are blended from continental noise, ridge/detail noise, macro-
 Representative elevation/water/climate seeds:
 
 $$
-\text{baseRelief}=\operatorname{clamp}\big(0.50\,c + 0.16\,r + 0.18\,m + \text{regional/biome corrections},0,1\big)
+\text{baseRelief}=clamp(0.50\,c + 0.16\,r + 0.18\,m + \text{regional/biome corrections},0,1)
 $$
 
 where $c$ is continental component, $r$ is ridge/detail component, and $m$ is macro-shape term.
 
 $$
-h = \operatorname{clamp}\Big(0.5 + (\text{elevationRaw}-0.5)\,A_h,\,0,1\Big)
+h = clamp(0.5 + (\text{elevationRaw}-0.5)\,A_h,\,0,1)
 $$
 
 where $A_h$ corresponds to `terrainAmplitude`.
 
 $$
-w = \operatorname{clamp}\big(\text{waterBasin} + \text{coastalNoise},0,1\big)
+w = clamp(\text{waterBasin} + \text{coastalNoise},0,1)
 $$
 
 Water combines a sea-level basin term with coastal/biome noise to avoid uniform shorelines.
 
 $$
-T_0 = \operatorname{clamp}\big(0.25 + 0.55\,\text{latitudinal}\cdot\text{banding}\cdot(1-0.35\,\text{polarCooling}) + \cdots,0,1\big)
+T_0 = clamp(0.25 + 0.55\,\text{latitudinal}\cdot\text{banding}\cdot(1-0.35\,\text{polarCooling}) + \cdots,0,1)
 $$
 
 This creates latitudinal climate bands and altitude cooling effects.
 
 $$
-q_0 = \operatorname{clamp}\big(0.20 + 0.45\,\text{humidityFromWater}\cdot w + \cdots,0,1\big)
+q_0 = clamp(0.20 + 0.45\,\text{humidityFromWater}\cdot w + \cdots,0,1)
 $$
 
 Humidity is seeded from water availability plus regional biome terms.
 
 $$
-u_0 = \operatorname{clamp}\big(0.25 + 0.45\,\text{noise} + 0.30|T_0-0.5|,0,1\big)
+u_0 = clamp(0.25 + 0.45\,\text{noise} + 0.30|T_0-0.5|,0,1)
 $$
 
 Initial wind intensity depends on structured noise and thermal contrast magnitude.
 
 $$
-c_0 = \operatorname{clamp}(0.45\,T_0 + 0.55\,q_0,0,1)
+c_0 = clamp(0.45\,T_0 + 0.55\,q_0,0,1)
 $$
 
 Climate index starts as a weighted humidity-temperature composite.
 
 $$
-\phi_0 = \operatorname{clamp}(0.25 + 0.55\,q_0 + 0.20(1-|h-\text{seaLevel}|),0,1)
+\phi_0 = clamp(0.25 + 0.55\,q_0 + 0.20(1-|h-\text{seaLevel}|),0,1)
 $$
 
 Soil fertility is favored by humidity and moderate elevation relative to sea level.
 
 $$
-v_0 = \operatorname{clamp}(0.25 + 0.55\,\phi_0 q_0,0,1),\quad
-r_0 = \operatorname{clamp}(0.15 + 0.55\,v_0 + 0.15\,w + 0.15\,\text{biomeNoise},0,1)
+v_0 = clamp(0.25 + 0.55\,\phi_0 q_0,0,1),\quad
+r_0 = clamp(0.15 + 0.55\,v_0 + 0.15\,w + 0.15\,\text{biomeNoise},0,1)
 $$
 
 Vegetation and resources are initialized from fertility/humidity/water-biome interactions.
 
 $$
-e_0 = \operatorname{clamp}(0.15 + 0.85\,\text{noise},0,1)
+e_0 = clamp(0.15 + 0.85\,\text{noise},0,1)
 $$
 
 Event signal is seeded as a spatially varying stochastic potential. Finally, `event_water_delta` and `event_temperature_delta` are set to 0 so exogenous forcing begins inactive.
@@ -232,7 +230,7 @@ $$
 $$
 
 $$
-h' = \operatorname{clamp}(h + \alpha(\bar h_N-h),0,1),\quad
+h' = clamp(h + \alpha(\bar h_N-h),0,1),\quad
 \alpha=0.01\,(B),\,0.02\,(C)
 $$
 
@@ -255,7 +253,7 @@ $$
 Tier C adds wind advection proxy:
 
 $$
-w' \leftarrow w' + 0.015\,\operatorname{clamp}(u,-8,8)
+w' \leftarrow w' + 0.015\,clamp(u,-8,8)
 $$
 
 Interpretation: the model is not a full Navier-Stokes solver; it is a conservative-like scalar transport proxy with bounded dynamics.
@@ -313,7 +311,7 @@ Purpose: estimate local humidity from water availability, thermal stress, and bi
 Temperature stress:
 
 $$
-\sigma_T = \operatorname{clamp}\left(\frac{T-285.15}{40},-1,1\right)
+\sigma_T = clamp\left(\frac{T-285.15}{40},-1,1\right)
 $$
 
 Base relation:
@@ -375,7 +373,7 @@ Purpose: produce a composite climate index from thermal anomaly, humidity anomal
 Thermal normalization term:
 
 $$
-\tau = \operatorname{clamp}\left(\frac{T-285.15}{20},-3,3\right)
+\tau = clamp\left(\frac{T-285.15}{20},-3,3\right)
 $$
 
 Base:
@@ -416,7 +414,7 @@ $$
 Base:
 
 $$
-\phi' = 0.35 + 0.30w + 0.30\operatorname{clamp}(s_T,0,1)
+\phi' = 0.35 + 0.30w + 0.30\,clamp(s_T,0,1)
 $$
 
 Tier B/C include neighborhood transfer:
@@ -450,7 +448,7 @@ $$
 Base growth proxy:
 
 $$
-v' = 0.20\phi + 0.20q + 0.10r + 0.25\operatorname{clamp}(s_T,0,1)
+v' = 0.20\phi + 0.20q + 0.10r + 0.25\,clamp(s_T,0,1)
 $$
 
 Tier B/C include lateral vegetation propagation:
@@ -512,13 +510,13 @@ Tier-dependent constants control persistence and forcing strength:
 Trigger rules define when hazardous/hydrologic event patterns activate:
 
 - Tier A: if $T>303.15$ and $q<0.25$, trigger $=0.12$
-- Tier B: if $T>301.15$ and $q<0.35$, trigger $=0.14+0.15\operatorname{clamp}(0.35-q,0,1)$
-- Tier C: if $T>299.15$ and $q<0.45$, trigger $=0.20+0.20\operatorname{clamp}(0.45-q,0,1)$
+- Tier B: if $T>301.15$ and $q<0.35$, trigger $=0.14+0.15\,clamp(0.35-q,0,1)$
+- Tier C: if $T>299.15$ and $q<0.45$, trigger $=0.20+0.20\,clamp(0.45-q,0,1)$
 
 State update:
 
 $$
-e' = \operatorname{clamp}(e\cdot\text{retention}+\text{trigger},0,1)
+e' = clamp(e\cdot\text{retention}+\text{trigger},0,1)
 $$
 
 $$
@@ -615,14 +613,14 @@ Guardrails (`NumericGuardrailPolicy`) apply each step:
 2. **Clamp** (if enabled):
 
 $$
-x_i\leftarrow \operatorname{clamp}(x_i, x_{min}, x_{max})
+x_i\leftarrow clamp(x_i, x_{min}, x_{max})
 $$
 
 3. **Bounded increment** (if enabled):
 
 $$
 \Delta_i=x_i-x_i^{prev},\quad
-\text{if }|\Delta_i|>\Delta_{max},\; x_i\leftarrow x_i^{prev}+\operatorname{sign}(\Delta_i)\Delta_{max}
+\text{if }|\Delta_i|>\Delta_{max},\; x_i\leftarrow x_i^{prev}+sign(\Delta_i)\Delta_{max}
 $$
 
 This rule prevents single-step spikes from destabilizing the full coupled state.
@@ -791,25 +789,3 @@ Temporal constraints enforced at admission:
 - any C-tier subsystem requires temporal tier C and `MultiRateC`.
 
 ---
-
-## 12. Build and Run
-
-Common CMake targets:
-
-- `ws_core`
-- `world_sim` (CLI)
-- `world_sim_gui` (GUI)
-
-Core tests commonly used:
-
-- `determinism_core_test`
-- `state_store_engine_test`
-- `simulation_loop_test`
-- `subsystems_test`
-- `interactions_test`
-
----
-
-## 13. Notes on Variable Semantics
-
-The fields are normalized simulation proxies (except temperature/wind ranges in subsystem clamps), not strict physical SI fields. Coefficients are calibrated for stable, interpretable dynamics and deterministic replay under the configured guardrails and temporal policy.
