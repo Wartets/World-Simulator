@@ -285,6 +285,7 @@ private:
     std::atomic<bool> simulationWorkerBusy_{false};
     std::atomic<int>  simulationDisplayRefreshEveryNSteps_{1};
     std::atomic<bool> simulationUnlimitedSpeed_{true};
+    std::atomic<std::uint64_t> simulationLastDisplayRequestMs_{0};
     std::atomic<float> simulationLastBatchDurationMs_{0.0f};
     std::atomic<int>   simulationLastBatchSteps_{0};
     std::mutex asyncStateMutex_;

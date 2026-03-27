@@ -913,10 +913,34 @@ void refreshFieldNames() {
     return (static_cast<float>(batchSteps) * 1000.0f) / batchMs;
 }
 
+[[nodiscard]] static float displayRefreshFloorHzFor(const bool unlimitedSimSpeed) {
+    return unlimitedSimSpeed ? 20.0f : 30.0f;
+}
+
+[[nodiscard]] float displayRefreshFloorHz() const {
+    return displayRefreshFloorHzFor(viz_.unlimitedSimSpeed);
+}
+
+[[nodiscard]] static std::uint64_t displayRefreshLatencyCapMsFor(const bool unlimitedSimSpeed) {
+    return static_cast<std::uint64_t>(std::llround(1000.0 / displayRefreshFloorHzFor(unlimitedSimSpeed)));
+}
+
+[[nodiscard]] float displayRefreshLatencyCapMs() const {
+    return static_cast<float>(displayRefreshLatencyCapMsFor(viz_.unlimitedSimSpeed));
+}
+
+[[nodiscard]] static std::uint64_t monotonicNowMs() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
 [[nodiscard]] float estimatedDisplayRefreshesPerSecond() const {
     const float stepsPerSecond = estimatedSimulationStepsPerSecond();
     if (stepsPerSecond <= 0.0f) return 0.0f;
-    return stepsPerSecond / static_cast<float>(std::max(1, viz_.displayRefreshEveryNSteps));
+    const float stepDrivenRefreshes =
+        stepsPerSecond / static_cast<float>(std::max(1, viz_.displayRefreshEveryNSteps));
+    return std::min(stepsPerSecond, std::max(stepDrivenRefreshes, displayRefreshFloorHz()));
 }
 
 // Simulation worker
@@ -932,6 +956,7 @@ void startSimulationWorker() {
     simulationWorkerBusy_.store(false);
     simulationDisplayRefreshEveryNSteps_.store(std::max(1, viz_.displayRefreshEveryNSteps));
     simulationUnlimitedSpeed_.store(viz_.unlimitedSimSpeed);
+    simulationLastDisplayRequestMs_.store(0);
     simulationLastBatchDurationMs_.store(0.0f);
     simulationLastBatchSteps_.store(0);
     simulationThreadRunning_.store(true);
@@ -969,7 +994,8 @@ void simulationWorkerLoop() {
                     }
 
                     const int refreshInterval = std::max(1, simulationDisplayRefreshEveryNSteps_.load());
-                    const int maxBatch = simulationUnlimitedSpeed_.load() ? 128 : 16;
+                    const bool unlimitedSpeed = simulationUnlimitedSpeed_.load();
+                    const int maxBatch = unlimitedSpeed ? 128 : 16;
                     const int batchCap = std::max(1, std::min(refreshInterval, maxBatch));
                     const int stepsToRun = std::clamp(adaptiveBatchSize, 1, batchCap);
 
@@ -993,7 +1019,15 @@ void simulationWorkerLoop() {
                     }
 
                     stepsUntilDisplayRefresh -= stepsToRun;
-                    if (stepsUntilDisplayRefresh <= 0) {
+                    const std::uint64_t lastDisplayRequestMs = simulationLastDisplayRequestMs_.load();
+                    const std::uint64_t elapsedSinceDisplayMs =
+                        (lastDisplayRequestMs == 0) ? std::numeric_limits<std::uint64_t>::max()
+                                                    : (monotonicNowMs() - lastDisplayRequestMs);
+                    const bool dueBySteps = stepsUntilDisplayRefresh <= 0;
+                    const bool dueByLatency =
+                        !snapshotRequestPending_.load() &&
+                        elapsedSinceDisplayMs >= displayRefreshLatencyCapMsFor(unlimitedSpeed);
+                    if (dueBySteps || dueByLatency) {
                         requestSnapshotRefresh();
                         stepsUntilDisplayRefresh = refreshInterval;
                     }
@@ -1019,6 +1053,7 @@ void simulationWorkerLoop() {
 
 // Snapshot worker
 void requestSnapshotRefresh() {
+    simulationLastDisplayRequestMs_.store(monotonicNowMs());
     snapshotRequestPending_.store(true);
     viz_.snapshotDirty = true;
     snapshotWakeCV_.notify_one();

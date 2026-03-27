@@ -411,12 +411,13 @@ void drawPlaybackSection() {
                 "Disable this to insert a small yield between batches and keep the UI more relaxed.");
             sliderIntWithHint("Steps between display updates", &viz_.displayRefreshEveryNSteps, 1, 1000,
                 "Refresh the display after every N simulation steps.\n"
-                "1 = update every step. Higher values favor simulation throughput over visual refresh rate.");
+                "1 = update every step. Higher values favor simulation throughput over visual refresh rate.\n"
+                "A live latency cap still keeps the viewport refreshing regularly during fast auto-run.");
             const float estStepsPerSec = estimatedSimulationStepsPerSecond();
             const float estRefreshesPerSec = estimatedDisplayRefreshesPerSecond();
             if (estStepsPerSec > 0.0f) {
-                ImGui::TextDisabled("Estimated: ~%.0f sim steps/sec, ~%.1f display updates/sec",
-                    estStepsPerSec, estRefreshesPerSec);
+                ImGui::TextDisabled("Estimated: ~%.0f sim steps/sec, ~%.1f display updates/sec (<= %.0f ms latency)",
+                    estStepsPerSec, estRefreshesPerSec, displayRefreshLatencyCapMs());
             } else {
                 ImGui::TextDisabled("Estimated: waiting for a completed auto-run batch...");
             }
@@ -960,7 +961,7 @@ void drawMetricsSection() {
     ImGui::TextDisabled("Batch step time:"); ImGui::NextColumn();
     ImGui::Text("%.2f ms", simulationLastBatchDurationMs_.load()); ImGui::NextColumn();
     ImGui::TextDisabled("Display interval:"); ImGui::NextColumn();
-    ImGui::Text("Every %d step(s)", std::max(1, viz_.displayRefreshEveryNSteps)); ImGui::NextColumn();
+    ImGui::Text("Every %d step(s) or %.0f ms", std::max(1, viz_.displayRefreshEveryNSteps), displayRefreshLatencyCapMs()); ImGui::NextColumn();
     ImGui::Columns(1);
 
     ImGui::Spacing();
@@ -968,12 +969,13 @@ void drawMetricsSection() {
         "Run the simulation thread unthrottled.\n"
         "Disable to yield between batches and reduce CPU pressure.");
     sliderIntWithHint("Steps between display updates##metrics", &viz_.displayRefreshEveryNSteps, 1, 1000,
-        "Refresh the display after every N simulation steps.");
+        "Refresh the display after every N simulation steps.\n"
+        "A live latency cap keeps the display responsive even when N is large.");
     const float estStepsPerSec = estimatedSimulationStepsPerSecond();
     const float estRefreshesPerSec = estimatedDisplayRefreshesPerSecond();
     if (estStepsPerSec > 0.0f) {
-        ImGui::TextDisabled("Estimated throughput: %.0f steps/sec, %.1f display updates/sec",
-            estStepsPerSec, estRefreshesPerSec);
+        ImGui::TextDisabled("Estimated throughput: %.0f steps/sec, %.1f display updates/sec (<= %.0f ms latency)",
+            estStepsPerSec, estRefreshesPerSec, displayRefreshLatencyCapMs());
     }
     checkboxWithHint("Adaptive render sampling", &viz_.adaptiveSampling,
         "Automatically skip cells when zoomed out to keep rendering fast.");
