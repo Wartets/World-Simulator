@@ -1,0 +1,45 @@
+schema:
+  name: game_of_life_model
+  version: "1.0"
+  description: "Game of Life model simulating cellular automaton dynamics on a 2D grid with simple birth and death rules based on neighbor counts."
+  author: "Colin Bossu Réaubourg"
+
+domains:
+  state_value:
+    kind: interval
+    min: 0
+    max: 1
+
+variables:
+  - id: living
+    role: state
+    support: cell
+    value_kind: bool
+    units: "1"
+    domain_ref: state_value
+    label: "Living Cell"
+    symbol: L
+    description: "Boolean variable indicating whether a cell is alive (1) or dead (0)."
+
+  - id: dt
+    role: parameter
+    support: global
+    value_kind: scalar
+    units: "s"
+    domain_ref: altitude_m
+    label: "Time Step"
+    symbol: dt
+    value: 1
+    description: "Nominal integration time step."
+
+numerics:
+  dt_ref: dt
+  time_integrator: explicit_euler
+
+stages:
+  - id: timekeeping
+    description: "Advance the global clock by the time step `dt`."
+    interactions:
+      - id: advance_time
+        description: "Increment the global time by `dt`."
+        equation: "time = time + dt"
