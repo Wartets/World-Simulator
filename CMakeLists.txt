@@ -167,6 +167,9 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/constraint_monitor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/time_control_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/theme_bootstrap.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/theme_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/keyboard_shortcuts.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/accessibility_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/ui_components.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/node_editor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_editor_window.cpp

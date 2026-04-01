@@ -61,7 +61,7 @@ void ThemeManager::createTheme(const std::string& name, const ColorPalette& pale
     theme.palette = palette;
     theme.fontScale = 1.0f;
     theme.windowRounding = 5.0f;
-    theme.darkMode = (palette.backgroundColor.r < 0.5f);
+    theme.darkMode = (palette.backgroundColor.x < 0.5f);
     
     themes_[name] = theme;
 }
@@ -71,8 +71,8 @@ void ThemeManager::applyToImGui() {
     // This requires ImGui context and style modification
 }
 
-glm::vec4 ThemeManager::getColor(const std::string& colorName) const {
-    if (!currentTheme_) return glm::vec4(0);
+ImVec4 ThemeManager::getColor(const std::string& colorName) const {
+    if (!currentTheme_) return ImVec4(0, 0, 0, 0);
     
     const auto& p = currentTheme_->palette;
     
@@ -86,7 +86,7 @@ glm::vec4 ThemeManager::getColor(const std::string& colorName) const {
     if (colorName == "error") return p.errorColor;
     if (colorName == "info") return p.infoColor;
     
-    return glm::vec4(0);
+    return ImVec4(0, 0, 0, 0);
 }
 
 void ThemeManager::setAccessibilityMode(bool enable) {
@@ -135,17 +135,17 @@ Theme ThemeManager::createLightTheme() const {
     theme.fontScale = 1.0f;
     theme.windowRounding = 5.0f;
     
-    theme.palette.backgroundColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-    theme.palette.foregroundColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    theme.palette.accentColor = glm::vec4(0.2f, 0.5f, 1.0f, 1.0f);
-    theme.palette.textColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    theme.palette.buttonColor = glm::vec4(0.9f, 0.9f, 0.9f, 1.0f);
-    theme.palette.buttonHoverColor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f);
-    theme.palette.buttonActiveColor = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
-    theme.palette.successColor = glm::vec4(0.0f, 0.8f, 0.0f, 1.0f);
-    theme.palette.warningColor = glm::vec4(1.0f, 0.7f, 0.0f, 1.0f);
-    theme.palette.errorColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-    theme.palette.infoColor = glm::vec4(0.0f, 0.5f, 1.0f, 1.0f);
+    theme.palette.backgroundColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.palette.foregroundColor = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    theme.palette.accentColor = ImVec4(0.2f, 0.5f, 1.0f, 1.0f);
+    theme.palette.textColor = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    theme.palette.buttonColor = ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
+    theme.palette.buttonHoverColor = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+    theme.palette.buttonActiveColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+    theme.palette.successColor = ImVec4(0.0f, 0.8f, 0.0f, 1.0f);
+    theme.palette.warningColor = ImVec4(1.0f, 0.7f, 0.0f, 1.0f);
+    theme.palette.errorColor = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+    theme.palette.infoColor = ImVec4(0.0f, 0.5f, 1.0f, 1.0f);
     
     return theme;
 }
@@ -159,17 +159,17 @@ Theme ThemeManager::createDarkTheme() const {
     theme.fontScale = 1.0f;
     theme.windowRounding = 5.0f;
     
-    theme.palette.backgroundColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f);
-    theme.palette.foregroundColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-    theme.palette.accentColor = glm::vec4(0.4f, 0.7f, 1.0f, 1.0f);
-    theme.palette.textColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-    theme.palette.buttonColor = glm::vec4(0.2f, 0.2f, 0.2f, 1.0f);
-    theme.palette.buttonHoverColor = glm::vec4(0.3f, 0.3f, 0.3f, 1.0f);
-    theme.palette.buttonActiveColor = glm::vec4(0.4f, 0.4f, 0.4f, 1.0f);
-    theme.palette.successColor = glm::vec4(0.2f, 1.0f, 0.2f, 1.0f);
-    theme.palette.warningColor = glm::vec4(1.0f, 0.8f, 0.0f, 1.0f);
-    theme.palette.errorColor = glm::vec4(1.0f, 0.2f, 0.2f, 1.0f);
-    theme.palette.infoColor = glm::vec4(0.4f, 0.7f, 1.0f, 1.0f);
+    theme.palette.backgroundColor = ImVec4(0.1f, 0.1f, 0.1f, 1.0f);
+    theme.palette.foregroundColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.palette.accentColor = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
+    theme.palette.textColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.palette.buttonColor = ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
+    theme.palette.buttonHoverColor = ImVec4(0.3f, 0.3f, 0.3f, 1.0f);
+    theme.palette.buttonActiveColor = ImVec4(0.4f, 0.4f, 0.4f, 1.0f);
+    theme.palette.successColor = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
+    theme.palette.warningColor = ImVec4(1.0f, 0.8f, 0.0f, 1.0f);
+    theme.palette.errorColor = ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
+    theme.palette.infoColor = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
     
     return theme;
 }
@@ -183,17 +183,17 @@ Theme ThemeManager::createHighContrastTheme() const {
     theme.fontScale = 1.2f;
     theme.windowRounding = 2.0f;
     
-    theme.palette.backgroundColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-    theme.palette.foregroundColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    theme.palette.accentColor = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);  // Pure blue
-    theme.palette.textColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    theme.palette.buttonColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    theme.palette.buttonHoverColor = glm::vec4(0.2f, 0.2f, 0.2f, 1.0f);
-    theme.palette.buttonActiveColor = glm::vec4(0.0f, 0.0f, 0.5f, 1.0f);
-    theme.palette.successColor = glm::vec4(0.0f, 0.8f, 0.0f, 1.0f);
-    theme.palette.warningColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-    theme.palette.errorColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-    theme.palette.infoColor = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+    theme.palette.backgroundColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    theme.palette.foregroundColor = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    theme.palette.accentColor = ImVec4(0.0f, 0.0f, 1.0f, 1.0f);  // Pure blue
+    theme.palette.textColor = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    theme.palette.buttonColor = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    theme.palette.buttonHoverColor = ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
+    theme.palette.buttonActiveColor = ImVec4(0.0f, 0.0f, 0.5f, 1.0f);
+    theme.palette.successColor = ImVec4(0.0f, 0.8f, 0.0f, 1.0f);
+    theme.palette.warningColor = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+    theme.palette.errorColor = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+    theme.palette.infoColor = ImVec4(0.0f, 0.0f, 1.0f, 1.0f);
     
     return theme;
 }

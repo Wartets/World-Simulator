@@ -1,9 +1,10 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include <map>
 #include <memory>
-#include <glm/glm.hpp>
+#include <imgui.h>
 
 /**
  * @file theme_manager.hpp
@@ -21,32 +22,32 @@ namespace ws::gui {
  */
 struct ColorPalette {
     // Base colors
-    glm::vec4 backgroundColor;
-    glm::vec4 foregroundColor;
-    glm::vec4 accentColor;
+    ImVec4 backgroundColor;
+    ImVec4 foregroundColor;
+    ImVec4 accentColor;
     
     // UI elements
-    glm::vec4 buttonColor;
-    glm::vec4 buttonHoverColor;
-    glm::vec4 buttonActiveColor;
-    glm::vec4 windowBgColor;
-    glm::vec4 windowBorderColor;
+    ImVec4 buttonColor;
+    ImVec4 buttonHoverColor;
+    ImVec4 buttonActiveColor;
+    ImVec4 windowBgColor;
+    ImVec4 windowBorderColor;
     
     // Text
-    glm::vec4 textColor;
-    glm::vec4 textDisabledColor;
-    glm::vec4 textHintColor;
+    ImVec4 textColor;
+    ImVec4 textDisabledColor;
+    ImVec4 textHintColor;
     
     // Status/feedback
-    glm::vec4 successColor;
-    glm::vec4 warningColor;
-    glm::vec4 errorColor;
-    glm::vec4 infoColor;
+    ImVec4 successColor;
+    ImVec4 warningColor;
+    ImVec4 errorColor;
+    ImVec4 infoColor;
     
     // Viewport
-    glm::vec4 viewportBgColor;
-    glm::vec4 gridColor;
-    glm::vec4 selectionColor;
+    ImVec4 viewportBgColor;
+    ImVec4 gridColor;
+    ImVec4 selectionColor;
 };
 
 /**
@@ -134,9 +135,9 @@ public:
     /**
      * @brief Get color by semantic name
      * @param colorName Color identifier (e.g., "accent", "error")
-     * @return Color as glm::vec4 (RGBA)
+     * @return Color as ImVec4 (RGBA)
      */
-    glm::vec4 getColor(const std::string& colorName) const;
+    ImVec4 getColor(const std::string& colorName) const;
     
     /**
      * @brief Enable accessibility mode

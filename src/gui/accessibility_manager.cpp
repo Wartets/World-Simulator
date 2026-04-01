@@ -1,4 +1,8 @@
 #include "ws/gui/accessibility_manager.hpp"
+#include <vector>
+#include <set>
+#include <algorithm>
+#include <cctype>
 
 namespace ws::gui {
 
