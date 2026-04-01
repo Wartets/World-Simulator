@@ -313,6 +313,17 @@ ModelSelector::ModelSelector()
             show_rename_dialog(false),
             show_export_dialog(false),
             show_delete_confirm_dialog(false),
+            show_column_id(true),
+            show_column_version(true),
+            show_column_format_version(true),
+            show_column_minimum_engine_version(true),
+            show_column_author(true),
+            show_column_creation_date(true),
+            show_column_tags(true),
+            show_column_description(true),
+            show_column_compatibility(true),
+            show_column_identity_hash(true),
+            show_column_last_modified(true),
             pending_rename_name{0},
             pending_export_path{0},
             import_source_path{0},
@@ -426,6 +437,50 @@ void ModelSelector::render(ImVec2 available_size) {
         }
         
         ImGui::Separator();
+        ImGui::TextDisabled("Data origins: model fields from metadata.json / version.json / model.json; last modified from filesystem metadata; identity hash computed from metadata.json + version.json + model.json + logic.ir.");
+
+        if (ImGui::BeginPopupContextWindow("ModelSelectorColumns", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+            ImGui::TextDisabled("Toggle table columns");
+            ImGui::Separator();
+            ImGui::Checkbox("ID", &show_column_id);
+            ImGui::Checkbox("Version", &show_column_version);
+            ImGui::Checkbox("Format version", &show_column_format_version);
+            ImGui::Checkbox("Minimum engine version", &show_column_minimum_engine_version);
+            ImGui::Checkbox("Author", &show_column_author);
+            ImGui::Checkbox("Creation date", &show_column_creation_date);
+            ImGui::Checkbox("Tags", &show_column_tags);
+            ImGui::Checkbox("Description", &show_column_description);
+            ImGui::Checkbox("Compatibility", &show_column_compatibility);
+            ImGui::Checkbox("Identity hash", &show_column_identity_hash);
+            ImGui::Checkbox("Last modified", &show_column_last_modified);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Show all")) {
+                show_column_id = true;
+                show_column_version = true;
+                show_column_format_version = true;
+                show_column_minimum_engine_version = true;
+                show_column_author = true;
+                show_column_creation_date = true;
+                show_column_tags = true;
+                show_column_description = true;
+                show_column_compatibility = true;
+                show_column_identity_hash = true;
+                show_column_last_modified = true;
+            }
+            if (ImGui::MenuItem("Show compact")) {
+                show_column_id = true;
+                show_column_version = true;
+                show_column_author = true;
+                show_column_description = true;
+                show_column_identity_hash = true;
+                show_column_last_modified = true;
+                show_column_format_version = false;
+                show_column_minimum_engine_version = false;
+                show_column_tags = false;
+                show_column_compatibility = false;
+            }
+            ImGui::EndPopup();
+        }
 
         const bool hasSelected = selected_model_index >= 0 && selected_model_index < static_cast<int>(models.size());
         if (hasSelected) {
@@ -475,19 +530,33 @@ void ModelSelector::render(ImVec2 available_size) {
             ImGuiTableFlags_ScrollY |
             ImGuiTableFlags_Resizable;
 
-        if (ImGui::BeginTable("ModelsTable", 12, tableFlags, ImVec2(0, ImGui::GetContentRegionAvail().y - 60.0f))) {
+        const int visible_column_count =
+            1 +
+            (show_column_id ? 1 : 0) +
+            (show_column_version ? 1 : 0) +
+            (show_column_format_version ? 1 : 0) +
+            (show_column_minimum_engine_version ? 1 : 0) +
+            (show_column_author ? 1 : 0) +
+            (show_column_creation_date ? 1 : 0) +
+            (show_column_tags ? 1 : 0) +
+            (show_column_description ? 1 : 0) +
+            (show_column_compatibility ? 1 : 0) +
+            (show_column_identity_hash ? 1 : 0) +
+            (show_column_last_modified ? 1 : 0);
+
+        if (ImGui::BeginTable("ModelsTable", visible_column_count, tableFlags, ImVec2(0, ImGui::GetContentRegionAvail().y - 60.0f))) {
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColName);
-            ImGui::TableSetupColumn("ID", 0, 0.0f, ColId);
-            ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_DefaultSort, 0.0f, ColVersion);
-            ImGui::TableSetupColumn("Format", 0, 0.0f, ColFormatVersion);
-            ImGui::TableSetupColumn("Min Engine", 0, 0.0f, ColMinimumEngineVersion);
-            ImGui::TableSetupColumn("Author", 0, 0.0f, ColAuthor);
-            ImGui::TableSetupColumn("Created", 0, 0.0f, ColCreationDate);
-            ImGui::TableSetupColumn("Tags", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColTags);
-            ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColDescription);
-            ImGui::TableSetupColumn("Compatibility", 0, 0.0f, ColCompatibility);
-            ImGui::TableSetupColumn("Identity Hash", 0, 0.0f, ColIdentityHash);
-            ImGui::TableSetupColumn("Last Modified", 0, 0.0f, ColLastModified);
+            if (show_column_id) ImGui::TableSetupColumn("ID", 0, 0.0f, ColId);
+            if (show_column_version) ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_DefaultSort, 0.0f, ColVersion);
+            if (show_column_format_version) ImGui::TableSetupColumn("Format", 0, 0.0f, ColFormatVersion);
+            if (show_column_minimum_engine_version) ImGui::TableSetupColumn("Min Engine", 0, 0.0f, ColMinimumEngineVersion);
+            if (show_column_author) ImGui::TableSetupColumn("Author", 0, 0.0f, ColAuthor);
+            if (show_column_creation_date) ImGui::TableSetupColumn("Created", 0, 0.0f, ColCreationDate);
+            if (show_column_tags) ImGui::TableSetupColumn("Tags", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColTags);
+            if (show_column_description) ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColDescription);
+            if (show_column_compatibility) ImGui::TableSetupColumn("Compatibility", 0, 0.0f, ColCompatibility);
+            if (show_column_identity_hash) ImGui::TableSetupColumn("Identity Hash", 0, 0.0f, ColIdentityHash);
+            if (show_column_last_modified) ImGui::TableSetupColumn("Last Modified", 0, 0.0f, ColLastModified);
             ImGui::TableHeadersRow();
 
             if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
@@ -553,50 +622,43 @@ void ModelSelector::render(ImVec2 available_size) {
                         on_edit_model(model);
                     }
                 }
+                if (row_selected || ImGui::IsItemHovered()) {
+                    ImU32 bg = row_selected ? IM_COL32(64, 128, 255, 96) : IM_COL32(96, 96, 128, 64);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, bg);
+                }
 
                 // ID column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", model.model_id.c_str());
+                if (show_column_id) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.model_id.c_str()); }
                 
                 // Version column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", model.version.c_str());
+                if (show_column_version) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.version.c_str()); }
 
                 // Format version column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", model.format_version.c_str());
+                if (show_column_format_version) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.format_version.c_str()); }
 
                 // Min engine column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", model.minimum_engine_version.c_str());
+                if (show_column_minimum_engine_version) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.minimum_engine_version.c_str()); }
 
                 // Author column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", model.author.c_str());
+                if (show_column_author) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.author.c_str()); }
 
                 // Created column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", model.creation_date.c_str());
+                if (show_column_creation_date) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.creation_date.c_str()); }
 
                 // Tags column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", joinTags(model.tags).c_str());
+                if (show_column_tags) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", joinTags(model.tags).c_str()); }
 
                 // Description column
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", model.description.c_str());
+                if (show_column_description) { ImGui::TableNextColumn(); ImGui::TextWrapped("%s", model.description.c_str()); }
                 
                 // Compatibility column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", model.compatibility.c_str());
+                if (show_column_compatibility) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.compatibility.c_str()); }
                 
                 // Identity hash column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", model.identity_hash.c_str());
+                if (show_column_identity_hash) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.identity_hash.c_str()); }
 
                 // Last modified column
-                ImGui::TableNextColumn();
-                ImGui::TextDisabled("%s", formatFileTime(model.last_modified).c_str());
+                if (show_column_last_modified) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", formatFileTime(model.last_modified).c_str()); }
             }
             
             ImGui::EndTable();

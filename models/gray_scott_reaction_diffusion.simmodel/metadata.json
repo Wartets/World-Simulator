@@ -1,12 +1,8 @@
 {
   "name": "Gray-Scott Reaction-Diffusion",
   "description": "Chemical reaction-diffusion simulation creating spatial Turing patterns (spots, stripes) from the interplay of two chemical substances, U and V.",
-  "author": "System",
-  "tags": [
-    "chemistry",
-    "reaction-diffusion",
-    "turing-patterns",
-    "pde",
-    "continuous"
+  "author": "Colin Bossu Reaubourg",
+  "creation_date": "2026-04-01",
+  "tags": ["chemistry", "reaction-diffusion", "turing-patterns", "pde", "continuous"
   ]
 }

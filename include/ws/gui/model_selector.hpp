@@ -65,6 +65,17 @@ private:
     bool show_rename_dialog;
     bool show_export_dialog;
     bool show_delete_confirm_dialog;
+    bool show_column_id;
+    bool show_column_version;
+    bool show_column_format_version;
+    bool show_column_minimum_engine_version;
+    bool show_column_author;
+    bool show_column_creation_date;
+    bool show_column_tags;
+    bool show_column_description;
+    bool show_column_compatibility;
+    bool show_column_identity_hash;
+    bool show_column_last_modified;
     char pending_rename_name[256];
     char pending_export_path[512];
     char import_source_path[512];
