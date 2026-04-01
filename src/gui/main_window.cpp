@@ -4,10 +4,15 @@
 #include "ws/gui/main_window/color_utils.hpp"
 #include "ws/gui/main_window/detail_utils.hpp"
 #include "ws/gui/main_window/panel_state.hpp"
+#include "ws/gui/heatmap_renderer.hpp"
+#include "ws/gui/contour_renderer.hpp"
+#include "ws/gui/render_rules.hpp"
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/session_manager/session_manager.hpp"
 #include "ws/gui/theme_bootstrap.hpp"
 #include "ws/gui/ui_components.hpp"
+#include "ws/gui/vector_renderer.hpp"
+#include "ws/gui/viewport_manager.hpp"
 
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
@@ -79,9 +84,15 @@ enum class AppState        { SessionManager, NewWorldWizard, Simulation };
 struct ViewportConfig {
     int  primaryFieldIndex = 0;
     DisplayType displayType = DisplayType::ScalarField;
+    ViewportRenderMode renderMode = ViewportRenderMode::Heatmap;
 
     NormalizationMode normalizationMode = NormalizationMode::StickyPerField;
     ColorMapMode      colorMapMode      = ColorMapMode::Turbo;
+    HeatmapNormalization heatmapNormalization = HeatmapNormalization::Linear;
+    HeatmapColorMap      heatmapColorMap = HeatmapColorMap::Turbo;
+    float heatmapPowerExponent = 1.0f;
+    float heatmapQuantileLow   = 0.05f;
+    float heatmapQuantileHigh  = 0.95f;
     float fixedRangeMin = 0.0f;
     float fixedRangeMax = 1.0f;
     std::unordered_map<std::string, std::pair<float,float>> stickyRanges;
@@ -95,6 +106,12 @@ struct ViewportConfig {
     int   vectorYFieldIndex = 1;
     int   vectorStride      = 6;
     float vectorScale       = 0.45f;
+
+    bool  showContours = false;
+    float contourInterval = 0.1f;
+    int   contourMaxLevels = 24;
+
+    bool  customRuleEnabled = false;
 };
 
 struct VisualizationState {
@@ -212,6 +229,7 @@ public:
 
         syncPanelFromConfig();
         refreshFieldNames();
+        heatmapRenderer_.initialize();
         requestSnapshotRefresh();
         startSnapshotWorker();
         startSimulationWorker();
@@ -340,6 +358,13 @@ private:
     int snapshotDisplayCacheGeneration_ = -1;
     int maxTextureSize_ = 0;
     int nextViewportRebuildCursor_ = 0;
+
+    HeatmapRenderer heatmapRenderer_{};
+    ViewportManager viewportManager_{4};
+    VectorRenderer  vectorRenderer_{};
+    ContourRenderer contourRenderer_{};
+    std::array<std::vector<RenderRule>, 4> viewportRenderRules_{};
+    bool dockLayoutInitialized_ = false;
 
     // UI interaction state
     bool   uiParameterChangedThisFrame_    = false;

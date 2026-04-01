@@ -208,6 +208,34 @@ void uploadRasterTexture(RasterTexture& tex, int w, int h,
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+bool saveViewportScreenshot(const int viewportIndex, const std::string& outputPath) const {
+    if (viewportIndex < 0 || viewportIndex >= static_cast<int>(rasterBuffers_.size())) {
+        return false;
+    }
+    const auto& tex = viewportRasters_[static_cast<std::size_t>(viewportIndex)];
+    const auto& rgba = rasterBuffers_[static_cast<std::size_t>(viewportIndex)];
+    if (tex.width <= 0 || tex.height <= 0 || rgba.size() < static_cast<std::size_t>(tex.width * tex.height * 4)) {
+        return false;
+    }
+
+    std::ofstream out(outputPath, std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) {
+        return false;
+    }
+
+    out << "P6\n" << tex.width << " " << tex.height << "\n255\n";
+    for (int y = 0; y < tex.height; ++y) {
+        const int srcY = tex.height - 1 - y;
+        for (int x = 0; x < tex.width; ++x) {
+            const std::size_t idx = (static_cast<std::size_t>(srcY) * static_cast<std::size_t>(tex.width) + static_cast<std::size_t>(x)) * 4u;
+            out.put(static_cast<char>(rgba[idx + 0u]));
+            out.put(static_cast<char>(rgba[idx + 1u]));
+            out.put(static_cast<char>(rgba[idx + 2u]));
+        }
+    }
+    return static_cast<bool>(out);
+}
+
 // Render config hashing
 [[nodiscard]] std::uint64_t makeRenderConfigHash(const ViewportConfig& vp) const {
     std::uint64_t h = 1469598103934665603ull;
@@ -236,7 +264,8 @@ void uploadRasterTexture(RasterTexture& tex, int w, int h,
 
 // View mapping
 [[nodiscard]] ViewMapping makeViewMapping(const ImVec2 min, const ImVec2 max,
-                                          const GridSpec grid) const {
+                                          const GridSpec grid,
+                                          const int viewportIndex) const {
     ViewMapping m;
     const float margin = 4.0f;
     const ImVec2 bMin(min.x + margin, min.y + margin);
@@ -252,10 +281,11 @@ void uploadRasterTexture(RasterTexture& tex, int w, int h,
     m.viewportMin = ImVec2(ctr.x - vW * 0.5f, ctr.y - vH * 0.5f);
     m.viewportMax = ImVec2(ctr.x + vW * 0.5f, ctr.y + vH * 0.5f);
 
-    const float zoom = std::max(0.05f, visuals_.zoom);
+    const auto& camera = viewportManager_.camera(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)));
+    const float zoom = std::max(0.05f, camera.zoom);
     const float cW = vW * zoom, cH = vH * zoom;
-    m.contentMin = ImVec2(ctr.x - cW * 0.5f + visuals_.panX,
-                          ctr.y - cH * 0.5f + visuals_.panY);
+    m.contentMin = ImVec2(ctr.x - cW * 0.5f + camera.panX,
+                          ctr.y - cH * 0.5f + camera.panY);
     m.cellW = cW / static_cast<float>(std::max(1u, grid.width));
     m.cellH = cH / static_cast<float>(std::max(1u, grid.height));
 
@@ -473,13 +503,6 @@ void drawSimulationCanvas() {
 
     clampVisualizationIndices();
 
-    ImDrawList* dl    = ImGui::GetBackgroundDrawList();
-    const ImVec2 disp = ImGui::GetIO().DisplaySize;
-    const ImVec2 cMin(0.0f, 0.0f), cMax(disp.x, disp.y);
-    if (cMax.x <= cMin.x + 8.0f || cMax.y <= cMin.y + 8.0f) return;
-
-    dl->AddRectFilled(cMin, cMax, IM_COL32(8, 10, 18, 255));
-
     int numVP = 1;
     if (viz_.layout == ScreenLayout::SplitLeftRight ||
         viz_.layout == ScreenLayout::SplitTopBottom) numVP = 2;
@@ -558,32 +581,45 @@ void drawSimulationCanvas() {
     if (autoRunning) nextViewportRebuildCursor_ = (startIdx + 1) % vpCount;
     else             nextViewportRebuildCursor_ = 0;
 
-    // Layout drawing
-    const float midX = (cMin.x + cMax.x) * 0.5f;
-    const float midY = (cMin.y + cMax.y) * 0.5f;
-
-    auto drawPanel = [&](int i, ImVec2 pMin, ImVec2 pMax) {
+    auto drawPanel = [&](int i, ImDrawList& windowDrawList, ImVec2 pMin, ImVec2 pMax) {
         auto& vp = viz_.viewports[i];
         auto& c  = renderCaches_[i];
-        drawRasterPanel(*dl, pMin, pMax, snapshot.grid,
+        drawRasterPanel(i, windowDrawList, pMin, pMax, snapshot.grid,
             c.primaryName, viewportRasters_[i], c.primaryMin, c.primaryMax, vp);
-        if (vp.displayType == DisplayType::WindField) drawWindFieldOverlay(*dl, pMin, pMax, snapshot.grid, vp);
-        else if (vp.showVectorField) drawVectorOverlay(*dl, pMin, pMax, snapshot.grid, vp);
+        if (vp.displayType == DisplayType::WindField) drawWindFieldOverlay(windowDrawList, pMin, pMax, snapshot.grid, vp, i);
+        else if (vp.showVectorField || vp.renderMode == ViewportRenderMode::Vector) drawVectorOverlay(windowDrawList, pMin, pMax, snapshot.grid, vp, i);
+        if (vp.showContours || vp.renderMode == ViewportRenderMode::Contour) drawContourOverlay(windowDrawList, pMin, pMax, snapshot.grid, vp, i, c.primaryMin, c.primaryMax);
     };
 
-    if      (viz_.layout == ScreenLayout::Single)
-        drawPanel(0, cMin, cMax);
-    else if (viz_.layout == ScreenLayout::SplitLeftRight) {
-        drawPanel(0, cMin, ImVec2(midX-3.0f, cMax.y));
-        drawPanel(1, ImVec2(midX+3.0f, cMin.y), cMax);
-    } else if (viz_.layout == ScreenLayout::SplitTopBottom) {
-        drawPanel(0, cMin, ImVec2(cMax.x, midY-3.0f));
-        drawPanel(1, ImVec2(cMin.x, midY+3.0f), cMax);
-    } else {
-        drawPanel(0, cMin,                      ImVec2(midX-2.0f, midY-2.0f));
-        drawPanel(1, ImVec2(midX+2.0f, cMin.y), ImVec2(cMax.x, midY-2.0f));
-        drawPanel(2, ImVec2(cMin.x, midY+2.0f), ImVec2(midX-2.0f, cMax.y));
-        drawPanel(3, ImVec2(midX+2.0f, midY+2.0f), cMax);
+    constexpr std::array<const char*, 4> kViewportWindowNames = {
+        "Runtime View 1", "Runtime View 2", "Runtime View 3", "Runtime View 4"
+    };
+    for (int i = 0; i < 4; ++i) {
+        ImGui::PushID(i);
+        ImGui::Begin(kViewportWindowNames[static_cast<std::size_t>(i)]);
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        const ImVec2 pMin = ImGui::GetCursorScreenPos();
+        const ImVec2 pMax(pMin.x + std::max(1.0f, avail.x), pMin.y + std::max(1.0f, avail.y));
+        if (i < numVP) {
+            ImDrawList* windowDrawList = ImGui::GetWindowDrawList();
+            drawPanel(i, *windowDrawList, pMin, pMax);
+        } else {
+            ImGui::TextDisabled("Viewport disabled by current layout setting.");
+        }
+        ImGui::End();
+        ImGui::PopID();
+    }
+
+    for (int i = 0; i < numVP; ++i) {
+        const auto req = viewportManager_.consumeScreenshotRequest(static_cast<std::size_t>(i));
+        if (!req.pending || req.outputPath.empty()) {
+            continue;
+        }
+        if (saveViewportScreenshot(i, req.outputPath)) {
+            appendLog("viewport_screenshot_saved path=" + req.outputPath);
+        } else {
+            appendLog("viewport_screenshot_failed path=" + req.outputPath);
+        }
     }
 
     // Field history window (floating)
@@ -632,7 +668,8 @@ void rebuildRasterTexture(int vi, const GridSpec grid,
         sH = std::max(1, static_cast<int>(static_cast<float>(sH) / sc));
     }
 
-    buf.assign(static_cast<std::size_t>(sW) * static_cast<std::size_t>(sH) * 4u, 0u);
+    std::vector<float> sampledValues;
+    sampledValues.assign(static_cast<std::size_t>(sW) * static_cast<std::size_t>(sH), std::numeric_limits<float>::quiet_NaN());
     for (int sy = 0; sy < sH; ++sy) {
         const int gy = std::clamp(
             static_cast<int>((static_cast<double>(sy) / std::max(1, sH-1)) * (H-1)), 0, H-1);
@@ -640,7 +677,28 @@ void rebuildRasterTexture(int vi, const GridSpec grid,
             const int gx = std::clamp(
                 static_cast<int>((static_cast<double>(sx) / std::max(1, sW-1)) * (W-1)), 0, W-1);
             const std::size_t src = static_cast<std::size_t>(gy) * W + gx;
-            const float val = src < primary.size() ? primary[src] : std::numeric_limits<float>::quiet_NaN();
+            sampledValues[static_cast<std::size_t>(sy) * static_cast<std::size_t>(sW) + static_cast<std::size_t>(sx)] =
+                (src < primary.size()) ? primary[src] : std::numeric_limits<float>::quiet_NaN();
+        }
+    }
+
+    HeatmapRenderParams params{};
+    params.minValue = pMin;
+    params.maxValue = pMax;
+    params.normalization = vp.heatmapNormalization;
+    params.colorMap = vp.heatmapColorMap;
+    params.powerExponent = vp.heatmapPowerExponent;
+    params.quantileLow = vp.heatmapQuantileLow;
+    params.quantileHigh = vp.heatmapQuantileHigh;
+
+    buf = heatmapRenderer_.buildRgba(sampledValues,
+                                     static_cast<std::uint32_t>(sW),
+                                     static_cast<std::uint32_t>(sH),
+                                     params);
+
+    if (vp.displayType != DisplayType::ScalarField) {
+        for (std::size_t i = 0; i < sampledValues.size(); ++i) {
+            const float val = sampledValues[i];
             ImU32 color = IM_COL32(18,18,28,255);
             if (std::isfinite(val)) {
                 if (vp.displayType == DisplayType::WindField && !vp.showWindMagnitudeBackground) {
@@ -648,26 +706,47 @@ void rebuildRasterTexture(int vi, const GridSpec grid,
                 } else {
                     const float t = std::clamp((val - pMin) / std::max(0.0001f, pMax - pMin), 0.0f, 1.0f);
                     color = mapDisplayTypeColor(
-                        (vp.displayType == DisplayType::ScalarField ||
-                         vp.displayType == DisplayType::WaterDepth) ? t : val,
+                        (vp.displayType == DisplayType::WaterDepth) ? t : val,
                         vp.displayType, vp.colorMapMode);
                 }
             }
             std::uint8_t r,g,b,a;
             unpackColor(color, r, g, b, a);
-            const std::size_t dst = (static_cast<std::size_t>(sy) * sW + sx) * 4u;
+            const std::size_t dst = i * 4u;
             buf[dst+0]=r; buf[dst+1]=g; buf[dst+2]=b; buf[dst+3]=a;
         }
     }
+
+    if (vp.customRuleEnabled && vp.renderMode == ViewportRenderMode::CustomRule) {
+        const auto& rules = viewportRenderRules_[static_cast<std::size_t>(std::clamp(vi, 0, 3))];
+        for (std::size_t i = 0; i < sampledValues.size(); ++i) {
+            const float sample = sampledValues[i];
+            if (!std::isfinite(sample)) {
+                continue;
+            }
+            std::array<float, 4> base{
+                static_cast<float>(buf[i * 4u + 0u]) / 255.0f,
+                static_cast<float>(buf[i * 4u + 1u]) / 255.0f,
+                static_cast<float>(buf[i * 4u + 2u]) / 255.0f,
+                static_cast<float>(buf[i * 4u + 3u]) / 255.0f
+            };
+            const auto blended = evaluateRules(rules, sample, base);
+            buf[i * 4u + 0u] = static_cast<std::uint8_t>(std::clamp(blended[0], 0.0f, 1.0f) * 255.0f);
+            buf[i * 4u + 1u] = static_cast<std::uint8_t>(std::clamp(blended[1], 0.0f, 1.0f) * 255.0f);
+            buf[i * 4u + 2u] = static_cast<std::uint8_t>(std::clamp(blended[2], 0.0f, 1.0f) * 255.0f);
+            buf[i * 4u + 3u] = static_cast<std::uint8_t>(std::clamp(blended[3], 0.0f, 1.0f) * 255.0f);
+        }
+    }
+
     uploadRasterTexture(raster, sW, sH, buf);
 }
 
 // Raster panel drawing
-void drawRasterPanel(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
+void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, const ImVec2 max,
                      const GridSpec grid, const std::string& title,
                      const RasterTexture& tex, const float minV, const float maxV,
                      const ViewportConfig& vp) const {
-    const ViewMapping m = makeViewMapping(min, max, grid);
+    const ViewMapping m = makeViewMapping(min, max, grid, viewportIndex);
     const float pw = m.viewportMax.x - m.viewportMin.x;
     const float ph = m.viewportMax.y - m.viewportMin.y;
     if (pw <= 4.0f || ph <= 4.0f) return;
@@ -772,7 +851,7 @@ void drawRasterPanel(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
 
 // Vector overlay
 void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
-                       const GridSpec grid, const ViewportConfig& vp) const {
+                       const GridSpec grid, const ViewportConfig& vp, const int viewportIndex) const {
     const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
     if (fields.empty()) return;
     if (vp.vectorXFieldIndex >= (int)fields.size() ||
@@ -785,52 +864,16 @@ void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
     minMaxFinite(xVals, xMin, xMax);
     minMaxFinite(yVals, yMin, yMax);
 
-    const ViewMapping m = makeViewMapping(min, max, grid);
-    const int stride = std::max(std::max(1, vp.vectorStride), m.samplingStride);
-
-    dl.PushClipRect(m.viewportMin, m.viewportMax, true);
-
-    for (std::uint32_t cy = 0; cy < grid.height; cy += stride) {
-        for (std::uint32_t cx = 0; cx < grid.width; cx += stride) {
-            const std::size_t idx = static_cast<std::size_t>(cy) * grid.width + cx;
-            if (idx >= xVals.size() || idx >= yVals.size()) continue;
-            if (!std::isfinite(xVals[idx]) || !std::isfinite(yVals[idx])) continue;
-
-            const float nx = ((xVals[idx] - xMin) / std::max(0.0001f, xMax-xMin) - 0.5f) * 2.0f;
-            const float ny = ((yVals[idx] - yMin) / std::max(0.0001f, yMax-yMin) - 0.5f) * 2.0f;
-            const float mag = std::sqrt(nx*nx + ny*ny);
-
-            const ImVec2 ctr(
-                m.contentMin.x + (static_cast<float>(cx) + 0.5f) * m.cellW,
-                m.contentMin.y + (static_cast<float>(cy) + 0.5f) * m.cellH);
-            const float len = std::min(m.cellW, m.cellH) * stride * vp.vectorScale;
-            const ImVec2 tip(ctr.x + nx * len, ctr.y + ny * len);
-
-            // Color arrows by magnitude
-            const int r = static_cast<int>(std::clamp(80.0f + 155.0f * mag, 80.0f, 235.0f));
-            const int g = static_cast<int>(std::clamp(235.0f - 100.0f * mag, 100.0f, 235.0f));
-            const ImU32 arrowColor = IM_COL32(r, g, 80, 210);
-
-            dl.AddLine(ctr, tip, arrowColor, 1.5f);
-
-            // Arrowhead
-            if (mag > 0.05f && len > 4.0f) {
-                const float ax = nx / std::max(0.001f, mag);
-                const float ay = ny / std::max(0.001f, mag);
-                const float headLen = std::min(len * 0.35f, 8.0f);
-                const ImVec2 h1(tip.x - ax*headLen + ay*headLen*0.45f,
-                                tip.y - ay*headLen - ax*headLen*0.45f);
-                const ImVec2 h2(tip.x - ax*headLen - ay*headLen*0.45f,
-                                tip.y - ay*headLen + ax*headLen*0.45f);
-                dl.AddTriangleFilled(tip, h1, h2, arrowColor);
-            }
-        }
-    }
-    dl.PopClipRect();
+    const ViewMapping m = makeViewMapping(min, max, grid, viewportIndex);
+    VectorRenderConfig config{};
+    config.stride = std::max(std::max(1, vp.vectorStride), m.samplingStride);
+    config.scale = vp.vectorScale;
+    vectorRenderer_.draw(dl, m.viewportMin, m.viewportMax, m.contentMin, m.cellW, m.cellH,
+                         grid, xVals, yVals, config);
 }
 
 void drawWindFieldOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
-                          const GridSpec grid, const ViewportConfig& vp) const {
+                          const GridSpec grid, const ViewportConfig& vp, const int viewportIndex) const {
     const auto [windUIdx, windVIdx] = findWindFieldIndices();
     const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
     if (windUIdx < 0 || windVIdx < 0 ||
@@ -839,47 +882,32 @@ void drawWindFieldOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
 
     const auto xVals = mergedFieldValues(fields[static_cast<std::size_t>(windUIdx)], viz_.showSparseOverlay);
     const auto yVals = mergedFieldValues(fields[static_cast<std::size_t>(windVIdx)], viz_.showSparseOverlay);
-    const ViewMapping m = makeViewMapping(min, max, grid);
-    const int stride = std::max(std::max(1, vp.vectorStride), m.samplingStride);
-    constexpr float kWindComponentMax = 8.0f;
+    const ViewMapping m = makeViewMapping(min, max, grid, viewportIndex);
+    VectorRenderConfig config{};
+    config.stride = std::max(std::max(1, vp.vectorStride), m.samplingStride);
+    config.scale = vp.vectorScale;
+    vectorRenderer_.draw(dl, m.viewportMin, m.viewportMax, m.contentMin, m.cellW, m.cellH,
+                         grid, xVals, yVals, config);
+}
 
-    dl.PushClipRect(m.viewportMin, m.viewportMax, true);
-
-    for (std::uint32_t cy = 0; cy < grid.height; cy += stride) {
-        for (std::uint32_t cx = 0; cx < grid.width; cx += stride) {
-            const std::size_t idx = static_cast<std::size_t>(cy) * grid.width + cx;
-            if (idx >= xVals.size() || idx >= yVals.size()) continue;
-            if (!std::isfinite(xVals[idx]) || !std::isfinite(yVals[idx])) continue;
-
-            const float nx = std::clamp(xVals[idx] / kWindComponentMax, -1.0f, 1.0f);
-            const float ny = std::clamp(yVals[idx] / kWindComponentMax, -1.0f, 1.0f);
-            const float mag = std::sqrt(nx * nx + ny * ny);
-
-            const ImVec2 ctr(
-                m.contentMin.x + (static_cast<float>(cx) + 0.5f) * m.cellW,
-                m.contentMin.y + (static_cast<float>(cy) + 0.5f) * m.cellH);
-            const float len = std::min(m.cellW, m.cellH) * stride * vp.vectorScale;
-            const ImVec2 tip(ctr.x + nx * len, ctr.y + ny * len);
-
-            const int r = static_cast<int>(std::clamp(100.0f + 120.0f * mag, 100.0f, 240.0f));
-            const int g = static_cast<int>(std::clamp(210.0f - 100.0f * mag, 90.0f, 210.0f));
-            const ImU32 arrowColor = IM_COL32(r, g, 110, 220);
-            dl.AddLine(ctr, tip, arrowColor, 1.6f);
-
-            if (mag > 0.05f && len > 4.0f) {
-                const float ax = nx / std::max(0.001f, mag);
-                const float ay = ny / std::max(0.001f, mag);
-                const float headLen = std::min(len * 0.35f, 8.0f);
-                const ImVec2 h1(tip.x - ax * headLen + ay * headLen * 0.45f,
-                                tip.y - ay * headLen - ax * headLen * 0.45f);
-                const ImVec2 h2(tip.x - ax * headLen - ay * headLen * 0.45f,
-                                tip.y - ay * headLen + ax * headLen * 0.45f);
-                dl.AddTriangleFilled(tip, h1, h2, arrowColor);
-            }
-        }
+void drawContourOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
+                        const GridSpec grid, const ViewportConfig& vp, const int viewportIndex,
+                        const float minValue, const float maxValue) const {
+    const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
+    if (fields.empty()) {
+        return;
+    }
+    if (vp.primaryFieldIndex < 0 || vp.primaryFieldIndex >= static_cast<int>(fields.size())) {
+        return;
     }
 
-    dl.PopClipRect();
+    const auto values = mergedFieldValues(fields[static_cast<std::size_t>(vp.primaryFieldIndex)], viz_.showSparseOverlay);
+    const ViewMapping m = makeViewMapping(min, max, grid, viewportIndex);
+    ContourRenderConfig cfg{};
+    cfg.interval = std::max(1e-4f, vp.contourInterval);
+    cfg.maxLevels = std::max(2, vp.contourMaxLevels);
+    contourRenderer_.draw(dl, m.viewportMin, m.viewportMax, m.contentMin, m.cellW, m.cellH,
+                          grid, values, minValue, maxValue, cfg);
 }
 
 // Index clamping

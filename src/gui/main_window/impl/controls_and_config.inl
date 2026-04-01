@@ -46,13 +46,19 @@ void handleKeyboardShortcuts() {
     // Escape -> return focus to viewport (clear ImGui input focus)
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::SetWindowFocus(nullptr);
 
-    // +/- -> adjust zoom
-    if (ImGui::IsKeyDown(ImGuiKey_Equal)) visuals_.zoom = std::clamp(visuals_.zoom * 1.02f, 0.1f, 10.0f);
-    if (ImGui::IsKeyDown(ImGuiKey_Minus))  visuals_.zoom = std::clamp(visuals_.zoom * 0.98f, 0.1f, 10.0f);
+    // +/- -> adjust active viewport zoom
+    if (ImGui::IsKeyDown(ImGuiKey_Equal)) {
+        const auto& cam = viewportManager_.camera(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)));
+        viewportManager_.setZoom(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)), cam.zoom * 1.02f);
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_Minus)) {
+        const auto& cam = viewportManager_.camera(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)));
+        viewportManager_.setZoom(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)), cam.zoom * 0.98f);
+    }
 
-    // R -> reset zoom/pan
+    // R -> reset active viewport zoom/pan
     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
-        visuals_.zoom = 1.0f; visuals_.panX = 0.0f; visuals_.panY = 0.0f;
+        viewportManager_.fit(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)));
     }
 }
 
@@ -647,7 +653,7 @@ void drawViewportSettingsSection() {
             const char* labels[] = {"View 1 [F1]","View 2 [F2]","View 3 [F3]","View 4 [F4]"};
             if (ImGui::BeginTabItem(labels[i])) {
                 viz_.activeViewportEditor = i;
-                drawSingleViewportEditor(viz_.viewports[i]);
+                drawSingleViewportEditor(viz_.viewports[i], i);
                 ImGui::EndTabItem();
             }
         }
@@ -655,13 +661,32 @@ void drawViewportSettingsSection() {
     }
 }
 
-void drawSingleViewportEditor(ViewportConfig& vp) {
+void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
     static constexpr const char* dispTypeNames[] = {
         "Scalar Field", "Surface Category", "Relative Elevation", "Surface Water", "Moisture Map", "Wind Field"};
     static constexpr const char* colorMapNames[] = {
         "Turbo", "Grayscale", "Diverging", "Water"};
     static constexpr const char* normNames[] = {
         "Per-frame auto", "Sticky per-field", "Fixed manual"};
+    static constexpr const char* renderModeNames[] = {
+        "Heatmap", "Vector", "Contour", "Custom rule"};
+    static constexpr const char* heatmapNormNames[] = {
+        "Linear", "Logarithmic", "Sqrt", "Power", "Quantile"};
+    static constexpr const char* heatmapPaletteNames[] = {
+        "Viridis", "Hot", "Cool", "Jet", "Turbo", "Custom"};
+
+    int renderMode = static_cast<int>(vp.renderMode);
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("Render mode##rm", &renderMode, renderModeNames,
+            static_cast<int>(std::size(renderModeNames)))) {
+        vp.renderMode = static_cast<ViewportRenderMode>(std::clamp(renderMode, 0, static_cast<int>(std::size(renderModeNames) - 1)));
+        vp.showVectorField = (vp.renderMode == ViewportRenderMode::Vector);
+        vp.showContours = (vp.renderMode == ViewportRenderMode::Contour);
+        vp.customRuleEnabled = (vp.renderMode == ViewportRenderMode::CustomRule);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::SetTooltip("Select viewport rendering mode: heatmap, vector, contour, or custom rule blend.");
+    }
 
     // Primary field
     ImGui::SetNextItemWidth(-1.0f);
@@ -737,8 +762,109 @@ void drawSingleViewportEditor(ViewportConfig& vp) {
         ImGui::TextDisabled("Wind Field normalizes from the fixed wind vector range.");
     }
 
+    ImGui::Separator();
+    ImGui::TextDisabled("Heatmap pipeline");
+    int hNorm = static_cast<int>(vp.heatmapNormalization);
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("Normalization##hmnorm", &hNorm, heatmapNormNames,
+            static_cast<int>(std::size(heatmapNormNames)))) {
+        vp.heatmapNormalization = static_cast<HeatmapNormalization>(std::clamp(hNorm, 0, static_cast<int>(std::size(heatmapNormNames) - 1)));
+    }
+    int hPalette = static_cast<int>(vp.heatmapColorMap);
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("Palette##hmpalette", &hPalette, heatmapPaletteNames,
+            static_cast<int>(std::size(heatmapPaletteNames)))) {
+        vp.heatmapColorMap = static_cast<HeatmapColorMap>(std::clamp(hPalette, 0, static_cast<int>(std::size(heatmapPaletteNames) - 1)));
+    }
+    if (vp.heatmapNormalization == HeatmapNormalization::Power) {
+        NumericSliderPair("Power exponent##hmpow", &vp.heatmapPowerExponent, 0.1f, 8.0f, "%.2f", 70.0f);
+    }
+    if (vp.heatmapNormalization == HeatmapNormalization::Quantile) {
+        NumericSliderPair("Quantile low##hmql", &vp.heatmapQuantileLow, 0.0f, 0.95f, "%.2f", 70.0f);
+        NumericSliderPair("Quantile high##hmqh", &vp.heatmapQuantileHigh, 0.05f, 1.0f, "%.2f", 70.0f);
+        vp.heatmapQuantileHigh = std::max(vp.heatmapQuantileHigh, vp.heatmapQuantileLow + 0.01f);
+    }
+
+    if (vp.renderMode == ViewportRenderMode::Contour) {
+        checkboxWithHint("Show contour overlay", &vp.showContours,
+            "Render marching-squares contour lines over the active scalar field.");
+        if (vp.showContours) {
+            NumericSliderPair("Contour interval##cti", &vp.contourInterval, 0.001f, 5.0f, "%.3f", 70.0f);
+            NumericSliderPairInt("Max contour levels##ctl", &vp.contourMaxLevels, 2, 128, "%d", 55.0f);
+        }
+    }
+
+    if (vp.renderMode == ViewportRenderMode::CustomRule) {
+        checkboxWithHint("Enable custom rules", &vp.customRuleEnabled,
+            "Applies ordered rule blending over the heatmap output.");
+        if (vp.customRuleEnabled) {
+            if (SecondaryButton("Save rule preset", ImVec2(130.0f, 24.0f))) {
+                std::filesystem::create_directories(std::filesystem::path("profiles") / "render_presets");
+                RenderPreset preset;
+                preset.name = "viewport_" + std::to_string(viewportIndex + 1);
+                preset.rules = viewportRenderRules_[static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3))];
+                std::string msg;
+                const auto path = (std::filesystem::path("profiles") / "render_presets" / (preset.name + ".wsrender")).string();
+                if (saveRenderPreset(preset, path, msg)) appendLog(msg);
+                else appendLog(msg);
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Load rule preset", ImVec2(130.0f, 24.0f))) {
+                RenderPreset preset;
+                std::string msg;
+                const auto path = (std::filesystem::path("profiles") / "render_presets" /
+                    ("viewport_" + std::to_string(viewportIndex + 1) + ".wsrender")).string();
+                if (loadRenderPreset(path, preset, msg)) {
+                    viewportRenderRules_[static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3))] = std::move(preset.rules);
+                    appendLog(msg);
+                } else {
+                    appendLog(msg);
+                }
+            }
+            ImGui::TextDisabled("Active rules: %d", static_cast<int>(viewportRenderRules_[static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3))].size()));
+        }
+    }
+
     checkboxWithHint("Show legend", &vp.showLegend,
         "Overlay min/max/field name on the viewport.");
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Viewport camera");
+    const auto& cam = viewportManager_.camera(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)));
+    float zoom = cam.zoom;
+    float panX = cam.panX;
+    float panY = cam.panY;
+    if (NumericSliderPair("Zoom##vpzoom", &zoom, 0.05f, 12.0f, "%.2f", 70.0f)) {
+        viewportManager_.setZoom(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)), zoom);
+    }
+    if (NumericSliderPair("Pan X##vppx", &panX, -4000.0f, 4000.0f, "%.0f", 70.0f)) {
+        viewportManager_.setPan(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)), panX, panY);
+    }
+    if (NumericSliderPair("Pan Y##vppy", &panY, -4000.0f, 4000.0f, "%.0f", 70.0f)) {
+        viewportManager_.setPan(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)), panX, panY);
+    }
+    if (SecondaryButton("Fit viewport", ImVec2(120.0f, 22.0f))) {
+        viewportManager_.fit(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)));
+    }
+    ImGui::SameLine();
+    if (SecondaryButton("Screenshot", ImVec2(120.0f, 22.0f))) {
+        const auto nowMs = static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+        std::filesystem::create_directories(std::filesystem::path("checkpoints") / "screenshots");
+        const auto out = (std::filesystem::path("checkpoints") / "screenshots" /
+            ("viewport_" + std::to_string(viewportIndex + 1) + "_" + std::to_string(nowMs) + ".ppm")).string();
+        viewportManager_.requestScreenshot(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)), out);
+    }
+    bool syncPan = viewportManager_.syncPan();
+    if (checkboxWithHint("Sync pan across viewports", &syncPan,
+        "When enabled, panning one viewport updates all active viewports.")) {
+        viewportManager_.setSyncPan(syncPan);
+    }
+    bool syncZoom = viewportManager_.syncZoom();
+    if (checkboxWithHint("Sync zoom across viewports", &syncZoom,
+        "When enabled, zoom updates are broadcast to all viewports.")) {
+        viewportManager_.setSyncZoom(syncZoom);
+    }
 
     // Vector overlay
     ImGui::Separator();
@@ -816,14 +942,22 @@ void drawOverlaySection() {
 }
 
 void drawOpticsSection() {
-    sliderFloatWithHint("Zoom", &visuals_.zoom, 0.05f, 12.0f, "%.2f",
-        "Viewport zoom. Shortcuts: +/- keys.  R to reset.");
-    sliderFloatWithHint("Pan X", &visuals_.panX, -4000.0f, 4000.0f, "%.0f",
-        "Horizontal pan offset in pixels.");
-    sliderFloatWithHint("Pan Y", &visuals_.panY, -4000.0f, 4000.0f, "%.0f",
-        "Vertical pan offset in pixels.");
+    const std::size_t idx = static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3));
+    auto cam = viewportManager_.camera(idx);
+    if (sliderFloatWithHint("Zoom", &cam.zoom, 0.05f, 12.0f, "%.2f",
+        "Viewport zoom. Shortcuts: +/- keys.  R to reset.")) {
+        viewportManager_.setZoom(idx, cam.zoom);
+    }
+    if (sliderFloatWithHint("Pan X", &cam.panX, -4000.0f, 4000.0f, "%.0f",
+        "Horizontal pan offset in pixels.")) {
+        viewportManager_.setPan(idx, cam.panX, cam.panY);
+    }
+    if (sliderFloatWithHint("Pan Y", &cam.panY, -4000.0f, 4000.0f, "%.0f",
+        "Vertical pan offset in pixels.")) {
+        viewportManager_.setPan(idx, cam.panX, cam.panY);
+    }
     if (SecondaryButton("Reset camera  [R]", ImVec2(-1.0f, 22.0f))) {
-        visuals_.zoom = 1.0f; visuals_.panX = 0.0f; visuals_.panY = 0.0f;
+        viewportManager_.fit(idx);
     }
     ImGui::Separator();
     sliderFloatWithHint("Brightness", &visuals_.brightness, 0.1f, 3.0f, "%.2f",
@@ -1450,20 +1584,38 @@ void saveDisplayPrefs() {
     out << "displayHighMoistureThreshold=" << viz_.displayManager.highMoistureThreshold          << "\n";
     out << "displayRefreshEveryNSteps=" << viz_.displayRefreshEveryNSteps                       << "\n";
     out << "unlimitedSimSpeed="         << static_cast<int>(viz_.unlimitedSimSpeed)             << "\n";
+    out << "syncPan="                   << static_cast<int>(viewportManager_.syncPan())         << "\n";
+    out << "syncZoom="                  << static_cast<int>(viewportManager_.syncZoom())        << "\n";
 
     for (int i = 0; i < 4; ++i) {
         const auto& vp = viz_.viewports[i];
+        const auto& cam = viewportManager_.camera(static_cast<std::size_t>(i));
         out << "vp" << i << "_primaryFieldIndex="  << vp.primaryFieldIndex             << "\n";
         out << "vp" << i << "_displayType="        << static_cast<int>(vp.displayType)  << "\n";
+        out << "vp" << i << "_renderMode="         << static_cast<int>(vp.renderMode)   << "\n";
         out << "vp" << i << "_normalizationMode="  << static_cast<int>(vp.normalizationMode) << "\n";
         out << "vp" << i << "_colorMapMode="       << static_cast<int>(vp.colorMapMode)  << "\n";
+        out << "vp" << i << "_heatmapNormalization=" << static_cast<int>(vp.heatmapNormalization) << "\n";
+        out << "vp" << i << "_heatmapColorMap="    << static_cast<int>(vp.heatmapColorMap) << "\n";
+        out << "vp" << i << "_heatmapPowerExponent=" << vp.heatmapPowerExponent << "\n";
+        out << "vp" << i << "_heatmapQuantileLow=" << vp.heatmapQuantileLow << "\n";
+        out << "vp" << i << "_heatmapQuantileHigh=" << vp.heatmapQuantileHigh << "\n";
         out << "vp" << i << "_showWindMagnitudeBackground=" << vp.showWindMagnitudeBackground << "\n";
         out << "vp" << i << "_showVectorField="    << vp.showVectorField                << "\n";
         out << "vp" << i << "_vectorXFieldIndex="  << vp.vectorXFieldIndex              << "\n";
         out << "vp" << i << "_vectorYFieldIndex="  << vp.vectorYFieldIndex              << "\n";
+        out << "vp" << i << "_vectorStride="       << vp.vectorStride                   << "\n";
+        out << "vp" << i << "_vectorScale="        << vp.vectorScale                    << "\n";
+        out << "vp" << i << "_showContours="       << vp.showContours                   << "\n";
+        out << "vp" << i << "_contourInterval="    << vp.contourInterval                << "\n";
+        out << "vp" << i << "_contourMaxLevels="   << vp.contourMaxLevels               << "\n";
+        out << "vp" << i << "_customRuleEnabled="  << vp.customRuleEnabled              << "\n";
         out << "vp" << i << "_showLegend="         << vp.showLegend                    << "\n";
         out << "vp" << i << "_fixedRangeMin="      << vp.fixedRangeMin                 << "\n";
         out << "vp" << i << "_fixedRangeMax="      << vp.fixedRangeMax                 << "\n";
+        out << "vp" << i << "_zoom="               << cam.zoom                         << "\n";
+        out << "vp" << i << "_panX="               << cam.panX                         << "\n";
+        out << "vp" << i << "_panY="               << cam.panY                         << "\n";
     }
 }
 
@@ -1491,6 +1643,8 @@ void loadDisplayPrefs() {
             else if (key == "displayHighMoistureThreshold") viz_.displayManager.highMoistureThreshold = std::stof(val);
             else if (key == "displayRefreshEveryNSteps") viz_.displayRefreshEveryNSteps = std::stoi(val);
             else if (key == "unlimitedSimSpeed")       viz_.unlimitedSimSpeed = (std::stoi(val) != 0);
+            else if (key == "syncPan") viewportManager_.setSyncPan(std::stoi(val) != 0);
+            else if (key == "syncZoom") viewportManager_.setSyncZoom(std::stoi(val) != 0);
             else if (key.size() > 3 && key[0]=='v' && key[1]=='p' && key[3]=='_') {
                 int vi = key[2] - '0';
                 if (vi < 0 || vi > 3) continue;
@@ -1498,15 +1652,36 @@ void loadDisplayPrefs() {
                 const std::string sub = key.substr(4);
                 if      (sub == "primaryFieldIndex")  vp.primaryFieldIndex  = std::stoi(val);
                 else if (sub == "displayType")        vp.displayType        = static_cast<DisplayType>(std::stoi(val));
+                else if (sub == "renderMode")         vp.renderMode         = static_cast<ViewportRenderMode>(std::stoi(val));
                 else if (sub == "normalizationMode")  vp.normalizationMode  = static_cast<NormalizationMode>(std::stoi(val));
                 else if (sub == "colorMapMode")       vp.colorMapMode       = static_cast<ColorMapMode>(std::stoi(val));
+                else if (sub == "heatmapNormalization") vp.heatmapNormalization = static_cast<HeatmapNormalization>(std::stoi(val));
+                else if (sub == "heatmapColorMap")    vp.heatmapColorMap    = static_cast<HeatmapColorMap>(std::stoi(val));
+                else if (sub == "heatmapPowerExponent") vp.heatmapPowerExponent = std::stof(val);
+                else if (sub == "heatmapQuantileLow") vp.heatmapQuantileLow = std::stof(val);
+                else if (sub == "heatmapQuantileHigh") vp.heatmapQuantileHigh = std::stof(val);
                 else if (sub == "showWindMagnitudeBackground") vp.showWindMagnitudeBackground = (std::stoi(val) != 0);
                 else if (sub == "showVectorField")    vp.showVectorField    = (std::stoi(val) != 0);
                 else if (sub == "vectorXFieldIndex")  vp.vectorXFieldIndex  = std::stoi(val);
                 else if (sub == "vectorYFieldIndex")  vp.vectorYFieldIndex  = std::stoi(val);
+                else if (sub == "vectorStride")       vp.vectorStride       = std::stoi(val);
+                else if (sub == "vectorScale")        vp.vectorScale        = std::stof(val);
+                else if (sub == "showContours")       vp.showContours       = (std::stoi(val) != 0);
+                else if (sub == "contourInterval")    vp.contourInterval    = std::stof(val);
+                else if (sub == "contourMaxLevels")   vp.contourMaxLevels   = std::stoi(val);
+                else if (sub == "customRuleEnabled")  vp.customRuleEnabled  = (std::stoi(val) != 0);
                 else if (sub == "showLegend")         vp.showLegend         = (std::stoi(val) != 0);
                 else if (sub == "fixedRangeMin")      vp.fixedRangeMin      = std::stof(val);
                 else if (sub == "fixedRangeMax")      vp.fixedRangeMax      = std::stof(val);
+                else if (sub == "zoom") {
+                    viewportManager_.setZoom(static_cast<std::size_t>(vi), std::stof(val));
+                } else if (sub == "panX") {
+                    const auto c = viewportManager_.camera(static_cast<std::size_t>(vi));
+                    viewportManager_.setPan(static_cast<std::size_t>(vi), std::stof(val), c.panY);
+                } else if (sub == "panY") {
+                    const auto c = viewportManager_.camera(static_cast<std::size_t>(vi));
+                    viewportManager_.setPan(static_cast<std::size_t>(vi), c.panX, std::stof(val));
+                }
             }
         } catch (...) {}
     }

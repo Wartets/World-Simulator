@@ -162,6 +162,11 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_generator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/paint_tools.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_viewport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/heatmap_renderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/viewport_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/render_rule_editor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/vector_renderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/contour_renderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp

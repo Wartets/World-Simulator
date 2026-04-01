@@ -471,6 +471,28 @@
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::Begin("DockSpaceHost", nullptr, flags);
+    #ifdef IMGUI_HAS_DOCK
+        const ImGuiID dockspaceId = ImGui::GetID("RuntimeDockspace");
+        ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+        if (!dockLayoutInitialized_) {
+            dockLayoutInitialized_ = true;
+            ImGui::DockBuilderRemoveNode(dockspaceId);
+            ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->Size);
+
+            ImGuiID dockMain = dockspaceId;
+            ImGuiID dockLeft = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, 0.65f, nullptr, &dockMain);
+            ImGuiID dockBottomLeft = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
+            ImGuiID dockTopRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Up, 0.55f, nullptr, &dockMain);
+
+            ImGui::DockBuilderDockWindow("Runtime View 1", dockLeft);
+            ImGui::DockBuilderDockWindow("Runtime View 2", dockBottomLeft);
+            ImGui::DockBuilderDockWindow("Runtime View 3", dockTopRight);
+            ImGui::DockBuilderDockWindow("Runtime View 4", dockMain);
+            ImGui::DockBuilderDockWindow("Control Panel##main", dockMain);
+            ImGui::DockBuilderFinish(dockspaceId);
+        }
+#endif
         ImGui::PopStyleVar(3);
         ImGui::End();
     }
