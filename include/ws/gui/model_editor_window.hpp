@@ -24,6 +24,8 @@ public:
     
     // Rendering
     void render(ImVec2 available_size);
+
+    void open() { window_open = true; }
     
     // Accessors
     bool isOpen() const { return window_open; }

@@ -99,7 +99,7 @@ void drawStatusHeader() {
 
     // Save & Return button
     {
-        const char* label = hasWorld ? "Save & Exit  [Ctrl+S]" : "Exit to Lobby";
+        const char* label = hasWorld ? "Save & Exit  [Ctrl+S]" : "Back to Models";
         ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(40, 80, 140, 220));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(55, 105, 175, 240));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(30, 65, 115, 255));
@@ -114,12 +114,12 @@ void drawStatusHeader() {
             std::string stopMsg;
             runtime_.stop(stopMsg);
             if (!stopMsg.empty()) appendLog(stopMsg);
-            appState_ = AppState::SessionManager;
-            sessionUi_.needsRefresh = true;
+            appState_ = AppState::ModelSelector;
+            modelSelector_.open();
         }
         ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::SetTooltip("Saves the active world (profile + checkpoint) and returns to the session manager.\nShortcut: Ctrl+S (save only)");
+            ImGui::SetTooltip("Saves the active world (profile + checkpoint) and returns to the model selector.\nShortcut: Ctrl+S (save only)");
         }
     }
 

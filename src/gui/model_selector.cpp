@@ -2,14 +2,107 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <iomanip>
 #include <fstream>
+#include <sstream>
 #include <nlohmann/json.hpp>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace ws::gui {
+
+namespace {
+
+constexpr const char* kCurrentEngineVersion = "1.0.0";
+
+std::string formatFileTime(const fs::file_time_type& timePoint) {
+    try {
+        const auto now = std::chrono::system_clock::now();
+        const auto fsNow = fs::file_time_type::clock::now();
+        const auto systemTime = now + std::chrono::duration_cast<std::chrono::system_clock::duration>(timePoint - fsNow);
+    const std::time_t tt = std::chrono::system_clock::to_time_t(systemTime);
+
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &tt);
+#else
+        localtime_r(&tt, &tm);
+#endif
+        std::ostringstream out;
+        out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+        return out.str();
+    } catch (...) {
+        return "n/a";
+    }
+}
+
+std::string readTextFile(const fs::path& path) {
+    if (!fs::exists(path)) {
+        return {};
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    std::ostringstream out;
+    out << in.rdbuf();
+    return out.str();
+}
+
+std::uint64_t fnv1a64(const std::string& text) {
+    std::uint64_t hash = 1469598103934665603ull;
+    for (unsigned char c : text) {
+        hash ^= static_cast<std::uint64_t>(c);
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+int compareVersion(const std::string& lhs, const std::string& rhs) {
+    std::istringstream lss(lhs);
+    std::istringstream rss(rhs);
+    for (;;) {
+        int lv = 0;
+        int rv = 0;
+        char dot = '.';
+        const bool lOk = static_cast<bool>(lss >> lv);
+        const bool rOk = static_cast<bool>(rss >> rv);
+        if (!lOk && !rOk) {
+            return 0;
+        }
+        if (lv != rv) {
+            return lv < rv ? -1 : 1;
+        }
+        if (!(lss >> dot)) {
+            lss.clear();
+        }
+        if (!(rss >> dot)) {
+            rss.clear();
+        }
+    }
+}
+
+std::string compatibilityLabel(const std::string& minimumEngineVersion) {
+    if (minimumEngineVersion.empty()) {
+        return "unknown";
+    }
+    return compareVersion(minimumEngineVersion, kCurrentEngineVersion) <= 0 ? "compatible" : "incompatible";
+}
+
+std::string identityHashForModel(const fs::path& modelDir) {
+    const std::string payload = readTextFile(modelDir / "metadata.json") + '\n' +
+        readTextFile(modelDir / "version.json") + '\n' +
+        readTextFile(modelDir / "model.json") + '\n' +
+        readTextFile(modelDir / "logic.ir");
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << fnv1a64(payload);
+    return out.str();
+}
+
+} // namespace
 
 ModelSelector::ModelSelector()
     : window_open(true),
@@ -36,6 +129,7 @@ void ModelSelector::refreshModelList() {
             info.name = entry.path().stem().string();
             info.path = entry.path().string();
             info.last_modified = fs::last_write_time(entry);
+            info.identity_hash = identityHashForModel(entry.path());
             
             // Try to load version info
             std::string version_path = (entry.path() / "version.json").string();
@@ -46,9 +140,16 @@ void ModelSelector::refreshModelList() {
                     if (vj.contains("model_version")) {
                         info.version = vj["model_version"].get<std::string>();
                     }
+                    if (vj.contains("minimum_engine_version")) {
+                        info.compatibility = compatibilityLabel(vj["minimum_engine_version"].get<std::string>());
+                    }
                 } catch (...) {
                     info.version = "unknown";
+                    info.compatibility = "unknown";
                 }
+            }
+            if (info.compatibility == "unknown") {
+                info.compatibility = "compatible";
             }
             
             models.push_back(info);
@@ -72,10 +173,12 @@ void ModelSelector::render(ImVec2 available_size) {
         // Top action bar
         if (ImGui::Button("New Model", ImVec2(100, 0))) {
             show_new_model_dialog = true;
+            ImGui::OpenPopup("New Model");
         }
         ImGui::SameLine();
         if (ImGui::Button("Import", ImVec2(100, 0))) {
             show_import_dialog = true;
+            ImGui::OpenPopup("Import Model");
         }
         ImGui::SameLine();
         if (ImGui::Button("Refresh", ImVec2(100, 0))) {
@@ -85,11 +188,12 @@ void ModelSelector::render(ImVec2 available_size) {
         ImGui::Separator();
         
         // Model table
-        if (ImGui::BeginTable("ModelsTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        if (ImGui::BeginTable("ModelsTable", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Version");
             ImGui::TableSetupColumn("Last Modified");
-            ImGui::TableSetupColumn("Grid");
+            ImGui::TableSetupColumn("Compatibility");
+            ImGui::TableSetupColumn("Identity Hash");
             ImGui::TableSetupColumn("Actions");
             ImGui::TableHeadersRow();
             
@@ -109,20 +213,33 @@ void ModelSelector::render(ImVec2 available_size) {
                 
                 // Last Modified column
                 ImGui::TableNextColumn();
-                ImGui::TextDisabled("%.0f", static_cast<float>(model.last_modified.time_since_epoch().count()));
+                ImGui::TextDisabled("%s", formatFileTime(model.last_modified).c_str());
                 
-                // Grid column
+                // Compatibility column
                 ImGui::TableNextColumn();
-                ImGui::TextDisabled("(dynamic)");
+                ImGui::TextDisabled("%s", model.compatibility.c_str());
+
+                // Identity hash column
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%s", model.identity_hash.c_str());
                 
                 // Actions column
                 ImGui::TableNextColumn();
+                if (ImGui::Button(("Load##" + std::to_string(i)).c_str(), ImVec2(44, 0))) {
+                    on_edit_model(model);
+                }
+                ImGui::SameLine();
                 if (ImGui::Button(("Edit##" + std::to_string(i)).c_str(), ImVec2(40, 0))) {
                     on_edit_model(model);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button(("Dup##" + std::to_string(i)).c_str(), ImVec2(40, 0))) {
                     duplicateModel(model);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button(("Exp##" + std::to_string(i)).c_str(), ImVec2(40, 0))) {
+                    // Export handling is currently routed through the editor/save flow.
+                    on_edit_model(model);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button(("Del##" + std::to_string(i)).c_str(), ImVec2(40, 0))) {
@@ -163,36 +280,39 @@ void ModelSelector::renderNewModelDialog() {
         if (ImGui::Selectable("Blank (2D)", false)) {
             createModelFromTemplate("blank_2d", model_name_buffer);
             show_new_model_dialog = false;
+            ImGui::CloseCurrentPopup();
         }
         if (ImGui::Selectable("Advection-Diffusion", false)) {
             createModelFromTemplate("advection_diffusion", model_name_buffer);
             show_new_model_dialog = false;
+            ImGui::CloseCurrentPopup();
         }
         
         ImGui::Separator();
         
         if (ImGui::Button("Cancel")) {
             show_new_model_dialog = false;
+            ImGui::CloseCurrentPopup();
         }
         
         ImGui::EndPopup();
     }
 }
 
-void ModelSelector::renderImportDialog() {
+void ws::gui::ModelSelector::renderImportDialog() {
     if (ImGui::BeginPopupModal("Import Model", &show_import_dialog)) {
         ImGui::TextDisabled("(File browser would go here)");
         
         if (ImGui::Button("Cancel")) {
             show_import_dialog = false;
+            ImGui::CloseCurrentPopup();
         }
         
         ImGui::EndPopup();
     }
 }
 
-void ModelSelector::createModelFromTemplate(const std::string& template_name,
-                                           const std::string& model_name) {
+void ws::gui::ModelSelector::createModelFromTemplate(const std::string& template_name, const std::string& model_name) {
     // Create new model directory
     std::string model_path = "models/" + model_name + ".simmodel";
     fs::create_directories(model_path);
@@ -229,9 +349,12 @@ void ModelSelector::createModelFromTemplate(const std::string& template_name,
     mdf.close();
     
     refreshModelList();
+    if (on_model_created) {
+        on_model_created(model_name);
+    }
 }
 
-void ModelSelector::duplicateModel(const ModelInfo& model) {
+void ws::gui::ModelSelector::duplicateModel(const ws::gui::ModelInfo& model) {
     static int counter = 1;
     std::string new_name = model.name + "_copy";
     if (counter > 1) {
@@ -257,7 +380,7 @@ void ModelSelector::duplicateModel(const ModelInfo& model) {
     refreshModelList();
 }
 
-void ModelSelector::deleteModel(const ModelInfo& model) {
+void ws::gui::ModelSelector::deleteModel(const ws::gui::ModelInfo& model) {
     fs::remove_all(model.path);
     refreshModelList();
 }

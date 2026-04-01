@@ -427,11 +427,11 @@
         DelayedTooltip("Applies generation settings, creates the world, and enters simulation view.");
 
         ImGui::SameLine();
-        if (SecondaryButton("Back to session manager", ImVec2(btnW, 44.0f))) {
-            appState_ = AppState::SessionManager;
-            sessionUi_.needsRefresh = true;
+        if (SecondaryButton("Back to model selector", ImVec2(btnW, 44.0f))) {
+            appState_ = AppState::ModelSelector;
+            modelSelector_.open();
         }
-        DelayedTooltip("Returns to the world selection page without creating a new world.");
+        DelayedTooltip("Returns to the model selection page without creating a new world.");
 
         ImGui::SameLine();
         if (SecondaryButton("Reset parameters", ImVec2(btnW, 44.0f))) {

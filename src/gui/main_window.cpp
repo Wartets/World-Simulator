@@ -12,8 +12,12 @@
 #include "ws/gui/parameter_panel.hpp"
 #include "ws/gui/perturbation_panel.hpp"
 #include "ws/gui/render_rules.hpp"
+#include "ws/gui/model_editor_window.hpp"
+#include "ws/gui/model_selector.hpp"
+#include "ws/core/model_parser.hpp"
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/session_manager/session_manager.hpp"
+enum class AppState        { ModelSelector, ModelEditor, SessionManager, NewWorldWizard, Simulation };
 #include "ws/gui/theme_bootstrap.hpp"
 #include "ws/gui/time_control_panel.hpp"
 #include "ws/gui/timeseries_panel.hpp"
@@ -86,7 +90,7 @@ struct OverlayState {
 enum class ScreenLayout    { Single = 0, SplitLeftRight, SplitTopBottom, Quad };
 enum class NormalizationMode { PerFrameAuto = 0, StickyPerField, FixedManual };
 enum class ColorMapMode    { Turbo = 0, Grayscale, Diverging, Water };
-enum class AppState        { SessionManager, NewWorldWizard, Simulation };
+enum class AppState        { ModelSelector, ModelEditor, SessionManager, NewWorldWizard, Simulation };
 
 struct ViewportConfig {
     int  primaryFieldIndex = 0;
@@ -241,6 +245,31 @@ public:
         startSnapshotWorker();
         startSimulationWorker();
 
+        modelSelector_.on_edit_model = [this](const ModelInfo& model) {
+            try {
+                const std::filesystem::path modelPath = model.path;
+                const ModelContext context = ws::ModelParser::load(modelPath);
+                modelEditor_.loadModel(context);
+                modelEditor_.open();
+                appState_ = AppState::ModelEditor;
+            } catch (const std::exception& e) {
+                appendLog(std::string("model_load_error=") + e.what());
+            }
+        };
+        modelSelector_.on_model_created = [this](const std::string& modelName) {
+            try {
+                const std::filesystem::path modelPath = std::filesystem::path("models") / (modelName + ".simmodel");
+                if (std::filesystem::exists(modelPath)) {
+                    const ModelContext context = ws::ModelParser::load(modelPath);
+                    modelEditor_.loadModel(context);
+                    modelEditor_.open();
+                    appState_ = AppState::ModelEditor;
+                }
+            } catch (const std::exception& e) {
+                appendLog(std::string("model_create_error=") + e.what());
+            }
+        };
+
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             tickAutoRun();
@@ -253,7 +282,11 @@ public:
             uiParameterChangedThisFrame_    = false;
             uiParameterInteractingThisFrame_ = false;
 
-            if (appState_ == AppState::Simulation) {
+            if (appState_ == AppState::ModelSelector) {
+                drawModelSelector();
+            } else if (appState_ == AppState::ModelEditor) {
+                drawModelEditor();
+            } else if (appState_ == AppState::Simulation) {
                 drawViewport();
                 drawDockSpace();
                 drawControlPanel();
@@ -283,6 +316,24 @@ public:
         glfwDestroyWindow(window);
         glfwTerminate();
         return 0;
+    }
+
+    void drawModelSelector() {
+        modelSelector_.render(ImGui::GetIO().DisplaySize);
+    }
+
+    void drawModelEditor() {
+        if (!modelEditor_.isOpen()) {
+            appState_ = AppState::ModelSelector;
+            modelSelector_.open();
+            return;
+        }
+
+        modelEditor_.render(ImGui::GetIO().DisplaySize);
+        if (!modelEditor_.isOpen()) {
+            appState_ = AppState::ModelSelector;
+            modelSelector_.open();
+        }
     }
 
 private:
@@ -317,6 +368,10 @@ private:
     std::string asyncErrorMessage_;
     bool asyncErrorPending_ = false;
 
+    ModelSelector      modelSelector_{};
+    ModelEditorWindow  modelEditor_{"Model Editor"};
+    AppState           appState_ = AppState::ModelSelector;
+
 // inlined implementation files
 #define WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT 1
 #include "main_window/impl/runtime_visualization.inl"
@@ -332,7 +387,6 @@ private:
     VisualizationState   viz_{};
     OverlayState         overlay_{};
     std::vector<std::string> logs_;
-    AppState             appState_ = AppState::SessionManager;
 
     // snapshot double-buffer
     std::thread       snapshotWorker_;

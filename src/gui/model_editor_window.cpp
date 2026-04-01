@@ -68,7 +68,10 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
 
 void ModelEditorWindow::render(ImVec2 available_size) {
     if (!window_open) return;
-    
+
+    ImGui::SetNextWindowSize(available_size, ImGuiCond_FirstUseEver);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoCollapse;
+
     // Debounced validation
     double current_time = ImGui::GetTime();
     if (current_time - last_validation_time >= validation_debounce_ms / 1000.0) {
@@ -76,109 +79,113 @@ void ModelEditorWindow::render(ImVec2 available_size) {
         last_validation_time = current_time;
     }
     
-    // Main menu bar
-    if (ImGui::BeginMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New Model", "Ctrl+N")) {
-                createNewModel();
+    if (ImGui::Begin(window_title.c_str(), &window_open, flags)) {
+        // Main menu bar
+        if (ImGui::BeginMenuBar()) {
+            if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("New Model", "Ctrl+N")) {
+                    createNewModel();
+                }
+                if (ImGui::MenuItem("Open Model", "Ctrl+O")) {
+                    // This would open a file dialog
+                }
+                if (ImGui::MenuItem("Save Model", "Ctrl+S")) {
+                    saveModel();
+                }
+                if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
+                    // This would open a save dialog
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Export as ZIP")) {
+                    exportModel();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Close", "Alt+F4")) {
+                    window_open = false;
+                }
+                ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Open Model", "Ctrl+O")) {
-                // This would open a file dialog
+
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, history->canUndo())) {
+                    history->undo();
+                }
+                if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z", false, history->canRedo())) {
+                    history->redo();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Select All", "Ctrl+A")) {
+                    // Select all nodes
+                }
+                if (ImGui::MenuItem("Deselect All", "Ctrl+D")) {
+                    node_editor->clearSelection();
+                }
+                ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Save Model", "Ctrl+S")) {
-                saveModel();
+
+            if (ImGui::BeginMenu("View")) {
+                if (ImGui::MenuItem("Auto Layout")) {
+                    node_editor->autoLayout();
+                }
+                if (ImGui::MenuItem("Reset View")) {
+                    node_editor->resetView();
+                }
+                ImGui::Separator();
+                ImGui::MenuItem("Property Inspector", "P", &show_property_inspector);
+                ImGui::MenuItem("Validation Panel", "V", &show_validation_panel);
+                ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
-                // This would open a save dialog
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Export as ZIP")) {
-                exportModel();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Close", "Alt+F4")) {
-                window_open = false;
-            }
-            ImGui::EndMenu();
+
+            ImGui::EndMenuBar();
         }
-        
-        if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, history->canUndo())) {
-                history->undo();
-            }
-            if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z", false, history->canRedo())) {
-                history->redo();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Select All", "Ctrl+A")) {
-                // Select all nodes
-            }
-            if (ImGui::MenuItem("Deselect All", "Ctrl+D")) {
-                node_editor->clearSelection();
-            }
-            ImGui::EndMenu();
-        }
-        
-        if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem("Auto Layout")) {
-                node_editor->autoLayout();
-            }
-            if (ImGui::MenuItem("Reset View")) {
-                node_editor->resetView();
-            }
-            ImGui::Separator();
-            ImGui::MenuItem("Property Inspector", "P", &show_property_inspector);
-            ImGui::MenuItem("Validation Panel", "V", &show_validation_panel);
-            ImGui::EndMenu();
-        }
-        
-        ImGui::EndMenuBar();
-    }
-    
-    // Node palette (left side)
-    ImGui::SetNextWindowSizeConstraints(ImVec2(180.0f, 400.0f), ImVec2(250.0f, -1.0f));
-    if (ImGui::Begin("Node Palette", nullptr, ImGuiWindowFlags_NoMove)) {
-        renderNodePalette();
-        ImGui::End();
-    }
-    
-    // Main canvas area
-    ImGui::SetNextWindowSizeConstraints(ImVec2(400.0f, 300.0f), ImVec2(-1.0f, -1.0f));
-    if (ImGui::Begin("Model Graph", nullptr)) {
-        ImVec2 canvas_size = ImGui::GetContentRegionAvail();
-        node_editor->render(canvas_size);
-        ImGui::End();
-    }
-    
-    // Property inspector (right side)
-    if (show_property_inspector) {
-        ImGui::SetNextWindowSizeConstraints(ImVec2(250.0f, 300.0f), ImVec2(400.0f, -1.0f));
-        if (ImGui::Begin("Properties", &show_property_inspector)) {
-            renderPropertyInspector();
+
+        // Node palette (left side)
+        ImGui::SetNextWindowSizeConstraints(ImVec2(180.0f, 400.0f), ImVec2(250.0f, -1.0f));
+        if (ImGui::Begin("Node Palette", nullptr, ImGuiWindowFlags_NoMove)) {
+            renderNodePalette();
             ImGui::End();
         }
-    }
-    
-    // Validation panel (bottom)
-    if (show_validation_panel) {
-        ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f, 150.0f), ImVec2(-1.0f, 400.0f));
-        if (ImGui::Begin("Validation", &show_validation_panel)) {
-            renderValidationPanel();
+
+        // Main canvas area
+        ImGui::SetNextWindowSizeConstraints(ImVec2(400.0f, 300.0f), ImVec2(-1.0f, -1.0f));
+        if (ImGui::Begin("Model Graph", nullptr)) {
+            ImVec2 canvas_size = ImGui::GetContentRegionAvail();
+            node_editor->render(canvas_size);
             ImGui::End();
         }
-    }
-    
-    // Error/status message
-    if (!error_message.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
-        ImGui::TextWrapped("Error: %s", error_message.c_str());
-        ImGui::PopStyleColor();
-    }
-    
-    if (!status_message.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.2f, 1.0f));
-        ImGui::TextWrapped("Status: %s", status_message.c_str());
-        ImGui::PopStyleColor();
+
+        // Property inspector (right side)
+        if (show_property_inspector) {
+            ImGui::SetNextWindowSizeConstraints(ImVec2(250.0f, 300.0f), ImVec2(400.0f, -1.0f));
+            if (ImGui::Begin("Properties", &show_property_inspector)) {
+                renderPropertyInspector();
+                ImGui::End();
+            }
+        }
+
+        // Validation panel (bottom)
+        if (show_validation_panel) {
+            ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f, 150.0f), ImVec2(-1.0f, 400.0f));
+            if (ImGui::Begin("Validation", &show_validation_panel)) {
+                renderValidationPanel();
+                ImGui::End();
+            }
+        }
+
+        // Error/status message
+        if (!error_message.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
+            ImGui::TextWrapped("Error: %s", error_message.c_str());
+            ImGui::PopStyleColor();
+        }
+
+        if (!status_message.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.2f, 1.0f));
+            ImGui::TextWrapped("Status: %s", status_message.c_str());
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::End();
     }
 }
 

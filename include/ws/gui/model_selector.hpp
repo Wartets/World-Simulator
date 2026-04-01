@@ -13,6 +13,8 @@ struct ModelInfo {
     std::string name;
     std::string path;
     std::string version{"unknown"};
+    std::string compatibility{"unknown"};
+    std::string identity_hash{"unknown"};
     std::filesystem::file_time_type last_modified;
 };
 
@@ -26,6 +28,7 @@ public:
     
     // State
     bool isOpen() const { return window_open; }
+    void open() { window_open = true; }
     void close() { window_open = false; }
     
     // Model operations
