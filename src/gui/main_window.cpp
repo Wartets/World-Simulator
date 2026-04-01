@@ -15,6 +15,7 @@
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/session_manager/session_manager.hpp"
 #include "ws/gui/theme_bootstrap.hpp"
+#include "ws/gui/time_control_panel.hpp"
 #include "ws/gui/timeseries_panel.hpp"
 #include "ws/gui/ui_components.hpp"
 #include "ws/gui/vector_renderer.hpp"

@@ -214,6 +214,14 @@ void drawSimulationTab() {
     PopSectionTint();
     ImGui::Spacing();
 
+    // Phase 8: Time control & scrubbing
+    PushSectionTint(3);
+    if (ImGui::CollapsingHeader("Time Control & Scrubbing", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawTimeControlSection();
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
     // Phase 6: Parameters and manual patching
     PushSectionTint(9);
     if (ImGui::CollapsingHeader("Parameter Control & Live Patching", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -717,6 +725,69 @@ void drawStepControlsSection() {
             appendLog(msg); requestSnapshotRefresh();
         }
     }
+}
+
+void drawTimeControlSection() {
+    if (!runtime_.isRunning()) {
+        ImGui::TextDisabled("Start the simulation to use time controls.");
+        return;
+    }
+
+    sliderFloatWithHint("Playback speed", &panel_.playbackSpeed, 0.1f, 8.0f, "%.2fx",
+        "Logical playback multiplier used by time control tools.");
+    if (PrimaryButton("Apply speed", ImVec2(140.0f, 24.0f))) {
+        std::string msg;
+        runtime_.setPlaybackSpeed(panel_.playbackSpeed, msg);
+        appendLog(msg);
+    }
+
+    const std::uint64_t currentStep = viz_.hasCachedCheckpoint
+        ? viz_.cachedCheckpoint.stateSnapshot.header.stepIndex
+        : 0u;
+
+    int seekTarget = static_cast<int>(std::min<std::uint64_t>(panel_.seekTargetStep, static_cast<std::uint64_t>(kImGuiIntSafeMax)));
+    if (sliderIntWithHint("Seek target step", &seekTarget, 0, kImGuiIntSafeMax,
+        "Seek to absolute step. Backward seeks restore nearest checkpoint then replay deterministically.")) {
+        panel_.seekTargetStep = static_cast<std::uint64_t>(seekTarget);
+    }
+
+    if (PrimaryButton("Seek", ImVec2(120.0f, 26.0f))) {
+        cancelPendingSimulationSteps();
+        std::string msg;
+        runtime_.seekStep(panel_.seekTargetStep, msg);
+        appendLog(msg);
+        requestSnapshotRefresh();
+    }
+    ImGui::SameLine();
+    NumericSliderPairInt("Step backward", &panel_.backwardStepCount, 1, 100000, "%d", 55.0f);
+    if (SecondaryButton("Apply backward step", ImVec2(-1.0f, 26.0f))) {
+        cancelPendingSimulationSteps();
+        std::string msg;
+        runtime_.stepBackward(static_cast<std::uint32_t>(std::max(1, panel_.backwardStepCount)), msg);
+        appendLog(msg);
+        requestSnapshotRefresh();
+    }
+
+    NumericSliderPairInt("Checkpoint interval", &panel_.checkpointIntervalSteps, 1, 100000, "%d", 55.0f);
+    NumericSliderPairInt("Checkpoint retention", &panel_.checkpointRetentionCount, 1, 2000, "%d", 55.0f);
+    if (PrimaryButton("Apply timeline policy", ImVec2(-1.0f, 24.0f))) {
+        std::string msg;
+        runtime_.configureCheckpointTimeline(
+            static_cast<std::uint32_t>(std::max(1, panel_.checkpointIntervalSteps)),
+            static_cast<std::size_t>(std::max(1, panel_.checkpointRetentionCount)),
+            msg);
+        appendLog(msg);
+    }
+
+    TimeControlStatus status;
+    status.currentStep = currentStep;
+    status.targetStep = panel_.seekTargetStep;
+    status.simulationTime = static_cast<float>(currentStep);
+    status.playbackSpeed = runtime_.playbackSpeed();
+    ImGui::TextDisabled("%s", formatTimeControlStatus(status).c_str());
+
+    const float progress = timeControlProgress(status);
+    ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f));
 }
 
 void drawCheckpointSection() {

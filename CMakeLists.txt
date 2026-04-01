@@ -38,6 +38,8 @@ add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/observability.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/event_queue.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/replay.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/replay_engine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/checkpoint_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/run_signature.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/scheduler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/state_store.cpp
@@ -124,6 +126,7 @@ add_executable(world_sim
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/noise_generator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/data_importer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_storage.cpp
 )
 target_link_libraries(world_sim PRIVATE ws_core)
 
@@ -158,6 +161,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/timeseries_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/histogram_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/constraint_monitor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/time_control_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/theme_bootstrap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/ui_components.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/node_editor.cpp
@@ -181,6 +185,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/noise_generator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/data_importer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_storage.cpp
 )
 
 find_package(OpenGL REQUIRED)
@@ -207,6 +212,11 @@ ws_add_test(model_parser_test tests/model_parser_test.cpp)
 ws_add_test(live_patching_test tests/live_patching.cpp)
 target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
+)
+ws_add_test(time_control_scrubbing_test tests/time_control_scrubbing.cpp)
+target_sources(time_control_scrubbing_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_storage.cpp
 )
 
 option(WS_ENABLE_EXTENDED_LEGACY_TESTS "Enable extended legacy integration tests" OFF)

@@ -58,6 +58,11 @@ bool RuntimeService::start(std::string& message) {
         }
         runtime->start();
         runtime_ = std::move(runtime);
+        checkpointManager_.clear();
+        checkpointStorage_.clearIndex();
+
+        std::string checkpointMessage;
+        captureTimelineCheckpointNoLock("start", checkpointMessage);
 
         const auto& snapshot = runtime_->snapshot();
         std::ostringstream output;
@@ -219,10 +224,19 @@ bool RuntimeService::openWorld(const std::string& worldName, std::string& messag
         try {
             const auto checkpoint = app::readCheckpointFile(checkpointPath);
             runtime_->resetToCheckpoint(checkpoint);
+            checkpointManager_.clear();
+            checkpointStorage_.clearIndex();
+            checkpointManager_.captureNow(*runtime_, "timeline_world_open", message);
+            checkpointStorage_.store(checkpoint, message);
         } catch (const std::exception& exception) {
             message = std::string("world_open_failed checkpoint_restore_error=") + exception.what();
             return false;
         }
+    } else {
+        checkpointManager_.clear();
+        checkpointStorage_.clearIndex();
+        std::string checkpointMessage;
+        captureTimelineCheckpointNoLock("world_open_profile", checkpointMessage);
     }
 
     activeWorldName_ = normalized;
@@ -311,6 +325,8 @@ bool RuntimeService::step(const std::uint32_t count, std::string& message) {
         }
 
         runtime_->controlledStep(count);
+        std::string checkpointMessage;
+        captureTimelineCheckpointNoLock("step", checkpointMessage);
         const auto& snapshot = runtime_->snapshot();
         const auto& diagnostics = runtime_->lastStepDiagnostics();
 
@@ -326,6 +342,26 @@ bool RuntimeService::step(const std::uint32_t count, std::string& message) {
     } catch (const std::exception& exception) {
         refreshCachedStateNoLock();
         message = std::string("step_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::stepBackward(const std::uint32_t count, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("step_backward", message)) {
+            return false;
+        }
+        if (count == 0u) {
+            message = "step_backward_failed reason=zero_count";
+            return false;
+        }
+
+        const std::uint64_t currentStep = runtime_->snapshot().stateHeader.stepIndex;
+        const std::uint64_t targetStep = (count >= currentStep) ? 0u : (currentStep - count);
+        return seekStep(targetStep, message);
+    } catch (const std::exception& exception) {
+        message = std::string("step_backward_failed error=") + exception.what();
         return false;
     }
 }
@@ -350,6 +386,8 @@ bool RuntimeService::runUntil(const std::uint64_t targetStep, std::string& messa
             const std::uint32_t chunk = static_cast<std::uint32_t>(std::min<std::uint64_t>(remaining, 10000));
             runtime_->controlledStep(chunk);
             remaining -= chunk;
+            std::string checkpointMessage;
+            captureTimelineCheckpointNoLock("run_until", checkpointMessage);
         }
 
         const auto& snapshot = runtime_->snapshot();
@@ -360,6 +398,72 @@ bool RuntimeService::runUntil(const std::uint64_t targetStep, std::string& messa
         return true;
     } catch (const std::exception& exception) {
         message = std::string("rununtil_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::seekStep(const std::uint64_t targetStep, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("seek", message)) {
+            return false;
+        }
+
+        const std::uint64_t currentStep = runtime_->snapshot().stateHeader.stepIndex;
+        if (targetStep == currentStep) {
+            message = "seek_noop step=" + std::to_string(currentStep);
+            return true;
+        }
+
+        if (targetStep > currentStep) {
+            std::uint64_t remaining = targetStep - currentStep;
+            while (remaining > 0u) {
+                const auto chunk = static_cast<std::uint32_t>(std::min<std::uint64_t>(remaining, 10000u));
+                runtime_->controlledStep(chunk);
+                remaining -= chunk;
+                std::string checkpointMessage;
+                captureTimelineCheckpointNoLock("seek_forward", checkpointMessage);
+            }
+            message = "seek_complete direction=forward step=" + std::to_string(targetStep);
+            return true;
+        }
+
+        std::string seekMessage;
+        if (checkpointManager_.seek(*runtime_, targetStep, seekMessage)) {
+            message = "seek_complete direction=backward step=" + std::to_string(targetStep) + " detail=" + seekMessage;
+            return true;
+        }
+
+        const auto nearestDiskStep = checkpointStorage_.nearestStepAtOrBefore(targetStep);
+        if (!nearestDiskStep.has_value()) {
+            message = "seek_failed reason=no_checkpoint_for_target target=" + std::to_string(targetStep);
+            return false;
+        }
+
+        RuntimeCheckpoint checkpoint;
+        std::string loadMessage;
+        if (!checkpointStorage_.load(*nearestDiskStep, checkpoint, loadMessage)) {
+            message = loadMessage;
+            return false;
+        }
+
+        runtime_->resetToCheckpoint(checkpoint);
+        checkpointManager_.captureNow(*runtime_, "timeline_seek_restore", loadMessage);
+
+        std::uint64_t remaining = targetStep - *nearestDiskStep;
+        while (remaining > 0u) {
+            const auto chunk = static_cast<std::uint32_t>(std::min<std::uint64_t>(remaining, 10000u));
+            runtime_->controlledStep(chunk);
+            remaining -= chunk;
+            std::string checkpointMessage;
+            captureTimelineCheckpointNoLock("seek_restore_replay", checkpointMessage);
+        }
+
+        message = "seek_complete direction=backward step=" + std::to_string(targetStep) +
+            " restored_step=" + std::to_string(*nearestDiskStep);
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("seek_failed error=") + exception.what();
         return false;
     }
 }
@@ -396,6 +500,47 @@ bool RuntimeService::resume(std::string& message) {
         message = std::string("resume_failed error=") + exception.what();
         return false;
     }
+}
+
+bool RuntimeService::setPlaybackSpeed(const float speed, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (speed < 0.1f || speed > 8.0f) {
+        message = "playback_speed_failed reason=out_of_range min=0.1 max=8.0";
+        return false;
+    }
+
+    playbackSpeed_ = speed;
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(2)
+           << "playback_speed_updated value=" << playbackSpeed_;
+    message = output.str();
+    return true;
+}
+
+bool RuntimeService::configureCheckpointTimeline(
+    const std::uint32_t intervalSteps,
+    const std::size_t retention,
+    std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    if (intervalSteps == 0u) {
+        message = "timeline_config_failed reason=interval_zero";
+        return false;
+    }
+
+    checkpointManager_.configure(CheckpointManagerConfig{
+        true,
+        intervalSteps,
+        std::max<std::size_t>(retention, 1u)});
+    checkpointStorage_.configure(app::CheckpointStoragePolicy{
+        true,
+        intervalSteps,
+        std::max<std::size_t>(retention, 1u),
+        std::filesystem::path("checkpoints") / "timeline"});
+
+    message = "timeline_configured interval_steps=" + std::to_string(intervalSteps) +
+        " retention=" + std::to_string(std::max<std::size_t>(retention, 1u));
+    return true;
 }
 
 bool RuntimeService::status(std::string& message) const {
@@ -847,6 +992,37 @@ bool RuntimeService::requireRuntime(const char* operation, std::string& message)
         message = std::string("runtime is not ready; operation unavailable: ") + operation;
         return false;
     }
+    return true;
+}
+
+bool RuntimeService::captureTimelineCheckpointNoLock(const char* context, std::string& message) {
+    if (!runtime_ || runtime_->status() != RuntimeStatus::Running) {
+        message = std::string("timeline_capture_skip reason=runtime_inactive context=") + context;
+        return true;
+    }
+
+    const auto interval = checkpointManager_.config().intervalSteps;
+    const std::uint64_t step = runtime_->snapshot().stateHeader.stepIndex;
+    if (interval == 0u || (step % static_cast<std::uint64_t>(interval)) != 0u) {
+        message = std::string("timeline_capture_skip reason=not_due context=") + context;
+        return true;
+    }
+
+    std::string managerMessage;
+    if (!checkpointManager_.captureNow(*runtime_, "timeline_step_" + std::to_string(step), managerMessage)) {
+        message = managerMessage;
+        return false;
+    }
+
+    const auto diskCheckpoint = runtime_->createCheckpoint("timeline_step_" + std::to_string(step), true /* computeHash */);
+    std::string storageMessage;
+    if (!checkpointStorage_.store(diskCheckpoint, storageMessage)) {
+        message = storageMessage;
+        return false;
+    }
+
+    message = std::string("timeline_capture_ok context=") + context +
+        " step=" + std::to_string(step);
     return true;
 }
 

@@ -2,7 +2,9 @@
 
 #include "ws/app/world_store.hpp"
 #include "ws/app/profile_store.hpp"
+#include "ws/app/checkpoint_storage.hpp"
 #include "ws/app/shell_support.hpp"
+#include "ws/core/checkpoint_manager.hpp"
 #include "ws/core/runtime.hpp"
 
 #include <atomic>
@@ -52,9 +54,14 @@ public:
     bool stop(std::string& message);
 
     bool step(std::uint32_t count, std::string& message);
+    bool stepBackward(std::uint32_t count, std::string& message);
     bool runUntil(std::uint64_t targetStep, std::string& message);
+    bool seekStep(std::uint64_t targetStep, std::string& message);
     bool pause(std::string& message);
     bool resume(std::string& message);
+    bool setPlaybackSpeed(float speed, std::string& message);
+    [[nodiscard]] float playbackSpeed() const noexcept { return playbackSpeed_; }
+    bool configureCheckpointTimeline(std::uint32_t intervalSteps, std::size_t retention, std::string& message);
 
     bool status(std::string& message) const;
     bool metrics(std::string& message) const;
@@ -101,6 +108,7 @@ public:
 private:
     void refreshCachedStateNoLock() const;
     bool requireRuntime(const char* operation, std::string& message) const;
+    bool captureTimelineCheckpointNoLock(const char* context, std::string& message);
     [[nodiscard]] static std::filesystem::path worldProfileRoot();
     [[nodiscard]] static std::filesystem::path worldCheckpointRoot();
 
@@ -110,6 +118,9 @@ private:
     app::ProfileStore profileStore_{};
     app::ProfileStore worldProfileStore_{worldProfileRoot()};
     app::WorldStore worldStore_{worldProfileRoot(), worldCheckpointRoot()};
+    CheckpointManager checkpointManager_{};
+    app::CheckpointStorage checkpointStorage_{};
+    float playbackSpeed_ = 1.0f;
     std::string activeWorldName_;
     mutable std::atomic<bool> cachedRunning_{false};
     mutable std::atomic<bool> cachedPaused_{false};

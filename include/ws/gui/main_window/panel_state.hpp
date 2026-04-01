@@ -15,6 +15,11 @@ struct PanelState {
     int stepCount = 1;
     std::uint64_t runUntilTarget = 100;
     bool showAdvancedStepping = false;
+    float playbackSpeed = 1.0f;
+    std::uint64_t seekTargetStep = 0;
+    int backwardStepCount = 1;
+    int checkpointIntervalSteps = 100;
+    int checkpointRetentionCount = 64;
 
     float forceFieldScale = 1.0f;
     float forceFieldDamping = 0.15f;
