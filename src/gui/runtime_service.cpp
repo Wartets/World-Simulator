@@ -12,29 +12,6 @@
 
 namespace ws::gui {
 
-namespace {
-
-std::string normalizeWorldName(std::string worldName) {
-    worldName = app::trim(std::move(worldName));
-    if (worldName.empty()) {
-        return {};
-    }
-
-    for (char& ch : worldName) {
-        const bool allowed =
-            (ch >= 'a' && ch <= 'z') ||
-            (ch >= 'A' && ch <= 'Z') ||
-            (ch >= '0' && ch <= '9') ||
-            ch == '_' || ch == '-';
-        if (!allowed) {
-            ch = '_';
-        }
-    }
-    return worldName;
-}
-
-} // namespace
-
 RuntimeService::RuntimeService() = default;
 
 std::filesystem::path RuntimeService::worldProfileRoot() {
@@ -43,27 +20,6 @@ std::filesystem::path RuntimeService::worldProfileRoot() {
 
 std::filesystem::path RuntimeService::worldCheckpointRoot() {
     return std::filesystem::path("checkpoints") / "worlds";
-}
-
-std::filesystem::path RuntimeService::checkpointPathForWorld(const std::string& worldName) {
-    return worldCheckpointRoot() / (worldName + ".wscp");
-}
-
-bool RuntimeService::isDefaultWorldName(const std::string& name, int& outIndex) {
-    if (name.size() != 10 || !name.starts_with("world_")) {
-        return false;
-    }
-
-    int value = 0;
-    for (std::size_t i = 6; i < name.size(); ++i) {
-        const char ch = name[i];
-        if (ch < '0' || ch > '9') {
-            return false;
-        }
-        value = (value * 10) + static_cast<int>(ch - '0');
-    }
-    outIndex = value;
-    return true;
 }
 
 void RuntimeService::refreshCachedStateNoLock() const {
@@ -178,50 +134,29 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<StoredWorldInfo> worlds;
 
-    try {
-        const auto names = worldProfileStore_.list();
-        worlds.reserve(names.size());
-
-        for (const auto& worldName : names) {
-            StoredWorldInfo info;
-            info.worldName = worldName;
-            info.profilePath = worldProfileStore_.pathFor(worldName);
-            info.checkpointPath = checkpointPathForWorld(worldName);
-            info.hasProfile = std::filesystem::exists(info.profilePath);
-            info.hasCheckpoint = std::filesystem::exists(info.checkpointPath);
-
-            if (info.hasProfile) {
-                info.profileBytes = std::filesystem::file_size(info.profilePath);
-                info.profileLastWrite = std::filesystem::last_write_time(info.profilePath);
-                info.hasProfileTimestamp = true;
-
-                try {
-                    const auto launch = worldProfileStore_.load(worldName);
-                    info.gridWidth = launch.grid.width;
-                    info.gridHeight = launch.grid.height;
-                    info.seed = launch.seed;
-                    info.tier = toString(launch.tier);
-                    info.temporalPolicy = app::temporalPolicyToString(launch.temporalPolicy);
-                } catch (...) {
-                    // Keep list resilient when one profile entry is malformed.
-                }
-            }
-
-            if (info.hasCheckpoint) {
-                info.checkpointBytes = std::filesystem::file_size(info.checkpointPath);
-                info.checkpointLastWrite = std::filesystem::last_write_time(info.checkpointPath);
-                info.hasCheckpointTimestamp = true;
-                const auto checkpoint = app::readCheckpointFile(info.checkpointPath);
-                info.stepIndex = checkpoint.stateSnapshot.header.stepIndex;
-                info.runIdentityHash = checkpoint.runSignature.identityHash();
-            }
-            worlds.push_back(std::move(info));
-        }
-
-        message = "world_list_ready count=" + std::to_string(worlds.size());
-    } catch (const std::exception& exception) {
-        message = std::string("world_list_failed error=") + exception.what();
-        worlds.clear();
+    const auto records = worldStore_.list(message);
+    worlds.reserve(records.size());
+    for (const auto& record : records) {
+        StoredWorldInfo info;
+        info.worldName = record.worldName;
+        info.profilePath = record.profilePath;
+        info.checkpointPath = record.checkpointPath;
+        info.hasProfile = record.hasProfile;
+        info.hasCheckpoint = record.hasCheckpoint;
+        info.gridWidth = record.gridWidth;
+        info.gridHeight = record.gridHeight;
+        info.seed = record.seed;
+        info.tier = record.tier;
+        info.temporalPolicy = record.temporalPolicy;
+        info.profileBytes = record.profileBytes;
+        info.checkpointBytes = record.checkpointBytes;
+        info.profileLastWrite = record.profileLastWrite;
+        info.checkpointLastWrite = record.checkpointLastWrite;
+        info.hasProfileTimestamp = record.hasProfileTimestamp;
+        info.hasCheckpointTimestamp = record.hasCheckpointTimestamp;
+        info.stepIndex = record.stepIndex;
+        info.runIdentityHash = record.runIdentityHash;
+        worlds.push_back(std::move(info));
     }
 
     return worlds;
@@ -229,32 +164,13 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
 
 std::string RuntimeService::suggestNextWorldName() const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-
-    const auto names = worldProfileStore_.list();
-    int maxIndex = 0;
-    for (const auto& name : names) {
-        int value = 0;
-        if (isDefaultWorldName(name, value)) {
-            maxIndex = std::max(maxIndex, value);
-        }
-    }
-
-    for (int i = maxIndex + 1; i < 100000; ++i) {
-        std::ostringstream candidate;
-        candidate << "world_" << std::setw(4) << std::setfill('0') << i;
-        const std::string name = candidate.str();
-        if (!std::filesystem::exists(worldProfileStore_.pathFor(name))) {
-            return name;
-        }
-    }
-
-    return "world_99999";
+    return worldStore_.suggestNextWorldName();
 }
 
 bool RuntimeService::createWorld(const std::string& worldName, const app::LaunchConfig& config, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-    const std::string normalized = normalizeWorldName(worldName);
+    const std::string normalized = app::trim(worldName);
     if (normalized.empty()) {
         message = "world name is required";
         return false;
@@ -281,7 +197,7 @@ bool RuntimeService::createWorld(const std::string& worldName, const app::Launch
 bool RuntimeService::openWorld(const std::string& worldName, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-    const std::string normalized = normalizeWorldName(worldName);
+    const std::string normalized = app::trim(worldName);
     if (normalized.empty()) {
         message = "world name is required";
         return false;
@@ -298,7 +214,7 @@ bool RuntimeService::openWorld(const std::string& worldName, std::string& messag
         return false;
     }
 
-    const auto checkpointPath = checkpointPathForWorld(normalized);
+    const auto checkpointPath = worldStore_.checkpointPathFor(normalized);
     if (std::filesystem::exists(checkpointPath)) {
         try {
             const auto checkpoint = app::readCheckpointFile(checkpointPath);
@@ -336,7 +252,7 @@ bool RuntimeService::saveActiveWorld(std::string& message) {
     try {
         worldProfileStore_.save(activeWorldName_, config_);
         const auto checkpoint = runtime_->createCheckpoint(activeWorldName_, true /* computeHash */);
-        const auto checkpointPath = checkpointPathForWorld(activeWorldName_);
+        const auto checkpointPath = worldStore_.checkpointPathFor(activeWorldName_);
         app::writeCheckpointFile(checkpoint, checkpointPath);
         std::ostringstream output;
         output << "world_saved name=" << activeWorldName_
@@ -352,44 +268,35 @@ bool RuntimeService::saveActiveWorld(std::string& message) {
 bool RuntimeService::deleteWorld(const std::string& worldName, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-    const std::string normalized = normalizeWorldName(worldName);
-    if (normalized.empty()) {
-        message = "world name is required";
-        return false;
+    const bool ok = worldStore_.erase(worldName, message);
+    if (ok && activeWorldName_ == app::trim(worldName)) {
+        activeWorldName_.clear();
     }
+    return ok;
+}
 
-    const auto profilePath = worldProfileStore_.pathFor(normalized);
-    const auto checkpointPath = checkpointPathForWorld(normalized);
-    bool removedAny = false;
-
-    try {
-        if (std::filesystem::exists(profilePath)) {
-            removedAny = std::filesystem::remove(profilePath) || removedAny;
-        }
-        if (std::filesystem::exists(checkpointPath)) {
-            removedAny = std::filesystem::remove(checkpointPath) || removedAny;
-        }
-
-        const auto displayPath = worldCheckpointRoot() / (normalized + ".displayprefs");
-        if (std::filesystem::exists(displayPath)) {
-            removedAny = std::filesystem::remove(displayPath) || removedAny;
-        }
-
-        if (activeWorldName_ == normalized) {
-            activeWorldName_.clear();
-        }
-
-        if (!removedAny) {
-            message = "world_delete_noop name=" + normalized;
-            return false;
-        }
-
-        message = "world_deleted name=" + normalized;
-        return true;
-    } catch (const std::exception& exception) {
-        message = std::string("world_delete_failed error=") + exception.what();
-        return false;
+bool RuntimeService::renameWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const bool ok = worldStore_.rename(fromWorldName, toWorldName, message);
+    if (ok && activeWorldName_ == app::trim(fromWorldName)) {
+        activeWorldName_ = app::trim(toWorldName);
     }
+    return ok;
+}
+
+bool RuntimeService::duplicateWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return worldStore_.duplicate(fromWorldName, toWorldName, message);
+}
+
+bool RuntimeService::exportWorld(const std::string& worldName, const std::filesystem::path& outputPath, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return worldStore_.exportWorld(worldName, outputPath, message);
+}
+
+bool RuntimeService::importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return worldStore_.importWorld(inputPath, importedWorldName, message);
 }
 
 bool RuntimeService::step(const std::uint32_t count, std::string& message) {

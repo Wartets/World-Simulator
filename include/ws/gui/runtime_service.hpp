@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ws/app/world_store.hpp"
 #include "ws/app/profile_store.hpp"
 #include "ws/app/shell_support.hpp"
 #include "ws/core/runtime.hpp"
@@ -75,6 +76,10 @@ public:
     bool openWorld(const std::string& worldName, std::string& message);
     bool saveActiveWorld(std::string& message);
     bool deleteWorld(const std::string& worldName, std::string& message);
+    bool renameWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message);
+    bool duplicateWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message);
+    bool exportWorld(const std::string& worldName, const std::filesystem::path& outputPath, std::string& message);
+    bool importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message);
 
     [[nodiscard]] const std::string& activeWorldName() const noexcept { return activeWorldName_; }
 
@@ -85,14 +90,13 @@ private:
     bool requireRuntime(const char* operation, std::string& message) const;
     [[nodiscard]] static std::filesystem::path worldProfileRoot();
     [[nodiscard]] static std::filesystem::path worldCheckpointRoot();
-    [[nodiscard]] static std::filesystem::path checkpointPathForWorld(const std::string& worldName);
-    [[nodiscard]] static bool isDefaultWorldName(const std::string& name, int& outIndex);
 
     app::LaunchConfig config_{};
     std::unique_ptr<Runtime> runtime_;
     std::map<std::string, RuntimeCheckpoint, std::less<>> checkpoints_;
     app::ProfileStore profileStore_{};
     app::ProfileStore worldProfileStore_{worldProfileRoot()};
+    app::WorldStore worldStore_{worldProfileRoot(), worldCheckpointRoot()};
     std::string activeWorldName_;
     mutable std::atomic<bool> cachedRunning_{false};
     mutable std::atomic<bool> cachedPaused_{false};

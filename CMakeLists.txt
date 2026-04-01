@@ -119,6 +119,9 @@ add_executable(world_sim
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/noise_generator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/data_importer.cpp
 )
 target_link_libraries(world_sim PRIVATE ws_core)
 
@@ -155,9 +158,16 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_validator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_selector.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_history.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_selector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_generator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/paint_tools.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_viewport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/noise_generator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/data_importer.cpp
 )
 
 find_package(OpenGL REQUIRED)
