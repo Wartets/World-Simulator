@@ -91,6 +91,8 @@ public:
     void validateObservedDataFlow() const;
 
 private:
+    [[nodiscard]] std::vector<std::string> buildExecutionOrder() const;
+    void validateDAG() const;
     void validateWriteOwnership() const;
     [[nodiscard]] std::vector<std::shared_ptr<ISubsystem>> orderedSubsystems() const;
     [[nodiscard]] std::set<std::string, std::less<>> effectiveWriteSetFor(const std::shared_ptr<ISubsystem>& subsystem) const;

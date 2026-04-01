@@ -26,6 +26,19 @@ bool matchesPhase(const ModelTier tier, const std::uint32_t phaseIndex) {
     return tier == ModelTier::B || tier == ModelTier::C;
 }
 
+std::vector<std::string> lexicalNamesFromSubsystems(const std::vector<std::shared_ptr<ISubsystem>>& subsystems) {
+    std::vector<std::string> names;
+    names.reserve(subsystems.size());
+    for (const auto& subsystem : subsystems) {
+        if (subsystem) {
+            names.push_back(subsystem->name());
+        }
+    }
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    return names;
+}
+
 ReproducibilityClass classifyReproducibility(const ModelProfile& profile) {
     std::size_t cTierCount = 0;
     for (const auto& [subsystemName, tier] : profile.subsystemTiers) {
@@ -268,7 +281,8 @@ const std::map<std::string, AccessObservation, std::less<>>& Scheduler::observed
 }
 
 std::vector<std::shared_ptr<ISubsystem>> Scheduler::orderedSubsystems() const {
-    if (!admissionReport_ || admissionReport_->deterministicOrder.empty()) {
+    const auto executionOrder = buildExecutionOrder();
+    if (executionOrder.empty() || executionOrder.size() != subsystems_.size()) {
         return subsystems_;
     }
 
@@ -281,7 +295,7 @@ std::vector<std::shared_ptr<ISubsystem>> Scheduler::orderedSubsystems() const {
     ordered.reserve(subsystems_.size());
 
     std::set<std::string, std::less<>> seen;
-    for (const auto& name : admissionReport_->deterministicOrder) {
+    for (const auto& name : executionOrder) {
         const auto it = byName.find(name);
         if (it == byName.end()) {
             continue;
@@ -297,6 +311,58 @@ std::vector<std::shared_ptr<ISubsystem>> Scheduler::orderedSubsystems() const {
     }
 
     return ordered;
+}
+
+std::vector<std::string> Scheduler::buildExecutionOrder() const {
+    const auto names = lexicalNamesFromSubsystems(subsystems_);
+    if (names.empty()) {
+        return {};
+    }
+
+    if (!admissionReport_) {
+        return names;
+    }
+
+    std::vector<std::string> order = admissionReport_->deterministicOrder;
+    std::set<std::string, std::less<>> seen(order.begin(), order.end());
+
+    for (const auto& name : names) {
+        if (!seen.contains(name)) {
+            order.push_back(name);
+        }
+    }
+
+    if (order.empty()) {
+        return names;
+    }
+
+    return order;
+}
+
+void Scheduler::validateDAG() const {
+    if (!admissionReport_) {
+        return;
+    }
+
+    const auto executionOrder = buildExecutionOrder();
+    const auto names = lexicalNamesFromSubsystems(subsystems_);
+
+    if (executionOrder.size() != names.size()) {
+        throw std::runtime_error("Scheduler DAG validation failed: cycle or missing node detected");
+    }
+
+    std::set<std::string, std::less<>> orderedSet(executionOrder.begin(), executionOrder.end());
+    if (orderedSet.size() != executionOrder.size()) {
+        throw std::runtime_error("Scheduler DAG validation failed: duplicate subsystem detected in execution order");
+    }
+
+    for (const auto& edge : admissionReport_->edges) {
+        if (!orderedSet.contains(edge.fromSubsystem) || !orderedSet.contains(edge.toSubsystem)) {
+            throw std::runtime_error(
+                "Scheduler DAG validation failed: edge references unknown subsystem '" + edge.fromSubsystem +
+                "' -> '" + edge.toSubsystem + "'");
+        }
+    }
 }
 
 std::set<std::string, std::less<>> Scheduler::effectiveWriteSetFor(const std::shared_ptr<ISubsystem>& subsystem) const {
@@ -392,6 +458,7 @@ std::map<std::string, std::string, std::less<>> Scheduler::writeOwnershipByVaria
 
 void Scheduler::initialize(StateStore& stateStore, const ModelProfile& profile) {
     validateWriteOwnership();
+    validateDAG();
 
     observedDataFlow_.clear();
 

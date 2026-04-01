@@ -116,6 +116,9 @@ public:
     [[nodiscard]] RuntimeCheckpoint createCheckpoint(const std::string& label, bool computeHash = true) const;
     void loadCheckpoint(const RuntimeCheckpoint& checkpoint);
     void resetToCheckpoint(const RuntimeCheckpoint& checkpoint);
+    [[nodiscard]] std::uint64_t computeStateHash() const noexcept;
+    [[nodiscard]] bool validateDeterminism(const std::vector<std::uint64_t>& referenceHashes) const noexcept;
+    [[nodiscard]] const std::vector<std::uint64_t>& stateHashHistory() const noexcept { return stateHashHistory_; }
 
     [[nodiscard]] RuntimeStatus status() const noexcept { return status_; }
     [[nodiscard]] bool paused() const noexcept { return paused_; }
@@ -156,6 +159,7 @@ private:
     std::deque<RuntimeInputFrame> pendingInputs_;
     std::deque<RuntimeEvent> pendingEvents_;
     std::vector<RuntimeEventRecord> eventChronology_;
+    std::vector<std::uint64_t> stateHashHistory_;
     ObservabilityPipeline observability_;
     StepDiagnostics lastStepDiagnostics_{};
 };

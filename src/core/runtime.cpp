@@ -503,13 +503,15 @@ void Runtime::start() {
         header.status = RuntimeStatus::Running;
         stateStore_.setHeader(header);
         snapshot_.stateHeader = stateStore_.header();
-        snapshot_.stateHash = stateStore_.stateHash();
+        snapshot_.stateHash = computeStateHash();
         snapshot_.reproducibilityClass = admissionReport_.reproducibilityClass;
         snapshot_.payloadBytes = stateStore_.createSnapshot(
             snapshot_.runSignature.identityHash(),
             resolvedProfile_.fingerprint(),
             "runtime_start_baseline")
                                      .payloadBytes;
+        stateHashHistory_.clear();
+        stateHashHistory_.push_back(snapshot_.stateHash);
         status_ = RuntimeStatus::Running;
     } catch (...) {
         status_ = RuntimeStatus::Error;
@@ -616,7 +618,7 @@ void Runtime::stepImpl(const bool controlledByRuntimeControl) {
     stateStore_.setHeader(header);
 
     snapshot_.stateHeader = header;
-    snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.stateHash = computeStateHash();
     snapshot_.reproducibilityClass = lastStepDiagnostics_.reproducibilityClass;
     snapshot_.stabilityDiagnostics = lastStepDiagnostics_.stability;
     snapshot_.payloadBytes = stateStore_.createSnapshot(
@@ -624,6 +626,7 @@ void Runtime::stepImpl(const bool controlledByRuntimeControl) {
         resolvedProfile_.fingerprint(),
         "runtime_step")
                                  .payloadBytes;
+    stateHashHistory_.push_back(snapshot_.stateHash);
 
     trace(
         TraceChannel::Scheduler,
@@ -673,7 +676,7 @@ void Runtime::stop() {
     stateStore_.setHeader(header);
 
     snapshot_.stateHeader = header;
-    snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.stateHash = computeStateHash();
     snapshot_.reproducibilityClass = lastStepDiagnostics_.reproducibilityClass;
     snapshot_.stabilityDiagnostics = lastStepDiagnostics_.stability;
     snapshot_.payloadBytes = stateStore_.createSnapshot(
@@ -681,6 +684,7 @@ void Runtime::stop() {
         resolvedProfile_.fingerprint(),
         "runtime_stop")
                                  .payloadBytes;
+    stateHashHistory_.push_back(snapshot_.stateHash);
     trace(TraceChannel::Control, "runtime.stop", "runtime terminated", snapshot_.stateHash);
     status_ = RuntimeStatus::Terminated;
 }
@@ -721,9 +725,11 @@ void Runtime::loadCheckpoint(const RuntimeCheckpoint& checkpoint) {
         checkpoint.profileFingerprint);
 
     snapshot_.stateHeader = stateStore_.header();
-    snapshot_.stateHash = stateStore_.stateHash();
+    snapshot_.stateHash = computeStateHash();
     snapshot_.reproducibilityClass = admissionReport_.reproducibilityClass;
     snapshot_.payloadBytes = checkpoint.stateSnapshot.payloadBytes;
+    stateHashHistory_.clear();
+    stateHashHistory_.push_back(snapshot_.stateHash);
 
     trace(
         TraceChannel::Replay,
@@ -743,6 +749,24 @@ void Runtime::resetToCheckpoint(const RuntimeCheckpoint& checkpoint) {
     loadCheckpoint(checkpoint);
     pendingInputs_.clear();
     pendingEvents_.clear();
+}
+
+std::uint64_t Runtime::computeStateHash() const noexcept {
+    return stateStore_.stateHash();
+}
+
+bool Runtime::validateDeterminism(const std::vector<std::uint64_t>& referenceHashes) const noexcept {
+    if (referenceHashes.size() != stateHashHistory_.size()) {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < referenceHashes.size(); ++i) {
+        if (referenceHashes[i] != stateHashHistory_[i]) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void Runtime::allocateCanonicalFields() {

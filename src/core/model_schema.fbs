@@ -1,0 +1,99 @@
+namespace ws.schema;
+
+enum VariableSupport : byte {
+  Global = 0,
+  Cell = 1
+}
+
+enum VariableRole : byte {
+  Parameter = 0,
+  State = 1,
+  Derived = 2,
+  Forcing = 3,
+  Auxiliary = 4
+}
+
+enum VariableType : byte {
+  F32 = 0,
+  F64 = 1,
+  I32 = 2,
+  U32 = 3,
+  Bool = 4,
+  Vec2 = 5,
+  Vec3 = 6
+}
+
+table IntervalDomain {
+  min_value: float;
+  max_value: float;
+}
+
+table CategoricalDomain {
+  allowed_values: [int];
+}
+
+union DomainBounds {
+  IntervalDomain,
+  CategoricalDomain
+}
+
+table Domain {
+  id: string;
+  type: VariableType;
+  bounds: DomainBounds;
+}
+
+table Variable {
+  id: string;
+  support: VariableSupport;
+  role: VariableRole;
+  type: VariableType;
+  units: string;
+  domain_id: string;
+  initial_value: string;
+}
+
+table GridSpec {
+  dimensions: [uint];
+  topology: string;
+  boundary_conditions: string;
+}
+
+table NumericsSpec {
+  dt_ref: float;
+  time_integrator: string;
+  spatial_schemes: [string];
+}
+
+table InteractionRead {
+  variable_id: string;
+}
+
+table InteractionWrite {
+  variable_id: string;
+}
+
+table Interaction {
+  id: string;
+  reads: [InteractionRead];
+  writes: [InteractionWrite];
+  target_type: string;
+  ir_logic: string;
+}
+
+table Stage {
+  id: string;
+  interactions: [Interaction];
+}
+
+table Model {
+  name: string;
+  version: string;
+  grid: GridSpec;
+  numerics: NumericsSpec;
+  domains: [Domain];
+  variables: [Variable];
+  stages: [Stage];
+}
+
+root_type Model;

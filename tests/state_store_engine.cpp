@@ -88,10 +88,37 @@ void verifyBoundaryValidityAndOverlayContracts() {
     assert(metadata.front().alignmentBytes == 64);
 }
 
+void verifyDynamicLayoutScaffolding() {
+    ws::StateStore stateStore(
+        ws::GridSpec{3, 2},
+        ws::BoundaryMode::Clamp,
+        ws::GridTopologyBackend::Cartesian2D,
+        ws::MemoryLayoutPolicy{64, 3, 1});
+
+    const auto firstHandle = stateStore.addVariable(ws::VariableSpec{10, "alpha"});
+    const auto secondHandle = stateStore.addVariable(ws::VariableSpec{11, "beta"});
+
+    assert(firstHandle != ws::StateStore::InvalidHandle);
+    assert(secondHandle != ws::StateStore::InvalidHandle);
+    assert(firstHandle != secondHandle);
+
+    const auto& layout = stateStore.getLayout();
+    assert(layout.grid.width == 3);
+    assert(layout.grid.height == 2);
+    assert(layout.fields.size() == 2);
+    assert(layout.fields[0].spec.name == "alpha");
+    assert(layout.fields[1].spec.name == "beta");
+    assert(layout.fields[0].valuesOffsetBytes == 0);
+    assert(layout.fields[1].valuesOffsetBytes >= layout.fields[0].valuesOffsetBytes);
+    assert(layout.valuesBufferBytes > 0);
+    assert(layout.validityMaskBufferBytes > 0);
+}
+
 } // namespace
 
 int main() {
     verifySnapshotReplayDeterminism();
     verifyBoundaryValidityAndOverlayContracts();
+    verifyDynamicLayoutScaffolding();
     return 0;
 }

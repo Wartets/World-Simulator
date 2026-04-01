@@ -23,10 +23,31 @@ struct FieldStorageMetadata {
     VariableSpec spec;
     std::uint64_t logicalCellCount = 0;
     std::uint64_t paddedCellCount = 0;
+    std::uint64_t valuesOffsetBytes = 0;
+    std::uint64_t validityMaskOffsetBytes = 0;
     std::uint32_t alignmentBytes = 0;
     std::uint32_t tileWidth = 0;
     std::uint32_t tileHeight = 0;
     std::uint64_t overlayEntryCount = 0;
+};
+
+struct MemoryLayout {
+    struct FieldLayout {
+        VariableSpec spec;
+        std::uint64_t logicalCellCount = 0;
+        std::uint64_t paddedCellCount = 0;
+        std::uint64_t valuesOffsetBytes = 0;
+        std::uint64_t validityMaskOffsetBytes = 0;
+        std::uint32_t alignmentBytes = 0;
+        std::uint32_t valueStrideBytes = static_cast<std::uint32_t>(sizeof(float));
+        std::uint32_t validityStrideBytes = static_cast<std::uint32_t>(sizeof(std::uint8_t));
+    };
+
+    GridSpec grid{};
+    MemoryLayoutPolicy policy{};
+    std::uint64_t valuesBufferBytes = 0;
+    std::uint64_t validityMaskBufferBytes = 0;
+    std::vector<FieldLayout> fields;
 };
 
 struct StateStoreSnapshot {
@@ -89,6 +110,7 @@ public:
         GridTopologyBackend topologyBackend = GridTopologyBackend::Cartesian2D,
         MemoryLayoutPolicy memoryLayoutPolicy = MemoryLayoutPolicy{});
 
+    [[nodiscard]] FieldHandle addVariable(const VariableSpec& spec);
     void allocateScalarField(const VariableSpec& spec);
     [[nodiscard]] bool hasField(const std::string& name) const noexcept;
     [[nodiscard]] std::vector<std::string> variableNames() const;
@@ -116,6 +138,7 @@ public:
     [[nodiscard]] BoundaryMode boundaryMode() const noexcept { return boundaryMode_; }
     [[nodiscard]] GridTopologyBackend topologyBackend() const noexcept { return topologyBackend_; }
     [[nodiscard]] const MemoryLayoutPolicy& memoryLayoutPolicy() const noexcept { return memoryLayoutPolicy_; }
+    [[nodiscard]] const MemoryLayout& getLayout() const noexcept { return layout_; }
 
     [[nodiscard]] const StateHeader& header() const noexcept { return header_; }
     void setHeader(const StateHeader& header) noexcept { header_ = header; }
@@ -165,7 +188,8 @@ private:
     StateHeader header_{};
     std::vector<VariableSpec> variableOrder_;
     std::vector<ScalarFieldStorage> scalarFields_;
-      std::unordered_map<std::string, std::size_t> fieldNameToIndex_;
+        std::unordered_map<std::string, std::size_t> fieldNameToIndex_;
+        MemoryLayout layout_{};
     AccessObserver accessObserver_;
 };
 

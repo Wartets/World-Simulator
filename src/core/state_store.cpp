@@ -85,6 +85,9 @@ StateStore::StateStore(
     if (topologyBackend_ != GridTopologyBackend::Cartesian2D) {
         throw std::invalid_argument("Unsupported GridTopologyBackend");
     }
+
+    layout_.grid = grid_;
+    layout_.policy = memoryLayoutPolicy_;
 }
 
 std::uint64_t StateStore::roundUpToMultiple(const std::uint64_t value, const std::uint64_t multiple) {
@@ -99,6 +102,10 @@ std::uint64_t StateStore::roundUpToMultiple(const std::uint64_t value, const std
 }
 
 void StateStore::allocateScalarField(const VariableSpec& spec) {
+    (void)addVariable(spec);
+}
+
+StateStore::FieldHandle StateStore::addVariable(const VariableSpec& spec) {
     if (spec.name.empty()) {
         throw std::invalid_argument("VariableSpec.name must not be empty");
     }
@@ -129,9 +136,23 @@ void StateStore::allocateScalarField(const VariableSpec& spec) {
     storage.values.assign(static_cast<std::size_t>(paddedCellCount), 0.0f);
     storage.validityMask.assign(static_cast<std::size_t>(paddedCellCount), 0u);
 
+    MemoryLayout::FieldLayout layoutEntry;
+    layoutEntry.spec = spec;
+    layoutEntry.logicalCellCount = logicalCellCount;
+    layoutEntry.paddedCellCount = paddedCellCount;
+    layoutEntry.alignmentBytes = memoryLayoutPolicy_.alignmentBytes;
+    layoutEntry.valuesOffsetBytes = roundUpToMultiple(layout_.valuesBufferBytes, memoryLayoutPolicy_.alignmentBytes);
+    layoutEntry.validityMaskOffsetBytes = roundUpToMultiple(layout_.validityMaskBufferBytes, memoryLayoutPolicy_.alignmentBytes);
+
+    layout_.valuesBufferBytes = layoutEntry.valuesOffsetBytes + paddedCellCount * sizeof(float);
+    layout_.validityMaskBufferBytes = layoutEntry.validityMaskOffsetBytes + paddedCellCount * sizeof(std::uint8_t);
+    layout_.fields.push_back(layoutEntry);
+
     fieldNameToIndex_[spec.name] = scalarFields_.size();
     scalarFields_.push_back(std::move(storage));
     variableOrder_.push_back(spec);
+
+    return fieldNameToIndex_.at(spec.name);
 }
 
 std::optional<float> StateStore::trySampleScalar(const std::string& name, const CellSigned cell) const {
@@ -161,6 +182,8 @@ std::vector<FieldStorageMetadata> StateStore::fieldMetadata() const {
             .spec = field.spec,
             .logicalCellCount = field.logicalCellCount,
             .paddedCellCount = field.paddedCellCount,
+            .valuesOffsetBytes = layout_.fields.at(result.size()).valuesOffsetBytes,
+            .validityMaskOffsetBytes = layout_.fields.at(result.size()).validityMaskOffsetBytes,
             .alignmentBytes = memoryLayoutPolicy_.alignmentBytes,
             .tileWidth = memoryLayoutPolicy_.tileWidth,
             .tileHeight = memoryLayoutPolicy_.tileHeight,
@@ -413,6 +436,9 @@ void StateStore::loadSnapshot(
     scalarFields_.clear();
     fieldNameToIndex_.clear();
     variableOrder_.clear();
+    layout_.fields.clear();
+    layout_.valuesBufferBytes = 0;
+    layout_.validityMaskBufferBytes = 0;
 
     for (const auto& fieldPayload : snapshot.fields) {
         allocateScalarField(fieldPayload.spec);

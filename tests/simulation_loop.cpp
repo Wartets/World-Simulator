@@ -227,6 +227,8 @@ ScenarioResult runBaselineScenario(const ws::TemporalPolicy temporalPolicy, cons
     }
 
     const ws::StepDiagnostics diagnostics = runtime.lastStepDiagnostics();
+    assert(runtime.validateDeterminism(runtime.stateHashHistory()));
+    assert(runtime.computeStateHash() == runtime.snapshot().stateHash);
     runtime.stop();
 
     return ScenarioResult{

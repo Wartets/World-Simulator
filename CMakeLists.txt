@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(WorldSimulator VERSION 0.1.0 LANGUAGES CXX)
 
+# Some third-party dependencies still ship with legacy CMake files that
+# declare a minimum version older than the policy baseline required by
+# modern CMake releases. Keep the build permissive for those subprojects
+# without lowering the project-wide minimum.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum policy version accepted by nested projects" FORCE)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -8,6 +14,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(FetchContent)
 
 option(WS_ENABLE_OPENMP "Enable OpenMP acceleration for eligible simulation loops" OFF)
+
+# --- Lexer & Parser Generation ---
+find_package(BISON REQUIRED)
+find_package(FLEX REQUIRED)
+
+BISON_TARGET(IRParser src/core/ir.y ${CMAKE_CURRENT_BINARY_DIR}/ir_parser.cpp)
+FLEX_TARGET(IRScanner src/core/ir.l ${CMAKE_CURRENT_BINARY_DIR}/ir_lexer.cpp)
+ADD_FLEX_BISON_DEPENDENCY(IRScanner IRParser)
+
+# --- FlatBuffers Schema Setup ---
+# The target `flatc` will be built from sources fetched via FetchContent.
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/model_schema_generated.h
+    COMMAND flatc -c -o ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src/core/model_schema.fbs
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/core/model_schema.fbs flatc
+    COMMENT "Building FlatBuffers schema (model_schema_generated.h)"
+)
 
 add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/profile_resolver.cpp
@@ -20,9 +43,21 @@ add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/runtime.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/subsystems/bootstrap_subsystem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/subsystems/subsystems.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/model_parser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/ir_ast.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/unit_system.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/time_integrator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/spatial_scheme.cpp
+    ${BISON_IRParser_OUTPUTS}
+    ${FLEX_IRScanner_OUTPUTS}
+    ${CMAKE_CURRENT_BINARY_DIR}/model_schema_generated.h
 )
 
-target_include_directories(ws_core PUBLIC include)
+target_include_directories(ws_core PUBLIC
+    include
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
 if(WS_ENABLE_OPENMP)
     find_package(OpenMP)
     if(OpenMP_CXX_FOUND)
@@ -36,6 +71,48 @@ else()
     target_compile_definitions(ws_core PUBLIC WS_ENABLE_OPENMP=0)
 endif()
 
+# --- Dependencies Fetching ---
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.4
+)
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.91.9b
+)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(FLATBUFFERS_BUILD_FLATC ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    flatbuffers
+    GIT_REPOSITORY https://github.com/google/flatbuffers.git
+    GIT_TAG v23.5.26
+)
+FetchContent_Declare(
+    miniz
+    GIT_REPOSITORY https://github.com/richgel999/miniz.git
+    GIT_TAG 3.0.2
+)
+
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(glfw imgui nlohmann_json flatbuffers miniz)
+
+target_link_libraries(ws_core PUBLIC
+    nlohmann_json::nlohmann_json
+    flatbuffers
+    miniz
+)
+
 add_executable(world_sim
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/runtime_shell.cpp
@@ -44,24 +121,6 @@ add_executable(world_sim
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
 )
 target_link_libraries(world_sim PRIVATE ws_core)
-
-FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.4
-)
-
-FetchContent_Declare(
-    imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.91.9b
-)
-
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(glfw imgui)
 
 add_library(imgui_backend STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -115,6 +174,7 @@ ws_add_test(state_store_engine_test tests/state_store_engine.cpp)
 ws_add_test(simulation_loop_test tests/simulation_loop.cpp)
 ws_add_test(subsystems_test tests/subsystems.cpp)
 ws_add_test(interactions_test tests/interactions.cpp)
+ws_add_test(model_parser_test tests/model_parser_test.cpp)
 
 option(WS_ENABLE_EXTENDED_LEGACY_TESTS "Enable extended legacy integration tests" OFF)
 if(WS_ENABLE_EXTENDED_LEGACY_TESTS)
