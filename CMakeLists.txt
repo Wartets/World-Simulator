@@ -53,6 +53,9 @@ add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/time_integrator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/spatial_scheme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vectorized_ops.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/neighborhood.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/random.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/multidim_support.cpp
     ${BISON_IRParser_OUTPUTS}
     ${FLEX_IRScanner_OUTPUTS}
     ${CMAKE_CURRENT_BINARY_DIR}/model_schema_generated.h
@@ -212,6 +215,7 @@ ws_add_test(interactions_test tests/interactions.cpp)
 ws_add_test(model_parser_test tests/model_parser_test.cpp)
 ws_add_test(live_patching_test tests/live_patching.cpp)
 ws_add_test(performance_optimization_test tests/performance_optimization.cpp)
+ws_add_test(advanced_features_test tests/advanced_features.cpp)
 target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )

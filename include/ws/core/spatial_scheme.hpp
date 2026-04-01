@@ -8,8 +8,8 @@
 
 namespace ws {
 
-enum class BoundaryCondition {
-    Periodic, Dirichlet, Neumann, Reflecting, Absorbing
+enum class BoundaryCondition : std::uint8_t {
+    Periodic = 0, Dirichlet = 1, Neumann = 2, Reflecting = 3, Absorbing = 4
 };
 
 class SpatialScheme {
