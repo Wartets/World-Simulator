@@ -1214,8 +1214,29 @@ void drawOpticsSection() {
 void drawAnalysisTab() {
     ImGui::BeginChild("AnalysisTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
-    // Field Summary
     PushSectionTint(0);
+    if (ImGui::CollapsingHeader("Time-Series Probes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawTimeSeriesSection();
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
+    PushSectionTint(1);
+    if (ImGui::CollapsingHeader("Histogram & Distribution", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawHistogramSection();
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
+    PushSectionTint(2);
+    if (ImGui::CollapsingHeader("Constraint Violation Monitor", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawConstraintMonitorSection();
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
+    // Field Summary
+    PushSectionTint(3);
     if (ImGui::CollapsingHeader("Field Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
         drawFieldSummarySection();
     }
@@ -1223,7 +1244,7 @@ void drawAnalysisTab() {
     ImGui::Spacing();
 
     // Conservation Metrics
-    PushSectionTint(1);
+    PushSectionTint(4);
     if (ImGui::CollapsingHeader("Conservation & Stability Metrics")) {
         drawConservationSection();
     }
@@ -1231,7 +1252,7 @@ void drawAnalysisTab() {
     ImGui::Spacing();
 
     // Runtime Metrics
-    PushSectionTint(2);
+    PushSectionTint(5);
     if (ImGui::CollapsingHeader("Runtime Metrics & Performance")) {
         drawMetricsSection();
     }
@@ -1239,7 +1260,7 @@ void drawAnalysisTab() {
     ImGui::Spacing();
 
     // Trace / Event Log
-    PushSectionTint(3);
+    PushSectionTint(6);
     if (ImGui::CollapsingHeader("Simulation Trace Log")) {
         drawTraceSection();
     }
@@ -1375,6 +1396,322 @@ void drawTraceSection() {
         ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
     if (SecondaryButton("Clear log", ImVec2(90.0f, 20.0f))) logs_.clear();
+}
+
+void drawTimeSeriesSection() {
+    if (!runtime_.isRunning()) {
+        ImGui::TextDisabled("Start the simulation to record probe time-series.");
+        return;
+    }
+
+    static char probeId[128] = "temperature_probe";
+    static int probeKindIndex = 0;
+    static int probeFieldIndex = 0;
+    static int probeCellX = 0;
+    static int probeCellY = 0;
+    static int regionMinX = 0;
+    static int regionMinY = 0;
+    static int regionMaxX = 0;
+    static int regionMaxY = 0;
+    static int selectedProbeIndex = 0;
+    static char probeCsvFile[128] = "timeseries_probes.csv";
+
+    const int maxX = std::max(0, panel_.gridWidth - 1);
+    const int maxY = std::max(0, panel_.gridHeight - 1);
+
+    if (!viz_.fieldNames.empty()) {
+        probeFieldIndex = std::clamp(probeFieldIndex, 0, static_cast<int>(viz_.fieldNames.size() - 1));
+    }
+
+    static constexpr const char* kProbeKinds[] = {"Global", "Cell", "Region average"};
+    ImGui::InputText("Probe id", probeId, sizeof(probeId));
+    ImGui::Combo("Probe kind", &probeKindIndex, kProbeKinds, static_cast<int>(std::size(kProbeKinds)));
+
+    if (!viz_.fieldNames.empty()) {
+        if (ImGui::BeginCombo("Variable##probeVariable", viz_.fieldNames[static_cast<std::size_t>(probeFieldIndex)].c_str())) {
+            for (int i = 0; i < static_cast<int>(viz_.fieldNames.size()); ++i) {
+                if (ImGui::Selectable(viz_.fieldNames[static_cast<std::size_t>(i)].c_str(), i == probeFieldIndex)) {
+                    probeFieldIndex = i;
+                }
+            }
+            ImGui::EndCombo();
+        }
+    } else {
+        ImGui::TextDisabled("No fields available.");
+    }
+
+    if (probeKindIndex == static_cast<int>(ProbeKind::CellScalar)) {
+        NumericSliderPairInt("Cell X##probe", &probeCellX, 0, maxX, "%d", 55.0f);
+        NumericSliderPairInt("Cell Y##probe", &probeCellY, 0, maxY, "%d", 55.0f);
+    } else if (probeKindIndex == static_cast<int>(ProbeKind::RegionAverage)) {
+        NumericSliderPairInt("Region min X", &regionMinX, 0, maxX, "%d", 55.0f);
+        NumericSliderPairInt("Region min Y", &regionMinY, 0, maxY, "%d", 55.0f);
+        NumericSliderPairInt("Region max X", &regionMaxX, 0, maxX, "%d", 55.0f);
+        NumericSliderPairInt("Region max Y", &regionMaxY, 0, maxY, "%d", 55.0f);
+        regionMaxX = std::max(regionMaxX, regionMinX);
+        regionMaxY = std::max(regionMaxY, regionMinY);
+    }
+
+    if (PrimaryButton("Add probe", ImVec2(120.0f, 24.0f))) {
+        ProbeDefinition definition;
+        definition.id = probeId;
+        definition.kind = static_cast<ProbeKind>(std::clamp(probeKindIndex, 0, 2));
+        if (!viz_.fieldNames.empty()) {
+            definition.variableName = viz_.fieldNames[static_cast<std::size_t>(probeFieldIndex)];
+        }
+        definition.cell = Cell{static_cast<std::uint32_t>(std::max(0, probeCellX)), static_cast<std::uint32_t>(std::max(0, probeCellY))};
+        definition.region.min = Cell{static_cast<std::uint32_t>(std::max(0, regionMinX)), static_cast<std::uint32_t>(std::max(0, regionMinY))};
+        definition.region.max = Cell{static_cast<std::uint32_t>(std::max(0, regionMaxX)), static_cast<std::uint32_t>(std::max(0, regionMaxY))};
+
+        std::string message;
+        runtime_.addProbe(definition, message);
+        appendLog(message);
+    }
+    ImGui::SameLine();
+    if (SecondaryButton("Clear probes", ImVec2(120.0f, 24.0f))) {
+        std::string message;
+        runtime_.clearProbes(message);
+        appendLog(message);
+        selectedProbeIndex = 0;
+    }
+
+    std::vector<ProbeDefinition> definitions;
+    std::string defMessage;
+    runtime_.probeDefinitions(definitions, defMessage);
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Active probes: %d", static_cast<int>(definitions.size()));
+    if (definitions.empty()) {
+        ImGui::TextDisabled("No probes configured.");
+        return;
+    }
+
+    selectedProbeIndex = std::clamp(selectedProbeIndex, 0, static_cast<int>(definitions.size() - 1));
+    if (ImGui::BeginCombo("Probe series", definitions[static_cast<std::size_t>(selectedProbeIndex)].id.c_str())) {
+        for (int i = 0; i < static_cast<int>(definitions.size()); ++i) {
+            const auto& probe = definitions[static_cast<std::size_t>(i)];
+            if (ImGui::Selectable(probe.id.c_str(), i == selectedProbeIndex)) {
+                selectedProbeIndex = i;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    if (SecondaryButton("Remove selected", ImVec2(140.0f, 24.0f))) {
+        std::string message;
+        runtime_.removeProbe(definitions[static_cast<std::size_t>(selectedProbeIndex)].id, message);
+        appendLog(message);
+        selectedProbeIndex = 0;
+    }
+
+    ProbeSeries series;
+    std::string seriesMessage;
+    if (!runtime_.probeSeries(definitions[static_cast<std::size_t>(selectedProbeIndex)].id, series, seriesMessage)) {
+        ImGui::TextDisabled("%s", seriesMessage.c_str());
+        return;
+    }
+
+    ImGui::TextDisabled(
+        "Variable=%s kind=%s",
+        series.definition.variableName.c_str(),
+        probeKindToString(series.definition.kind).c_str());
+
+    if (series.samples.empty()) {
+        ImGui::TextDisabled("Probe has no samples yet.");
+    } else {
+        std::vector<float> values;
+        values.reserve(series.samples.size());
+        for (const auto& sample : series.samples) {
+            values.push_back(sample.value);
+        }
+
+        ImGui::PlotLines(
+            "##ProbeSeriesPlot",
+            values.data(),
+            static_cast<int>(values.size()),
+            0,
+            nullptr,
+            FLT_MAX,
+            FLT_MAX,
+            ImVec2(-1.0f, 140.0f));
+
+        const auto stats = ProbeManager::computeStatistics(series);
+        ImGui::Text(
+            "samples=%llu min=%.5f max=%.5f mean=%.5f std=%.5f last=%.5f",
+            static_cast<unsigned long long>(stats.count),
+            stats.minValue,
+            stats.maxValue,
+            static_cast<float>(stats.mean),
+            static_cast<float>(stats.stddev),
+            stats.lastValue);
+    }
+
+    ImGui::InputText("CSV file##probeCsv", probeCsvFile, sizeof(probeCsvFile));
+    if (SecondaryButton("Export probes CSV", ImVec2(160.0f, 24.0f))) {
+        std::vector<ProbeSeries> allSeries;
+        allSeries.reserve(definitions.size());
+        for (const auto& definition : definitions) {
+            ProbeSeries probeSeries;
+            std::string message;
+            if (runtime_.probeSeries(definition.id, probeSeries, message)) {
+                allSeries.push_back(std::move(probeSeries));
+            }
+        }
+
+        std::string message;
+        const auto outputPath = std::filesystem::path("checkpoints") / "analysis" / probeCsvFile;
+        if (saveProbeSeriesCsv(allSeries, outputPath, message)) {
+            appendLog(message);
+        } else {
+            appendLog(message);
+        }
+    }
+}
+
+void drawHistogramSection() {
+    if (!viz_.hasCachedCheckpoint) {
+        ImGui::TextDisabled("No snapshot available yet.");
+        return;
+    }
+
+    static int selectedFieldIndex = 0;
+    static int binCount = 50;
+    static int normalizationMode = static_cast<int>(HistogramNormalization::Count);
+
+    const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
+    if (fields.empty()) {
+        ImGui::TextDisabled("Snapshot does not contain fields.");
+        return;
+    }
+
+    selectedFieldIndex = std::clamp(selectedFieldIndex, 0, static_cast<int>(fields.size() - 1));
+
+    if (ImGui::BeginCombo("Histogram variable", fields[static_cast<std::size_t>(selectedFieldIndex)].spec.name.c_str())) {
+        for (int i = 0; i < static_cast<int>(fields.size()); ++i) {
+            if (ImGui::Selectable(fields[static_cast<std::size_t>(i)].spec.name.c_str(), i == selectedFieldIndex)) {
+                selectedFieldIndex = i;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    sliderIntWithHint("Bins", &binCount, 10, 200, "Histogram bucket count.");
+    static constexpr const char* kNormalizationModes[] = {"Count", "Density", "Max-normalized"};
+    ImGui::Combo(
+        "Normalization",
+        &normalizationMode,
+        kNormalizationModes,
+        static_cast<int>(std::size(kNormalizationModes)));
+
+    HistogramResult histogram;
+    std::string message;
+    if (!computeHistogram(
+            fields[static_cast<std::size_t>(selectedFieldIndex)],
+            binCount,
+            static_cast<HistogramNormalization>(std::clamp(normalizationMode, 0, 2)),
+            histogram,
+            message)) {
+        ImGui::TextDisabled("%s", message.c_str());
+        return;
+    }
+
+    ImGui::PlotHistogram(
+        "##Histogram",
+        histogram.binValues.data(),
+        static_cast<int>(histogram.binValues.size()),
+        0,
+        nullptr,
+        0.0f,
+        FLT_MAX,
+        ImVec2(-1.0f, 140.0f));
+
+    ImGui::Text(
+        "count=%llu min=%.5f max=%.5f mean=%.5f median=%.5f std=%.5f",
+        static_cast<unsigned long long>(histogram.stats.count),
+        histogram.stats.minValue,
+        histogram.stats.maxValue,
+        static_cast<float>(histogram.stats.mean),
+        static_cast<float>(histogram.stats.median),
+        static_cast<float>(histogram.stats.stddev));
+    ImGui::Text(
+        "skewness=%.5f kurtosis=%.5f",
+        static_cast<float>(histogram.stats.skewness),
+        static_cast<float>(histogram.stats.kurtosis));
+}
+
+void drawConstraintMonitorSection() {
+    if (!runtime_.isRunning()) {
+        ImGui::TextDisabled("Start the simulation to track constraint violations.");
+        return;
+    }
+    if (!viz_.hasCachedCheckpoint) {
+        ImGui::TextDisabled("No snapshot available yet.");
+        return;
+    }
+
+    const auto currentStep = viz_.cachedCheckpoint.stateSnapshot.header.stepIndex;
+    const auto currentTime = static_cast<float>(viz_.cachedCheckpoint.stateSnapshot.header.timestampTicks);
+
+    if (recordedDiagnosticsStep_ != std::numeric_limits<std::uint64_t>::max() && currentStep < recordedDiagnosticsStep_) {
+        constraintMonitor_.clear();
+    }
+    if (currentStep != recordedDiagnosticsStep_) {
+        StepDiagnostics diagnostics;
+        std::string message;
+        if (runtime_.lastStepDiagnostics(diagnostics, message)) {
+            constraintMonitor_.recordStep(diagnostics, currentStep, currentTime);
+            recordedDiagnosticsStep_ = currentStep;
+        }
+    }
+
+    const auto& history = constraintMonitor_.history();
+    ImGui::Text(
+        "current_step_violations=%llu history_size=%llu",
+        static_cast<unsigned long long>(constraintMonitor_.violationsThisStep()),
+        static_cast<unsigned long long>(history.size()));
+
+    if (SecondaryButton("Clear monitor history", ImVec2(160.0f, 24.0f))) {
+        constraintMonitor_.clear();
+        recordedDiagnosticsStep_ = std::numeric_limits<std::uint64_t>::max();
+    }
+
+    std::unordered_map<std::string, std::size_t> variableCounts;
+    std::unordered_map<std::uint64_t, bool> stepFlags;
+    for (const auto& record : history) {
+        variableCounts[record.variable] += 1;
+        stepFlags[record.step] = true;
+    }
+
+    std::pair<std::string, std::size_t> topVariable{"", 0};
+    for (const auto& [variable, count] : variableCounts) {
+        if (count > topVariable.second) {
+            topVariable = {variable, count};
+        }
+    }
+
+    if (!history.empty()) {
+        ImGui::Text(
+            "steps_with_violations=%llu top_variable=%s(%llu)",
+            static_cast<unsigned long long>(stepFlags.size()),
+            topVariable.first.empty() ? "n/a" : topVariable.first.c_str(),
+            static_cast<unsigned long long>(topVariable.second));
+    }
+
+    ImGui::BeginChild("ConstraintHistory", ImVec2(0.0f, 180.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    const auto& grid = viz_.cachedCheckpoint.stateSnapshot.grid;
+    for (auto it = history.rbegin(); it != history.rend(); ++it) {
+        const auto& record = *it;
+        const std::uint32_t x = (grid.width > 0u) ? static_cast<std::uint32_t>(record.cellIndex % grid.width) : 0u;
+        const std::uint32_t y = (grid.width > 0u) ? static_cast<std::uint32_t>(record.cellIndex / grid.width) : 0u;
+        ImGui::Text(
+            "step=%llu var=%s cell=(%u,%u) severity=%s",
+            static_cast<unsigned long long>(record.step),
+            record.variable.c_str(),
+            x,
+            y,
+            record.severity.c_str());
+    }
+    ImGui::EndChild();
 }
 
 //

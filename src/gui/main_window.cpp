@@ -4,8 +4,10 @@
 #include "ws/gui/main_window/color_utils.hpp"
 #include "ws/gui/main_window/detail_utils.hpp"
 #include "ws/gui/main_window/panel_state.hpp"
+#include "ws/gui/histogram_panel.hpp"
 #include "ws/gui/heatmap_renderer.hpp"
 #include "ws/gui/contour_renderer.hpp"
+#include "ws/gui/constraint_monitor.hpp"
 #include "ws/gui/event_logger.hpp"
 #include "ws/gui/parameter_panel.hpp"
 #include "ws/gui/perturbation_panel.hpp"
@@ -13,6 +15,7 @@
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/session_manager/session_manager.hpp"
 #include "ws/gui/theme_bootstrap.hpp"
+#include "ws/gui/timeseries_panel.hpp"
 #include "ws/gui/ui_components.hpp"
 #include "ws/gui/vector_renderer.hpp"
 #include "ws/gui/viewport_manager.hpp"
@@ -375,6 +378,8 @@ private:
     double uiInteractionHotUntilSec_       = 0.0;
 
     RuntimeService runtime_;
+    ConstraintMonitor constraintMonitor_{};
+    std::uint64_t recordedDiagnosticsStep_ = std::numeric_limits<std::uint64_t>::max();
 };
 
 } // anonymous namespace

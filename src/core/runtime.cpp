@@ -518,6 +518,8 @@ void Runtime::start() {
             resolvedProfile_.fingerprint(),
             "runtime_start_baseline")
                                      .payloadBytes;
+        probeManager_.clearSamples();
+        probeManager_.recordAll(stateStore_, header.stepIndex, static_cast<float>(header.timestampTicks));
         stateHashHistory_.clear();
         stateHashHistory_.push_back(snapshot_.stateHash);
         status_ = RuntimeStatus::Running;
@@ -647,6 +649,7 @@ void Runtime::stepImpl(const bool controlledByRuntimeControl) {
         resolvedProfile_.fingerprint(),
         "runtime_step")
                                  .payloadBytes;
+    probeManager_.recordAll(stateStore_, header.stepIndex, static_cast<float>(header.timestampTicks));
     stateHashHistory_.push_back(snapshot_.stateHash);
 
     trace(
@@ -753,6 +756,11 @@ void Runtime::loadCheckpoint(const RuntimeCheckpoint& checkpoint) {
     stateHashHistory_.clear();
     stateHashHistory_.push_back(snapshot_.stateHash);
     eventQueue_.setManualEvents(checkpoint.manualEventLog);
+    probeManager_.clearSamples();
+    probeManager_.recordAll(
+        stateStore_,
+        snapshot_.stateHeader.stepIndex,
+        static_cast<float>(snapshot_.stateHeader.timestampTicks));
 
     trace(
         TraceChannel::Replay,
@@ -1038,6 +1046,33 @@ bool Runtime::enqueuePerturbation(const PerturbationSpec& perturbation, std::str
 
     message = "perturbation_enqueued target=" + perturbation.targetVariable;
     return true;
+}
+
+bool Runtime::addProbe(const ProbeDefinition& definition, std::string& message) {
+    if (status_ != RuntimeStatus::Running) {
+        message = "probe_add_failed reason=runtime_not_running";
+        return false;
+    }
+
+    const bool ok = probeManager_.addProbe(definition, stateStore_, message);
+    if (ok) {
+        const auto& header = stateStore_.header();
+        probeManager_.recordAll(stateStore_, header.stepIndex, static_cast<float>(header.timestampTicks));
+    }
+    return ok;
+}
+
+bool Runtime::removeProbe(const std::string& probeId, std::string& message) {
+    if (status_ != RuntimeStatus::Running) {
+        message = "probe_remove_failed reason=runtime_not_running";
+        return false;
+    }
+
+    return probeManager_.removeProbe(probeId, message);
+}
+
+void Runtime::clearProbes() noexcept {
+    probeManager_.clear();
 }
 
 std::uint64_t Runtime::computeStateHash() const noexcept {

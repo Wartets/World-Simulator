@@ -561,6 +561,90 @@ bool RuntimeService::parameterControls(std::vector<ParameterControl>& controls, 
     }
 }
 
+bool RuntimeService::addProbe(const ProbeDefinition& definition, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("add_probe", message)) {
+            return false;
+        }
+        return runtime_->addProbe(definition, message);
+    } catch (const std::exception& exception) {
+        message = std::string("add_probe_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::removeProbe(const std::string& probeId, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("remove_probe", message)) {
+            return false;
+        }
+        return runtime_->removeProbe(probeId, message);
+    } catch (const std::exception& exception) {
+        message = std::string("remove_probe_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::clearProbes(std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("clear_probes", message)) {
+            return false;
+        }
+        runtime_->clearProbes();
+        message = "probes_cleared";
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("clear_probes_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::probeDefinitions(std::vector<ProbeDefinition>& definitions, std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("probe_definitions", message)) {
+            return false;
+        }
+        definitions = runtime_->probes().definitions();
+        message = "probe_definitions_ready count=" + std::to_string(definitions.size());
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("probe_definitions_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::probeSeries(const std::string& probeId, ProbeSeries& series, std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("probe_series", message)) {
+            return false;
+        }
+        return runtime_->probes().getSeries(probeId, series, message);
+    } catch (const std::exception& exception) {
+        message = std::string("probe_series_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::lastStepDiagnostics(StepDiagnostics& diagnostics, std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("step_diagnostics", message)) {
+            return false;
+        }
+        diagnostics = runtime_->lastStepDiagnostics();
+        message = "step_diagnostics_ready";
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("step_diagnostics_failed error=") + exception.what();
+        return false;
+    }
+}
+
 bool RuntimeService::setParameterValue(const std::string& parameterName, const float value, const std::string& note, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {

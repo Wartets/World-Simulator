@@ -3,6 +3,7 @@
 #include "ws/core/event_queue.hpp"
 #include "ws/core/interactions.hpp"
 #include "ws/core/observability.hpp"
+#include "ws/core/probe.hpp"
 #include "ws/core/profile.hpp"
 #include "ws/core/run_signature.hpp"
 #include "ws/core/scheduler.hpp"
@@ -142,6 +143,7 @@ public:
     [[nodiscard]] const StepDiagnostics& lastStepDiagnostics() const noexcept { return lastStepDiagnostics_; }
     [[nodiscard]] const std::vector<RuntimeEventRecord>& eventChronology() const noexcept { return eventChronology_; }
     [[nodiscard]] const std::vector<ManualEventRecord>& manualEventLog() const noexcept { return eventQueue_.manualEvents(); }
+    [[nodiscard]] const ProbeManager& probes() const noexcept { return probeManager_; }
     [[nodiscard]] std::vector<ParameterControl> parameterControls() const;
     [[nodiscard]] const std::vector<TraceRecord>& traceRecords() const noexcept { return observability_.records(); }
     [[nodiscard]] RuntimeMetrics metrics() const noexcept { return observability_.metrics(); }
@@ -151,6 +153,9 @@ public:
     bool applyManualPatch(const std::string& variableName, std::optional<Cell> cell, float newValue, std::string note, std::string& message);
     bool undoLastManualPatch(std::string& message);
     bool enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message);
+    bool addProbe(const ProbeDefinition& definition, std::string& message);
+    bool removeProbe(const std::string& probeId, std::string& message);
+    void clearProbes() noexcept;
 
 private:
     void allocateCanonicalFields();
@@ -187,6 +192,7 @@ private:
     std::vector<PerturbationSpec> pendingPerturbations_;
     std::vector<RuntimeEventRecord> eventChronology_;
     std::vector<std::uint64_t> stateHashHistory_;
+    ProbeManager probeManager_;
     ObservabilityPipeline observability_;
     StepDiagnostics lastStepDiagnostics_{};
 };

@@ -63,6 +63,12 @@ public:
     bool captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message, bool computeHash = false) const;
     bool fieldNames(std::vector<std::string>& names, std::string& message) const;
     bool parameterControls(std::vector<ParameterControl>& controls, std::string& message) const;
+    bool addProbe(const ProbeDefinition& definition, std::string& message);
+    bool removeProbe(const std::string& probeId, std::string& message);
+    bool clearProbes(std::string& message);
+    bool probeDefinitions(std::vector<ProbeDefinition>& definitions, std::string& message) const;
+    bool probeSeries(const std::string& probeId, ProbeSeries& series, std::string& message) const;
+    bool lastStepDiagnostics(StepDiagnostics& diagnostics, std::string& message) const;
     bool setParameterValue(const std::string& parameterName, float value, const std::string& note, std::string& message);
     bool applyManualPatch(const std::string& variableName, std::optional<Cell> cell, float newValue, const std::string& note, std::string& message);
     bool undoLastManualPatch(std::string& message);

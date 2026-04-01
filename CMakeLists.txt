@@ -46,6 +46,7 @@ add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/subsystems/subsystems.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/model_parser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/ir_ast.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/probe.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/unit_system.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/time_integrator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/spatial_scheme.cpp
@@ -154,6 +155,9 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/parameter_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/perturbation_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/event_logger.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/timeseries_panel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/histogram_panel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/constraint_monitor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/theme_bootstrap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/ui_components.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/node_editor.cpp
