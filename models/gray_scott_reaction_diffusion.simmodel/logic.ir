@@ -1,0 +1,77 @@
+// Gray-Scott Reaction-Diffusion Model
+// Evaluates partial differential equations for chemical U and V using explicit Euler.
+//
+// Equations:
+// dU/dt = Du * Lap(U) - U * V^2 + F * (1 - U)
+// dV/dt = Dv * Lap(V) + U * V^2 - (F + k) * V
+
+// Interaction: advance_time
+// Target: Global Scalar
+@interaction(advance_time)
+func advance_time() {
+    %time_curr = GlobalLoad("time")
+    %dt = GlobalLoad("dt")
+    %time_next = Add(%time_curr, %dt)
+    Store("time", %time_next)
+}
+
+// Interaction: gray_scott_step
+// Target: Grid Cell (executed per-cell)
+@interaction(gray_scott_step)
+func gray_scott_step() {
+    // 1. Load local cell states
+    %u = Load("u_concentration", 0, 0)
+    %v = Load("v_concentration", 0, 0)
+    
+    // 2. Load global parameters
+    %du = GlobalLoad("diff_u")
+    %dv = GlobalLoad("diff_v")
+    %feed = GlobalLoad("feed")
+    %kill = GlobalLoad("kill")
+    %dt = GlobalLoad("dt")
+    
+    // 3. Compute spatial laplacians
+    %lap_u = Laplacian("u_concentration")
+    %lap_v = Laplacian("v_concentration")
+    
+    // 4. Compute reaction term: U * V^2
+    %v_squared = Mul(%v, %v)
+    %reaction = Mul(%u, %v_squared)
+    
+    // 5. Compute U equation: dU = (Du * Lap(U) - U*V^2 + F*(1 - U)) * dt
+    %diff_term_u = Mul(%du, %lap_u)
+    %u_reaction_term = Sub(%diff_term_u, %reaction)
+    %one_minus_u = Sub(1.0, %u)
+    %feed_term_u = Mul(%feed, %one_minus_u)
+    %du_total = Add(%u_reaction_term, %feed_term_u)
+    %du_dt = Mul(%du_total, %dt)
+    
+    // 6. Compute V equation: dV = (Dv * Lap(V) + U*V^2 - (F + k)*V) * dt
+    %diff_term_v = Mul(%dv, %lap_v)
+    %v_reaction_term = Add(%diff_term_v, %reaction)
+    %feed_plus_kill = Add(%feed, %kill)
+    %decay_term_v = Mul(%feed_plus_kill, %v)
+    %dv_total = Sub(%v_reaction_term, %decay_term_v)
+    %dv_dt = Mul(%dv_total, %dt)
+    
+    // 7. Update states
+    %u_next = Add(%u, %du_dt)
+    %v_next = Add(%v, %dv_dt)
+    
+    Store("u_concentration", %u_next)
+    Store("v_concentration", %v_next)
+}
+
+// Interaction: clamp_concentrations
+// Target: Grid Cell (executed per-cell)
+@interaction(clamp_concentrations)
+func clamp_concentrations() {
+    %u = Load("u_concentration", 0, 0)
+    %v = Load("v_concentration", 0, 0)
+    
+    %u_clamped = Clamp(%u, 0.0, 1.0)
+    %v_clamped = Clamp(%v, 0.0, 1.0)
+    
+    Store("u_concentration", %u_clamped)
+    Store("v_concentration", %v_clamped)
+}

@@ -1,0 +1,96 @@
+{
+  "__comment_intro__": "Reaction-Diffusion (Gray-Scott). Demonstrates dual-field continuous PDE simulation with spatial derivatives and non-linear chemical reaction terms, purely in SI Base units.",
+  "id": "gray_scott_reaction_diffusion",
+  "version": "1.0.0",
+
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "periodic",
+      "y": "periodic"
+    },
+    "__comment__": "Toroidal topology helps avoid edge effects for continuous chemical diffusion."
+  },
+
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "explicit_euler",
+    "diffusion_scheme": "central_difference"
+  },
+
+  "domains": {
+    "positive_concentration": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" }
+  },
+
+  "variables": [
+    {
+      "__comment_block__": "--- GLOBAL VARIABLES ---"
+    },
+    {
+      "id": "time", "role": "state", "support": "global", "type": "f32", "units": "s",
+      "description": "Simulation time in seconds."
+    },
+    {
+      "id": "dt", "role": "parameter", "support": "global", "type": "f32", "units": "s", "initial_value": 1.0,
+      "description": "Time increment per step."
+    },
+    {
+      "id": "diff_u", "role": "parameter", "support": "global", "type": "f32", "units": "m^2/s", "initial_value": 0.16,
+      "description": "Diffusion rate of chemical U."
+    },
+    {
+      "id": "diff_v", "role": "parameter", "support": "global", "type": "f32", "units": "m^2/s", "initial_value": 0.08,
+      "description": "Diffusion rate of chemical V."
+    },
+    {
+      "id": "feed", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 0.06,
+      "description": "Feed rate of U into the system. Example value forms spots."
+    },
+    {
+      "id": "kill", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 0.062,
+      "description": "Kill rate (decay) of V within the system."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES ---"
+    },
+    {
+      "id": "u_concentration", "role": "state", "support": "cell", "type": "f32", "units": "mol/m^3", "domain": "positive_concentration",
+      "description": "Concentration of chemical U. 0 means empty, 1 means saturated."
+    },
+    {
+      "id": "v_concentration", "role": "state", "support": "cell", "type": "f32", "units": "mol/m^3", "domain": "positive_concentration",
+      "description": "Concentration of chemical V. 0 means empty, 1 means saturated."
+    }
+  ],
+
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Increments the overall simulation time.",
+      "interactions": [
+        { "id": "advance_time", "reads": ["time", "dt"], "writes": ["time"], "target_type": "scalar" }
+      ]
+    },
+    {
+      "id": "chemical_kinetics",
+      "description": "Solves the Gray-Scott reaction-diffusion PDE step using Laplacian operator and reaction rules.",
+      "interactions": [
+        {
+          "id": "gray_scott_step",
+          "reads": ["u_concentration", "v_concentration", "diff_u", "diff_v", "feed", "kill", "dt"],
+          "writes": ["u_concentration", "v_concentration"],
+          "target_type": "grid"
+        }
+      ]
+    },
+    {
+      "id": "chemical_saturation",
+      "description": "Ensures no negative concentrations or over-saturation beyond capacity due to explicit Euler drifts.",
+      "interactions": [
+        { "id": "clamp_concentrations", "reads": ["u_concentration", "v_concentration"], "writes": ["u_concentration", "v_concentration"], "target_type": "grid" }
+      ]
+    }
+  ]
+}

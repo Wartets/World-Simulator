@@ -1,0 +1,208 @@
+// FILE: logic.ir
+// TYPE: Intermediate Representation (IR) Textual / Assembly
+// DESCRIPTION: 
+//   This file contains the Intermediate Representation (IR) logic for the 
+//   environmental 2D model. It replaces the old, slow YAML AST.
+//
+// FORMAT SPECIFICATIONS (from docs/model_format_doc.md):
+//   - Strictly typed (f32, f64, vec2).
+//   - No implicit casting. Use `Cast(...)`.
+//   - No unbounded loops (`while`, `for`) to guarantee O(1) cell evaluation
+//     and ensure extreme SIMD/GPU parallelization.
+//   - Variables reads are explicit: `Load(VariableID)` for local cell data,
+//     and `GlobalLoad(VariableID)` for scalar/global data.
+//   - Writes use `Store(VariableID, Value)` which handles double-buffering 
+//     automatically via the engine's SoC back-end.
+
+// STAGE: timekeeping
+// This stage executes over global variables (Target: Scalar).
+// It runs exactly ONCE per physics tick on the CPU.
+interaction advance_time {
+    // Read the current simulation accumulation time (global f64)
+    %t_current = GlobalLoad("time")
+    
+    // Read the user-defined delta time parameter (global f64)
+    %delta_t = GlobalLoad("dt")
+
+    // The time is advanced
+    %t_next = Add(%t_current, %delta_t)
+    
+    // Write back to the global store (double buffered globally)
+    Store("time", %t_next)
+}
+
+interaction compute_solar_irradiance {
+    // For global math, compute the cycle mod to find the "time of day"
+    %seconds_per_day = Constant(86400.0, f64)
+    %t_current = GlobalLoad("time")
+    
+    // t_day = time % 86400.0
+    %t_day = Mod(%t_current, %seconds_per_day)
+    
+    // Constants for day phases (sunrise at hour 6, sunset at hour 18)
+    %sunrise = Constant(21600.0, f64) 
+    %sunset  = Constant(64800.0, f64) 
+    
+    // Compute if we're during the day (t_day >= sunrise && t_day < sunset)
+    // The IR uses Select for branchless evaluation.
+    %is_after_sunrise = Gte(%t_day, %sunrise)
+    %is_before_sunset = Lt(%t_day, %sunset)
+    %is_day = And(%is_after_sunrise, %is_before_sunset)
+    
+    // Store the boolean phase
+    Store("solar_phase", %is_day)
+
+    // Calculate solar peak irradiance sine wave 
+    %peak = GlobalLoad("solar_peak_irradiance") // f32
+    
+    // A sine wave normalized across the daylight hours:
+    // sin( PI * (t_day - sunrise) / (sunset - sunrise) )
+    %pi = Constant(3.14159265, f32)
+    %day_length = Sub(%sunset, %sunrise)
+    %time_since_sunrise = Sub(%t_day, %sunrise)
+    
+    // Cast f64 times to f32 to mix with peak irradiance (Strict typing)
+    %time_since_sunrise_f32 = Cast(%time_since_sunrise, f32)
+    %day_length_f32 = Cast(%day_length, f32)
+    
+    %fraction = Div(%time_since_sunrise_f32, %day_length_f32)
+    %angle = Mul(%pi, %fraction)
+    
+    %sine = Sin(%angle)
+    %clamped_sine = Max(Constant(0.0, f32), %sine) 
+    %current_irradiance = Mul(%peak, %clamped_sine)
+    
+    // Select(condition, true_value, false_value) - vectorization safe
+    %final_irradiance = Select(%is_day, %current_irradiance, Constant(0.0, f32))
+    
+    Store("solar_irradiance", %final_irradiance)
+}
+
+// STAGE: atmosphere
+// This stage acts continuously across the grid (Target: Grid).
+// The compiler will map this to a GPU Compute Shader or CPU thread-pool 
+// tuiling (e.g. 64x64 chunks) using AVX/SIMD instructions.
+interaction compute_pressure {
+    // This runs per-cell, so we use `Load` instead of `GlobalLoad`.
+    // Load(...) reads the cell's value at offset (0,0) by default.
+    %alt = Load("altitude", 0, 0)       // f32
+    %temp = Load("temperature", 0, 0)   // f32
+
+    // Load global parameters
+    %p0 = GlobalLoad("sea_level_pressure")       // f32
+    %scale_h = GlobalLoad("pressure_scale_height") // f32
+    
+    // Calculate P = P0 * exp(-Z / H_p) * (288.15 / T)
+    // Notice how simple algebraic simplifications (Pass 3) will later 
+    // fold constants and optimize this tree.
+    
+    %neg_alt = Sub(Constant(0.0, f32), %alt)
+    %exp_term_inner = Div(%neg_alt, %scale_h)
+    %exp_term = Exp(%exp_term_inner)
+    
+    %temp_ratio = Div(Constant(288.15, f32), %temp)
+    
+    %p_hydro = Mul(%p0, %exp_term)
+    %pressure = Mul(%p_hydro, %temp_ratio)
+    
+    // Writes the pressure to the pressure array via double buffering
+    Store("pressure", %pressure)
+}
+
+interaction advect_water_vapor {
+    // Example of Advection (First-Order Upwind equivalent using Gradient builtin)
+    // Symbiose provides powerful spatial built-ins like Gradient() and Laplacian()
+    // that the engine backend expands smartly depending on boundary conditions.
+    
+    %q_current = Load("water_vapor_density", 0, 0)
+    %wind = Load("wind_velocity", 0, 0) // type: vec2
+    %dt_f64 = GlobalLoad("dt") 
+    %dt = Cast(%dt_f64, f32) // strict cast to f32
+
+    // Calculate spatial gradients (engine abstracts neighbor access)
+    // Gradient returns a vec2 (dx, dy)
+    %grad_q = Gradient("water_vapor_density")
+    
+    // Advection term: dot(wind, gradient)
+    // Mul on vectors is component-wise.
+    %adv_vec = Mul(%wind, %grad_q)
+    
+    // We sum components (dx + dy) for the total flux divergence
+    %dx = Extract(%adv_vec, 0)
+    %dy = Extract(%adv_vec, 1)
+    %flux = Add(%dx, %dy)
+    
+    // Apply explicit Euler time integration: Q(t+1) = Q(t) - flux * dt
+    // This is safe and stable within Courant limits because the backend 
+    // handles read-only (t) vs write-only (t+1) arrays.
+    %delta_flux = Mul(%flux, %dt)
+    %q_next = Sub(%q_current, %delta_flux)
+
+    Store("water_vapor_density", %q_next)
+}
+
+// STAGE: hydrology
+// Cellular interaction representing water dynamics (Ex: standing water)
+interaction diffuse_surface_water {
+    // Example of Diffusion (Laplacian operator)
+    
+    %h_water = Load("water_height", 0, 0)
+    %D_water = GlobalLoad("surface_water_diffusivity") // f32
+    %dt_f64 = GlobalLoad("dt")
+    %dt = Cast(%dt_f64, f32)
+
+    // The Laplacian operator queries adjacent cells automatically:
+    // (Left + Right + Top + Bottom - 4 * Center)
+    %lap_h = Laplacian("water_height")
+    
+    // diffusion_flux = D * Laplacian
+    %diff_flux = Mul(%D_water, %lap_h)
+    
+    // Integrate
+    %diff_effect = Mul(%diff_flux, %dt)
+    %h_next = Add(%h_water, %diff_effect)
+    
+    Store("water_height", %h_next)
+}
+
+interaction surface_water_balance {
+    // Accumulate precipitation directly locally.
+    // "Accumulate" behavior from old YAML is achieved here by reading the 
+    // current value just written by the previous interaction (or by 
+    // chaining them, since double buffering swaps at the end of stages).
+    %h_water = Load("water_height", 0, 0) 
+    %precip = Load("precipitation_flux", 0, 0) // Rainfall rate (m/s)
+    %dt_f64 = GlobalLoad("dt")
+    %dt = Cast(%dt_f64, f32)
+
+    // Add rainfall
+    %added_water = Mul(%precip, %dt)
+    %h_final_water = Add(%h_water, %added_water)
+    
+    Store("water_height", %h_final_water)
+}
+
+// STAGE: constraints 
+// Clamping and Domain Validation.
+// Note: Handled natively in the IR to avoid C++ callbacks and bottlenecks.
+interaction clamp_water_height {
+    // Ensures water height physically cannot go below zero 
+    // due to numeric over/undershoot in implicit or advection steps.
+    %h_water = Load("water_height", 0, 0)
+    
+    // Max(0.0, height)
+    %clamped = Max(Constant(0.0, f32), %h_water)
+    
+    Store("water_height", %clamped)
+}
+
+interaction clamp_humidity {
+    %rh = Load("relative_humidity", 0, 0)
+    
+    // Strict clamp between 0.0 and 1.0 using Clamp operator
+    %safe_rh = Clamp(%rh, Constant(0.0, f32), Constant(1.0, f32))
+    
+    Store("relative_humidity", %safe_rh)
+}
+
+// EOF

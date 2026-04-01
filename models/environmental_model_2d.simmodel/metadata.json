@@ -1,0 +1,8 @@
+﻿{
+  "id": "env_model_2d",
+  "name": "Symbiose Environmental Model 2D",
+  "description": "Comprehensive template model simulating basic atmospheric, hydrological, and biospheric processes on a 2D grid. Serves as the primary reference for the .simmodel architecture.",
+  "author": "Colin Bossu Reaubourg",
+  "creation_date": "2026-04-01",
+  "tags": ["environment", "2d", "template", "weather", "biosphere"]
+}

@@ -1,0 +1,134 @@
+﻿{
+  "__comment_intro__": "This is the editable JSON version of the model structure. It contains NO calculations, only the definitions of domains, variables, and the topological graph of execution stages/interactions. This replaces the old YAML configuration. The actual logic is located in logic.ir.",
+  "id": "environmental_model_2d",
+  "version": "2.0.0",
+
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "periodic",
+      "y": "periodic"
+    },
+    "__comment__": "Defines the 2D grid structure. In the future, this allows dynamic swapping to hexagonal or extending to 3D without breaking variables."
+  },
+
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "explicit_euler",
+    "advection_scheme": "first_order_upwind",
+    "diffusion_scheme": "central_difference"
+  },
+
+  "domains": {
+    "__comment__": "Domains define physical constraints. The runtime will clamp or validate variables against these at specified stages to guarantee physical integrity.",
+    "altitude_m": { "kind": "interval", "min": -4000.0, "max": 4000.0, "type": "f32" },
+    "pressure_kg_per_m_s2": { "kind": "interval", "min": 90000.0, "max": 110000.0, "type": "f32" },
+    "temperature_k": { "kind": "interval", "min": 200.0, "max": 330.0, "type": "f32" },
+    "unit_fraction": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" },
+    "velocity_m_per_s": { "kind": "interval", "min": -100.0, "max": 100.0, "type": "f32" },
+    "precipitation_flux": { "kind": "interval", "min": 0.0, "max": 0.001, "type": "f32" },
+    "solar_irradiance_kg_per_s3": { "kind": "interval", "min": 1.0, "max": 1000.0, "type": "f32" },
+    "water_height_m": { "kind": "interval", "min": 0.0, "max": 4000.0, "type": "f32" },
+    "time_of_day_s": { "kind": "interval", "min": 0.0, "max": 86400.0, "type": "f64" },
+    "leaf_area_index": { "kind": "interval", "min": 0.0, "max": 10.0, "type": "f32" },
+    "water_vapor_density_kg_per_m3": { "kind": "interval", "min": 0.00001, "max": 0.03, "type": "f32"}
+  },
+
+  "variables": [
+    { "__comment_block__": "--- GLOBAL VARIABLES ---" },
+    { "id": "time", "role": "state", "support": "global", "type": "f64", "units": "s", "description": "Accumulated simulation time." },
+    { "id": "dt", "role": "parameter", "support": "global", "type": "f64", "units": "s", "initial_value": 3600.0, "description": "Nominal integration time step." },
+    { "id": "seconds_per_day", "role": "parameter", "support": "global", "type": "f64", "units": "s", "initial_value": 86400.0, "description": "Length of one solar day." },
+    { "id": "sunrise_time", "role": "parameter", "support": "global", "type": "f64", "units": "s", "initial_value": 21600.0, "description": "Daily time at which daylight starts." },
+    { "id": "sunset_time", "role": "parameter", "support": "global", "type": "f64", "units": "s", "initial_value": 64800.0, "description": "Daily time at which daylight ends." },
+    { "id": "time_of_day", "role": "derived", "support": "global", "type": "f64", "units": "s", "domain": "time_of_day_s", "description": "Daily cycle time derived from total simulation time." },
+    { "id": "solar_phase", "role": "derived", "support": "global", "type": "bool", "units": "1", "description": "Boolean day or night indicator." },
+    { "id": "solar_irradiance", "role": "derived", "support": "global", "type": "f32", "units": "kg/s^3", "domain": "solar_irradiance_kg_per_s3", "description": "Global incoming shortwave irradiance derived from the day cycle." },
+    { "id": "solar_peak_irradiance", "role": "parameter", "support": "global", "type": "f32", "units": "kg/s^3", "initial_value": 1000.0, "description": "Peak clear-sky irradiance used by the daylight forcing curve." },
+    { "id": "sea_level_pressure", "role": "parameter", "support": "global", "type": "f32", "units": "kg/(m*s^2)", "initial_value": 101325.0, "description": "Reference pressure at sea level." },
+    { "id": "pressure_scale_height", "role": "parameter", "support": "global", "type": "f32", "units": "m", "initial_value": 8400.0, "description": "Characteristic height scale used by the hydrostatic pressure approximation." },
+    { "id": "reference_saturation_vapor_density", "role": "parameter", "support": "global", "type": "f32", "units": "kg/m^3", "initial_value": 0.0048, "description": "Reference vapor density." },
+    { "id": "vapor_temperature_sensitivity", "role": "parameter", "support": "global", "type": "f32", "units": "1/K", "initial_value": 0.06, "description": "Temperature sensitivity coefficient." },
+    { "id": "surface_water_diffusivity", "role": "parameter", "support": "global", "type": "f32", "units": "m^2/s", "initial_value": 0.2, "description": "Effective diffusivity used to spread standing water over the grid." },
+    { "id": "infiltration_rate", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 5.0e-6, "description": "Rate at which standing water infiltrates into the soil." },
+    { "id": "surface_evaporation_flux", "role": "parameter", "support": "global", "type": "f32", "units": "m/s", "initial_value": 1.0e-7, "description": "Daylight evaporation flux removed from surface water." },
+    { "id": "soil_recharge_rate", "role": "parameter", "support": "global", "type": "f32", "units": "1/m/s", "initial_value": 1.0e-4, "description": "Rate at which surface water recharges the soil moisture fraction." },
+    { "id": "soil_drainage_rate", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 1.0e-6, "description": "Slow drainage term that removes water from the soil store." },
+    { "id": "vegetation_growth_rate", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 3.0e-7, "description": "Maximum leaf-area growth rate under favorable conditions." },
+    { "id": "vegetation_decay_rate", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 1.0e-7, "description": "Background decay rate of vegetation cover." },
+    { "id": "max_leaf_area_index", "role": "parameter", "support": "global", "type": "f32", "units": "1", "initial_value": 6.0, "description": "Upper carrying capacity for the vegetation canopy." },
+    { "id": "optimal_growth_temperature", "role": "parameter", "support": "global", "type": "f32", "units": "K", "initial_value": 293.15, "description": "Temperature at which climatic growth potential is maximal." },
+    { "id": "growth_temperature_tolerance", "role": "parameter", "support": "global", "type": "f32", "units": "K", "initial_value": 20.0, "description": "Half-width of the temperature window favorable to vegetation growth." },
+    { "id": "beneficial_precipitation_flux", "role": "parameter", "support": "global", "type": "f32", "units": "m/s", "initial_value": 2.0e-7, "description": "Rainfall level considered sufficient for maximal climatic fertility." },
+
+    { "__comment_block__": "--- CELL VARIABLES ---" },
+    { "id": "altitude", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "altitude_m", "description": "Terrain elevation." },
+    { "id": "temperature", "role": "state", "support": "cell", "type": "f32", "units": "K", "domain": "temperature_k", "description": "Surface-level air temperature." },
+    { "id": "pressure", "role": "derived", "support": "cell", "type": "f32", "units": "kg/(m*s^2)", "domain": "pressure_kg_per_m_s2", "description": "Atmospheric pressure." },
+    { "id": "water_vapor_density", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "water_vapor_density_kg_per_m3", "description": "Water vapor mass density carried by the air." },
+    { "id": "relative_humidity", "role": "derived", "support": "cell", "type": "f32", "units": "1", "domain": "unit_fraction", "description": "Ratio between vapor density and saturation density." },
+    { "id": "wind_velocity", "role": "forcing", "support": "cell", "type": "vec2", "units": "m/s", "domain": "velocity_m_per_s", "description": "Horizontal 2D wind velocity vector." },
+    { "id": "precipitation_flux", "role": "forcing", "support": "cell", "type": "f32", "units": "m/s", "domain": "precipitation_flux", "description": "Water-equivalent vertical flux added to the surface." },
+    { "id": "water_height", "role": "state", "support": "cell", "type": "f32", "units": "m", "domain": "water_height_m", "description": "Surface standing water depth above the terrain." },
+    { "id": "soil_mineral_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "unit_fraction", "initial_value": 0.5, "description": "Fraction of mineral and nutrient content available in the soil." },
+    { "id": "soil_water_fraction", "role": "state", "support": "cell", "type": "f32", "units": "1", "domain": "unit_fraction", "description": "Volumetric fraction of water stored in the soil." },
+    { "id": "soil_fertility_index", "role": "derived", "support": "cell", "type": "f32", "units": "1", "domain": "unit_fraction", "description": "Normalized fertility score derived from mineral content and soil moisture." },
+    { "id": "climatic_fertility_index", "role": "derived", "support": "cell", "type": "f32", "units": "1", "domain": "unit_fraction", "description": "Normalized plant-growth potential derived from temperature, sunlight, and rainfall." },
+    { "id": "leaf_area_index", "role": "state", "support": "cell", "type": "f32", "units": "1", "domain": "leaf_area_index", "description": "Total leaf area per unit ground area." }
+  ],
+
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Advance the global clock and derive day or night forcing variables.",
+      "interactions": [
+        { "id": "advance_time", "reads": ["time", "dt"], "writes": ["time"], "target_type": "scalar" },
+        { "id": "compute_time_of_day", "reads": ["time", "seconds_per_day"], "writes": ["time_of_day"], "target_type": "scalar" },
+        { "id": "compute_solar_phase", "reads": ["time_of_day", "sunrise_time", "sunset_time"], "writes": ["solar_phase"], "target_type": "scalar" },
+        { "id": "compute_solar_irradiance", "reads": ["solar_phase", "time_of_day", "sunrise_time", "sunset_time", "solar_peak_irradiance"], "writes": ["solar_irradiance"], "target_type": "scalar" }
+      ]
+    },
+    {
+      "id": "atmosphere",
+      "description": "Transport water vapor and derive atmospheric diagnostics.",
+      "interactions": [
+        { "id": "advect_water_vapor", "reads": ["water_vapor_density", "wind_velocity", "dt"], "writes": ["water_vapor_density"], "target_type": "grid" },
+        { "id": "compute_pressure", "reads": ["altitude", "temperature", "sea_level_pressure", "pressure_scale_height"], "writes": ["pressure"], "target_type": "grid" },
+        { "id": "compute_relative_humidity", "reads": ["water_vapor_density", "temperature", "reference_saturation_vapor_density", "vapor_temperature_sensitivity"], "writes": ["relative_humidity"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "hydrology",
+      "description": "Update standing water and soil moisture using forcing, diffusion, and recharge.",
+      "interactions": [
+        { "id": "surface_water_balance", "reads": ["water_height", "precipitation_flux", "solar_phase", "surface_evaporation_flux", "infiltration_rate", "dt"], "writes": ["water_height"], "target_type": "grid" },
+        { "id": "diffuse_surface_water", "reads": ["water_height", "surface_water_diffusivity", "dt"], "writes": ["water_height"], "target_type": "grid" },
+        { "id": "recharge_soil_moisture", "reads": ["water_height", "soil_water_fraction", "soil_recharge_rate", "soil_drainage_rate", "dt"], "writes": ["soil_water_fraction"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "biosphere",
+      "description": "Derive fertility metrics and update vegetation cover.",
+      "interactions": [
+        { "id": "compute_soil_fertility", "reads": ["soil_mineral_fraction", "soil_water_fraction"], "writes": ["soil_fertility_index"], "target_type": "grid" },
+        { "id": "compute_climatic_fertility", "reads": ["temperature", "precipitation_flux", "solar_irradiance", "solar_peak_irradiance", "optimal_growth_temperature", "growth_temperature_tolerance", "beneficial_precipitation_flux"], "writes": ["climatic_fertility_index"], "target_type": "grid" },
+        { "id": "grow_leaf_area", "reads": ["soil_fertility_index", "climatic_fertility_index", "leaf_area_index", "vegetation_growth_rate", "vegetation_decay_rate", "max_leaf_area_index", "dt"], "writes": ["leaf_area_index"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "constraints",
+      "description": "Enforce hard physical bounds after all integrations.",
+      "interactions": [
+        { "id": "clamp_relative_humidity", "reads": ["relative_humidity"], "writes": ["relative_humidity"], "target_type": "grid" },
+        { "id": "clamp_soil_water_fraction", "reads": ["soil_water_fraction"], "writes": ["soil_water_fraction"], "target_type": "grid" },
+        { "id": "clamp_soil_fertility_index", "reads": ["soil_fertility_index"], "writes": ["soil_fertility_index"], "target_type": "grid" },
+        { "id": "clamp_climatic_fertility_index", "reads": ["climatic_fertility_index"], "writes": ["climatic_fertility_index"], "target_type": "grid" },
+        { "id": "clamp_leaf_area_index", "reads": ["leaf_area_index", "max_leaf_area_index"], "writes": ["leaf_area_index"], "target_type": "grid" },
+        { "id": "clamp_water_height", "reads": ["water_height"], "writes": ["water_height"], "target_type": "grid" },
+        { "id": "clamp_water_vapor_density", "reads": ["water_vapor_density"], "writes": ["water_vapor_density"], "target_type": "grid" },
+        { "id": "clamp_temperature", "reads": ["temperature"], "writes": ["temperature"], "target_type": "grid" }
+      ]
+    }
+  ]
+}
