@@ -258,13 +258,14 @@ public:
         };
         modelSelector_.on_model_created = [this](const std::string& modelName) {
             try {
-                const std::filesystem::path modelPath = std::filesystem::path("models") / (modelName + ".simmodel");
-                if (std::filesystem::exists(modelPath)) {
-                    const ModelContext context = ws::ModelParser::load(modelPath);
-                    modelEditor_.loadModel(context);
-                    modelEditor_.open();
-                    appState_ = AppState::ModelEditor;
+                const std::filesystem::path modelPath = modelName;
+                if (!std::filesystem::exists(modelPath)) {
+                    return;
                 }
+                const ModelContext context = ws::ModelParser::load(modelPath);
+                modelEditor_.loadModel(context);
+                modelEditor_.open();
+                appState_ = AppState::ModelEditor;
             } catch (const std::exception& e) {
                 appendLog(std::string("model_create_error=") + e.what());
             }

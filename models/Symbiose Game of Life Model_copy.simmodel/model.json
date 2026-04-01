@@ -1,0 +1,72 @@
+{
+  "__comment_intro__": "Editable JSON model structure for Conway's Game of Life. Demonstrates how to define non-physical, purely discrete cellular automata using the .simmodel architecture.",
+  "id": "game_of_life",
+  "version": "1.0.0",
+
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "periodic",
+      "y": "periodic"
+    },
+    "__comment__": "The grid wraps around (periodic), creating a toroidal surface for the Game of Life to prevent edge-termination issues."
+  },
+
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "explicit_euler",
+    "__comment__": "Discrete steps. No gradients or continuous physics solvers needed."
+  },
+
+  "domains": {
+    "__comment__": "Domains define valid states. Here we ensure 'living' only holds 0 or 1.",
+    "binary_state": { "kind": "interval", "min": 0, "max": 1, "type": "u32" }
+  },
+
+  "variables": [
+    {
+      "__comment_block__": "--- GLOBAL VARIABLES ---"
+    },
+    {
+      "id": "time", "role": "state", "support": "global", "type": "u32", "units": "s",
+      "description": "Step counter representing discrete generation ticks."
+    },
+    {
+      "id": "dt", "role": "parameter", "support": "global", "type": "u32", "units": "s", "initial_value": 1,
+      "description": "Discrete step increment (always 1 for standard GOL)."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES ---"
+    },
+    {
+      "id": "living", "role": "state", "support": "cell", "type": "u32", "units": "1", "domain": "binary_state",
+      "description": "Binary state: 1 if the cell is alive, 0 if dead."
+    }
+  ],
+
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Advances the global generation step counter.",
+      "interactions": [
+        { "id": "advance_time", "reads": ["time", "dt"], "writes": ["time"], "target_type": "scalar" }
+      ]
+    },
+    {
+      "id": "cellular_automaton",
+      "description": "Evaluates Conway's rules on neighboring cells to determine next generation life state.",
+      "interactions": [
+        { "id": "update_life", "reads": ["living"], "writes": ["living"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "constraints",
+      "description": "Ensures no floating point or numeric drift alters the states from strictly 0 or 1.",
+      "interactions": [
+        { "id": "clamp_life", "reads": ["living"], "writes": ["living"], "target_type": "grid" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "author": "Colin Bossu Reaubourg",
+  "creation_date": "2026-04-01",
+  "description": "Cellular automaton model based on Conway's rules. Demonstrates how to handle boolean states and direct neighbor querying in the .simmodel architecture.",
+  "id": "Symbiose Game of Life Model_copy",
+  "name": "Symbiose Game of Life Model_copy",
+  "tags": [
+    "cellular_automaton",
+    "conway",
+    "2d",
+    "discrete",
+    "boolean"
+  ]
+}

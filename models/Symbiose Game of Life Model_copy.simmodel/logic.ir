@@ -1,0 +1,76 @@
+// Game of Life Logic
+// Defines the cellular automaton rules for Conway's Game of Life.
+// This executes across the grid in parallel using O(1) branchless IR.
+
+// Interaction: advance_time
+// Target: Global scalar
+@interaction(advance_time)
+func advance_time() {
+    %time_curr = GlobalLoad("time")
+    %dt = GlobalLoad("dt")
+    %time_next = Add(%time_curr, %dt)
+    Store("time", %time_next)
+}
+
+// Interaction: update_life
+// Target: Grid Cell (executed per-cell)
+@interaction(update_life)
+func update_life() {
+    // Conway's Game of Life rules require counting the alive neighbors.
+    // Neighbors are strictly offset by (-1, 0, 1) in a 2D grid.
+    
+    // Top Row
+    %tl = Load("living", -1, 1)
+    %tc = Load("living", 0, 1)
+    %tr = Load("living", 1, 1)
+    
+    // Middle Row (exclude self)
+    %ml = Load("living", -1, 0)
+    %mr = Load("living", 1, 0)
+    
+    // Bottom Row
+    %bl = Load("living", -1, -1)
+    %bc = Load("living", 0, -1)
+    %br = Load("living", 1, -1)
+    
+    // Sum neighbors
+    %sum1 = Add(%tl, %tc)
+    %sum2 = Add(%sum1, %tr)
+    %sum3 = Add(%sum2, %ml)
+    %sum4 = Add(%sum3, %mr)
+    %sum5 = Add(%sum4, %bl)
+    %sum6 = Add(%sum5, %bc)
+    %neighbors = Add(%sum6, %br)
+    
+    // Load current cell state
+    %self = Load("living", 0, 0)
+    
+    // Rule 1: A dead cell with exactly 3 neighbors becomes alive (reproduction).
+    %is_3 = Equal(%neighbors, 3)
+    %reproduce = And(%is_3, Equal(%self, 0))
+    
+    // Rule 2: A living cell with 2 or 3 neighbors stays alive (survival).
+    %is_2 = Equal(%neighbors, 2)
+    %survive_cond = Or(%is_2, %is_3)
+    %survive = And(%survive_cond, Equal(%self, 1))
+    
+    // The next state is 1 if it reproduced OR survived. Otherwise 0.
+    %next_alive_bool = Or(%reproduce, %survive)
+    
+    // Cast boolean to the u32 type expected by the `living` variable
+    %next_alive_u32 = Cast(%next_alive_bool, "u32")
+    
+    Store("living", %next_alive_u32)
+}
+
+// Interaction: clamp_life
+// Target: Grid Cell
+@interaction(clamp_life)
+func clamp_life() {
+    // Ensures 'living' remains strictly bounded between 0 and 1,
+    // though the boolean logic in `update_life` naturally guarantees this.
+    // Provided as an example of stage-based bounds checking constraint.
+    %self = Load("living", 0, 0)
+    %clamped = Clamp(%self, 0, 1)
+    Store("living", %clamped)
+}

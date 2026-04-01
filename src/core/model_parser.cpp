@@ -102,16 +102,56 @@ std::vector<uint8_t> ModelParser::compileToFlatBuffers(const nlohmann::json& j) 
     
     // grid
     auto grid_j = j.value("grid", nlohmann::json::object());
-    std::vector<uint32_t> dims = grid_j.value("dimensions", std::vector<uint32_t>{100, 100});
+    std::vector<uint32_t> dims{100, 100};
+    if (grid_j.contains("dimensions")) {
+        const auto& d = grid_j["dimensions"];
+        if (d.is_array()) {
+            try {
+                dims = d.get<std::vector<uint32_t>>();
+            } catch (...) {
+                dims = {100, 100};
+            }
+        } else if (d.is_number_integer() || d.is_number_unsigned()) {
+            const auto dim = d.get<uint32_t>();
+            if (dim <= 1u) {
+                dims = {100, 100};
+            } else {
+                dims = std::vector<uint32_t>(dim, 100u);
+            }
+        }
+    }
+
     auto fb_dims = builder.CreateVector(dims);
-    auto fb_topo = builder.CreateString(grid_j.value("topology", "Cartesian2D"));
-    auto fb_bc = builder.CreateString(grid_j.value("boundary_conditions", "Wrap"));
+    const std::string topology = grid_j.value("topology", std::string{"Cartesian2D"});
+
+    std::string boundaryConditions{"Wrap"};
+    if (grid_j.contains("boundary_conditions")) {
+        const auto& bc = grid_j["boundary_conditions"];
+        if (bc.is_string()) {
+            boundaryConditions = bc.get<std::string>();
+        } else if (bc.is_object()) {
+            if (bc.contains("x") && bc.contains("y") && bc["x"].is_string() && bc["y"].is_string()) {
+                boundaryConditions = bc["x"].get<std::string>() + "," + bc["y"].get<std::string>();
+            }
+        }
+    }
+
+    auto fb_topo = builder.CreateString(topology);
+    auto fb_bc = builder.CreateString(boundaryConditions);
     auto fb_grid = schema::CreateGridSpec(builder, fb_dims, fb_topo, fb_bc);
     
     // numerics
     auto num_j = j.value("numerics", nlohmann::json::object());
-    float dt = num_j.value("dt_ref", 0.01f);
-    auto time_int = builder.CreateString(num_j.value("time_integrator", "Euler"));
+    float dt = 0.01f;
+    if (num_j.contains("dt_ref")) {
+        const auto& dtRef = num_j["dt_ref"];
+        if (dtRef.is_number_float() || dtRef.is_number_integer()) {
+            dt = dtRef.get<float>();
+        }
+    }
+
+    const std::string timeIntegrator = num_j.value("time_integrator", std::string{"Euler"});
+    auto time_int = builder.CreateString(timeIntegrator);
     std::vector<std::string> sp_scheme_str = num_j.value("spatial_schemes", std::vector<std::string>{});
     std::vector<flatbuffers::Offset<flatbuffers::String>> fb_sp_vec;
     for(auto& s : sp_scheme_str) fb_sp_vec.push_back(builder.CreateString(s));
