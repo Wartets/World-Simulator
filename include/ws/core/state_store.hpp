@@ -117,6 +117,7 @@ public:
     [[nodiscard]] std::uint64_t logicalCellCount(const std::string& name) const;
     [[nodiscard]] const std::vector<float>& scalarField(const std::string& name) const;
     [[nodiscard]] std::optional<float> trySampleScalar(const std::string& name, CellSigned cell) const;
+    void clampField(const std::string& name, float minValue, float maxValue);
     [[nodiscard]] std::vector<FieldStorageMetadata> fieldMetadata() const;
     [[nodiscard]] std::uint64_t stateHash() const noexcept;
 

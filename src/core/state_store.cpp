@@ -1,4 +1,5 @@
 ﻿#include "ws/core/state_store.hpp"
+#include "ws/core/vectorized_ops.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -170,6 +171,19 @@ std::optional<float> StateStore::trySampleScalar(const std::string& name, const 
     }
 
     return field.values.at(static_cast<std::size_t>(idx));
+}
+
+void StateStore::clampField(const std::string& name, const float minValue, const float maxValue) {
+    emitAccess(name, AccessKind::Write);
+    if (!std::isfinite(minValue) || !std::isfinite(maxValue)) {
+        throw std::invalid_argument("StateStore::clampField requires finite bounds");
+    }
+    if (minValue > maxValue) {
+        throw std::invalid_argument("StateStore::clampField requires minValue <= maxValue");
+    }
+
+    auto& field = fieldForWrite(name);
+    vectorized::clampInPlace(field.values.data(), static_cast<std::size_t>(field.logicalCellCount), minValue, maxValue);
 }
 
 std::vector<FieldStorageMetadata> StateStore::fieldMetadata() const {
