@@ -149,6 +149,12 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/theme_bootstrap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/ui_components.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/node_editor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_editor_window.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/property_inspector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_validator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_selector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_history.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
