@@ -214,6 +214,22 @@ void drawSimulationTab() {
     PopSectionTint();
     ImGui::Spacing();
 
+    // Phase 6: Parameters and manual patching
+    PushSectionTint(9);
+    if (ImGui::CollapsingHeader("Parameter Control & Live Patching", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawParameterControlSection();
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
+    // Phase 6: Perturbation and forcing tools
+    PushSectionTint(10);
+    if (ImGui::CollapsingHeader("Perturbation & Forcing Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawPerturbationSection();
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
     // Checkpoints
     PushSectionTint(3);
     if (ImGui::CollapsingHeader("In-Memory Checkpoints")) {
@@ -230,6 +246,230 @@ void drawSimulationTab() {
     PopSectionTint();
 
     ImGui::EndChild();
+}
+
+void drawParameterControlSection() {
+    if (!runtime_.isRunning()) {
+        ImGui::TextDisabled("Start the simulation to edit runtime parameters.");
+        return;
+    }
+
+    if (!runtime_.isPaused()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Parameter edits and manual patches require pause mode.");
+    }
+
+    std::vector<ParameterControl> controls;
+    std::string msg;
+    runtime_.parameterControls(controls, msg);
+
+    if (!controls.empty()) {
+        panel_.selectedParameterIndex = std::clamp(panel_.selectedParameterIndex, 0, static_cast<int>(controls.size() - 1));
+        const auto& selected = controls[static_cast<std::size_t>(panel_.selectedParameterIndex)];
+
+        if (ImGui::BeginCombo("Writable parameter##phase6", selected.name.c_str())) {
+            for (int i = 0; i < static_cast<int>(controls.size()); ++i) {
+                const bool selectedItem = (i == panel_.selectedParameterIndex);
+                if (ImGui::Selectable(controls[static_cast<std::size_t>(i)].name.c_str(), selectedItem)) {
+                    panel_.selectedParameterIndex = i;
+                    panel_.parameterValue = controls[static_cast<std::size_t>(i)].value;
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        const auto& active = controls[static_cast<std::size_t>(panel_.selectedParameterIndex)];
+        sliderFloatWithHint("Parameter value", &panel_.parameterValue, active.minValue, active.maxValue, "%.5f",
+            "Applies a deterministic global forcing update by queueing input patches for the target field.");
+        ImGui::TextDisabled("Target field: %s  | units: %s", active.targetVariable.c_str(), active.units.c_str());
+
+        if (PrimaryButton("Apply parameter", ImVec2(-1.0f, 26.0f))) {
+            std::string setMsg;
+            runtime_.setParameterValue(active.name, panel_.parameterValue, "ui_parameter_update", setMsg);
+            appendLog(setMsg);
+        }
+    } else {
+        ImGui::TextDisabled("No writable parameter controls are registered.");
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Manual cell/global edit");
+
+    if (!viz_.fieldNames.empty()) {
+        if (ImGui::BeginCombo("Variable##manualPatch", panel_.manualPatchVariable)) {
+            for (const auto& fieldName : viz_.fieldNames) {
+                const bool selected = (fieldName == std::string(panel_.manualPatchVariable));
+                if (ImGui::Selectable(fieldName.c_str(), selected)) {
+                    std::snprintf(panel_.manualPatchVariable, sizeof(panel_.manualPatchVariable), "%s", fieldName.c_str());
+                }
+            }
+            ImGui::EndCombo();
+        }
+    } else {
+        ImGui::InputText("Variable##manualPatchInput", panel_.manualPatchVariable, sizeof(panel_.manualPatchVariable));
+    }
+
+    checkboxWithHint("Global edit (entire field)", &panel_.manualPatchGlobal,
+        "When enabled, applies the value to every cell in the target field. When disabled, only one cell is edited.");
+
+    if (!panel_.manualPatchGlobal) {
+        NumericSliderPairInt("Cell X", &panel_.manualPatchX, 0, std::max(0, panel_.gridWidth - 1), "%d", 55.0f);
+        NumericSliderPairInt("Cell Y", &panel_.manualPatchY, 0, std::max(0, panel_.gridHeight - 1), "%d", 55.0f);
+    }
+    sliderFloatWithHint("New value", &panel_.manualPatchValue, -10.0f, 10.0f, "%.5f",
+        "Manual patch value. Domain validation still applies in runtime write path.");
+    inputTextWithHint("Note##manualPatchNote", panel_.manualPatchNote, sizeof(panel_.manualPatchNote),
+        "Optional note stored in event log (audit trail).");
+
+    if (PrimaryButton("Apply manual edit", ImVec2(-1.0f, 26.0f))) {
+        std::optional<Cell> cell;
+        if (!panel_.manualPatchGlobal) {
+            cell = Cell{static_cast<std::uint32_t>(std::max(0, panel_.manualPatchX)), static_cast<std::uint32_t>(std::max(0, panel_.manualPatchY))};
+        }
+        std::string patchMsg;
+        runtime_.applyManualPatch(
+            panel_.manualPatchVariable,
+            cell,
+            panel_.manualPatchValue,
+            panel_.manualPatchNote,
+            patchMsg);
+        appendLog(patchMsg);
+    }
+
+    if (SecondaryButton("Undo last manual edit", ImVec2(-1.0f, 24.0f))) {
+        std::string undoMsg;
+        runtime_.undoLastManualPatch(undoMsg);
+        appendLog(undoMsg);
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Parameter presets");
+    inputTextWithHint("Preset name", panel_.parameterPresetName, sizeof(panel_.parameterPresetName),
+        "Preset metadata key.");
+    const auto presetPath = (std::filesystem::path("profiles") / "parameter_presets" / (std::string(panel_.parameterPresetName) + ".json"));
+    if (PrimaryButton("Save preset", ImVec2(140.0f, 24.0f))) {
+        ParameterPreset preset;
+        preset.name = panel_.parameterPresetName;
+        preset.purpose = "runtime_parameter_control";
+        preset.date = std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+        preset.parameters = controls;
+        std::string presetMsg;
+        const bool saved = saveParameterPreset(preset, presetPath, presetMsg);
+        if (!saved && presetMsg.empty()) {
+            presetMsg = "parameter_preset_save_failed reason=unknown";
+        }
+        appendLog(presetMsg);
+    }
+    ImGui::SameLine();
+    if (SecondaryButton("Load preset", ImVec2(140.0f, 24.0f))) {
+        ParameterPreset preset;
+        std::string presetMsg;
+        if (loadParameterPreset(presetPath, preset, presetMsg)) {
+            appendLog(presetMsg);
+            for (const auto& parameter : preset.parameters) {
+                std::string setMsg;
+                runtime_.setParameterValue(parameter.name, parameter.value, "preset_load", setMsg);
+                appendLog(setMsg);
+            }
+        } else {
+            appendLog(presetMsg);
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Manual event log");
+    inputTextWithHint("Event log file", panel_.eventLogFileName, sizeof(panel_.eventLogFileName),
+        "JSON file under checkpoints/event_logs/.");
+    if (SecondaryButton("Export event log", ImVec2(140.0f, 24.0f))) {
+        std::vector<ManualEventRecord> events;
+        std::string eventMsg;
+        if (runtime_.manualEventLog(events, eventMsg)) {
+            const auto outputPath = std::filesystem::path("checkpoints") / "event_logs" / panel_.eventLogFileName;
+            const bool saved = saveManualEventLog(events, outputPath, eventMsg);
+            if (!saved && eventMsg.empty()) {
+                eventMsg = "event_log_save_failed reason=unknown";
+            }
+        }
+        appendLog(eventMsg);
+    }
+}
+
+void drawPerturbationSection() {
+    if (!runtime_.isRunning()) {
+        ImGui::TextDisabled("Start the simulation to queue perturbations.");
+        return;
+    }
+
+    static constexpr const char* kPerturbationTypes[] = {
+        "Gaussian pulse", "Rectangular region", "Sine wave", "White noise", "Gradient"};
+    ImGui::Combo("Perturbation type", &panel_.perturbationTypeIndex, kPerturbationTypes, static_cast<int>(std::size(kPerturbationTypes)));
+
+    if (!viz_.fieldNames.empty()) {
+        if (ImGui::BeginCombo("Target variable##perturb", panel_.perturbationVariable)) {
+            for (const auto& fieldName : viz_.fieldNames) {
+                const bool selected = (fieldName == std::string(panel_.perturbationVariable));
+                if (ImGui::Selectable(fieldName.c_str(), selected)) {
+                    std::snprintf(panel_.perturbationVariable, sizeof(panel_.perturbationVariable), "%s", fieldName.c_str());
+                }
+            }
+            ImGui::EndCombo();
+        }
+    } else {
+        ImGui::InputText("Target variable##perturbInput", panel_.perturbationVariable, sizeof(panel_.perturbationVariable));
+    }
+
+    sliderFloatWithHint("Amplitude", &panel_.perturbationAmplitude, -1.0f, 1.0f, "%.4f",
+        "Perturbation amplitude (domain clamping still enforced by core guardrails). ");
+    NumericSliderPairInt("Start step offset", &panel_.perturbationStartStepOffset, 0, 1000000, "%d", 55.0f);
+    NumericSliderPairInt("Duration steps", &panel_.perturbationDuration, 1, 1000000, "%d", 55.0f);
+    NumericSliderPairInt("Origin X", &panel_.perturbationOriginX, 0, std::max(0, panel_.gridWidth - 1), "%d", 55.0f);
+    NumericSliderPairInt("Origin Y", &panel_.perturbationOriginY, 0, std::max(0, panel_.gridHeight - 1), "%d", 55.0f);
+    NumericSliderPairInt("Width", &panel_.perturbationWidth, 1, std::max(1, panel_.gridWidth), "%d", 55.0f);
+    NumericSliderPairInt("Height", &panel_.perturbationHeight, 1, std::max(1, panel_.gridHeight), "%d", 55.0f);
+    sliderFloatWithHint("Sigma", &panel_.perturbationSigma, 0.5f, 32.0f, "%.3f",
+        "Gaussian sigma (used by Gaussian perturbation type).");
+    sliderFloatWithHint("Frequency", &panel_.perturbationFrequency, 0.01f, 4.0f, "%.3f",
+        "Spatial frequency (used by Sine perturbation type).");
+    inputTextWithHint("Note##perturbNote", panel_.perturbationNote, sizeof(panel_.perturbationNote),
+        "Structured note stored in manual event log.");
+
+    PerturbationSpec spec;
+    spec.type = static_cast<PerturbationType>(std::clamp(panel_.perturbationTypeIndex, 0, 4));
+    spec.targetVariable = panel_.perturbationVariable;
+    spec.amplitude = panel_.perturbationAmplitude;
+    spec.startStep = static_cast<std::uint32_t>(std::max(0, panel_.perturbationStartStepOffset));
+    if (viz_.hasCachedCheckpoint) {
+        spec.startStep += static_cast<std::uint32_t>(viz_.cachedCheckpoint.stateSnapshot.header.stepIndex);
+    }
+    spec.durationSteps = static_cast<std::uint32_t>(std::max(1, panel_.perturbationDuration));
+    spec.origin = Cell{static_cast<std::uint32_t>(std::max(0, panel_.perturbationOriginX)), static_cast<std::uint32_t>(std::max(0, panel_.perturbationOriginY))};
+    spec.width = static_cast<std::uint32_t>(std::max(1, panel_.perturbationWidth));
+    spec.height = static_cast<std::uint32_t>(std::max(1, panel_.perturbationHeight));
+    spec.sigma = panel_.perturbationSigma;
+    spec.frequency = panel_.perturbationFrequency;
+    spec.noiseSeed = panel_.perturbationNoiseSeed;
+    spec.description = panel_.perturbationNote;
+
+    std::string validateMsg;
+    const GridSpec grid{
+        static_cast<std::uint32_t>(std::max(1, panel_.gridWidth)),
+        static_cast<std::uint32_t>(std::max(1, panel_.gridHeight))};
+    const bool valid = validatePerturbation(spec, grid, validateMsg);
+    const auto impactedCells = estimatePerturbationCellCount(spec, grid);
+    ImGui::TextDisabled("Preview: estimated impacted cells=%llu", static_cast<unsigned long long>(impactedCells));
+    if (!valid) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", validateMsg.c_str());
+    }
+
+    if (PrimaryButton("Apply perturbation", ImVec2(-1.0f, 28.0f))) {
+        std::string applyMsg;
+        if (valid) {
+            runtime_.enqueuePerturbation(spec, applyMsg);
+        } else {
+            applyMsg = validateMsg;
+        }
+        appendLog(applyMsg);
+    }
 }
 
 void drawTierSelector() {

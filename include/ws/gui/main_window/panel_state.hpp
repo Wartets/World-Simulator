@@ -46,6 +46,32 @@ struct PanelState {
     char profileName[128] = "baseline";
     char summaryVariable[128] = "temperature_T";
     char checkpointLabel[128] = "quick";
+
+    char parameterPresetName[128] = "default_runtime";
+    int selectedParameterIndex = 0;
+    float parameterValue = 0.0f;
+    char manualPatchVariable[128] = "temperature_T";
+    bool manualPatchGlobal = false;
+    int manualPatchX = 0;
+    int manualPatchY = 0;
+    float manualPatchValue = 0.0f;
+    char manualPatchNote[160] = "";
+
+    int perturbationTypeIndex = 0;
+    char perturbationVariable[128] = "event_temperature_delta";
+    float perturbationAmplitude = 0.05f;
+    int perturbationStartStepOffset = 0;
+    int perturbationDuration = 1;
+    int perturbationOriginX = 0;
+    int perturbationOriginY = 0;
+    int perturbationWidth = 8;
+    int perturbationHeight = 8;
+    float perturbationSigma = 3.0f;
+    float perturbationFrequency = 0.2f;
+    std::uint64_t perturbationNoiseSeed = 1;
+    char perturbationNote[160] = "";
+
+    char eventLogFileName[128] = "manual_events.json";
 };
 
 } // namespace ws::gui::main_window

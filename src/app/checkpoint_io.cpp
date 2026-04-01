@@ -11,7 +11,7 @@ namespace ws::app {
 namespace {
 
 constexpr std::uint64_t kCheckpointMagic = 0x315650435357ull; // "WSCPV1"
-constexpr std::uint32_t kCheckpointFormatVersion = 1;
+constexpr std::uint32_t kCheckpointFormatVersion = 2;
 
 template <typename T>
 void writePod(std::ostream& output, const T& value) {
@@ -139,6 +139,19 @@ void writeCheckpointFile(const RuntimeCheckpoint& checkpoint, const std::filesys
             writePod(output, value);
         }
     }
+
+    writePod(output, static_cast<std::uint64_t>(checkpoint.manualEventLog.size()));
+    for (const auto& manualEvent : checkpoint.manualEventLog) {
+        writePod(output, manualEvent.step);
+        writePod(output, manualEvent.time);
+        writeString(output, manualEvent.variable);
+        writePod(output, manualEvent.cellIndex);
+        writePod(output, manualEvent.oldValue);
+        writePod(output, manualEvent.newValue);
+        writeString(output, manualEvent.description);
+        writePod(output, manualEvent.timestamp);
+        writePod(output, manualEvent.kind);
+    }
 }
 
 RuntimeCheckpoint readCheckpointFile(const std::filesystem::path& path) {
@@ -153,7 +166,7 @@ RuntimeCheckpoint readCheckpointFile(const std::filesystem::path& path) {
     }
 
     const auto version = readPod<std::uint32_t>(input);
-    if (version != kCheckpointFormatVersion) {
+    if (version != 1u && version != kCheckpointFormatVersion) {
         throw std::runtime_error("unsupported checkpoint file version");
     }
 
@@ -243,6 +256,25 @@ RuntimeCheckpoint readCheckpointFile(const std::filesystem::path& path) {
         }
 
         snapshot.fields.push_back(std::move(payload));
+    }
+
+    checkpoint.manualEventLog.clear();
+    if (version >= 2u) {
+        const auto manualEventCount = readPod<std::uint64_t>(input);
+        checkpoint.manualEventLog.reserve(static_cast<std::size_t>(manualEventCount));
+        for (std::uint64_t eventIndex = 0; eventIndex < manualEventCount; ++eventIndex) {
+            ManualEventRecord record;
+            record.step = readPod<std::uint64_t>(input);
+            record.time = readPod<float>(input);
+            record.variable = readString(input);
+            record.cellIndex = readPod<std::uint64_t>(input);
+            record.oldValue = readPod<float>(input);
+            record.newValue = readPod<float>(input);
+            record.description = readString(input);
+            record.timestamp = readPod<std::uint64_t>(input);
+            record.kind = readPod<ManualEventKind>(input);
+            checkpoint.manualEventLog.push_back(std::move(record));
+        }
     }
 
     return checkpoint;

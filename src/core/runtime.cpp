@@ -3,6 +3,7 @@
 #include "ws/core/determinism.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -213,6 +214,13 @@ Runtime::Runtime(RuntimeConfig config)
                 0} {
     config_.grid.validate();
     scheduler_.setExecutionPolicyMode(config_.executionPolicyMode);
+
+    parameterControls_.emplace(
+        "forcing.water_delta",
+        ParameterControl{"forcing.water_delta", "event_water_delta", 0.0f, -1.0f, 1.0f, 0.0f, "1"});
+    parameterControls_.emplace(
+        "forcing.temperature_delta",
+        ParameterControl{"forcing.temperature_delta", "event_temperature_delta", 0.0f, -1.0f, 1.0f, 0.0f, "1"});
 }
 
 void Runtime::registerSubsystem(std::shared_ptr<ISubsystem> subsystem) {
@@ -575,18 +583,31 @@ void Runtime::stepImpl(const bool controlledByRuntimeControl) {
     StepDiagnostics diagnostics;
     diagnostics.orderingLog.push_back("pipeline:input_ingest");
 
-    while (!pendingInputs_.empty()) {
-        diagnostics.inputPatchesApplied += applyInputFrame(pendingInputs_.front());
-        pendingInputs_.pop_front();
+    while (eventQueue_.hasInput()) {
+        diagnostics.inputPatchesApplied += applyInputFrame(eventQueue_.popInput());
     }
+
+    const std::uint64_t currentStep = stateStore_.header().stepIndex;
+    std::vector<PerturbationSpec> stillPending;
+    stillPending.reserve(pendingPerturbations_.size());
+    for (const auto& perturbation : pendingPerturbations_) {
+        const std::uint64_t start = perturbation.startStep;
+        const std::uint64_t end = start + std::max<std::uint32_t>(1u, perturbation.durationSteps);
+        if (currentStep >= start && currentStep < end) {
+            eventQueue_.enqueueEvent(buildPerturbationEvent(perturbation, currentStep));
+        }
+        if (currentStep + 1 < end) {
+            stillPending.push_back(perturbation);
+        }
+    }
+    pendingPerturbations_.swap(stillPending);
 
     diagnostics.orderingLog.push_back("pipeline:event_queue_apply");
     std::uint64_t eventOrdinal = 0;
-    while (!pendingEvents_.empty()) {
-        RuntimeEvent event = pendingEvents_.front();
+    while (eventQueue_.hasEvent()) {
+        RuntimeEvent event = eventQueue_.popEvent();
         diagnostics.eventPatchesApplied += applyEvent(event, eventOrdinal);
         diagnostics.eventsApplied += 1;
-        pendingEvents_.pop_front();
         eventChronology_.push_back(RuntimeEventRecord{
             stateStore_.header().stepIndex,
             eventOrdinal,
@@ -647,7 +668,7 @@ void Runtime::queueInput(RuntimeInputFrame inputFrame) {
             "input patch queued for variable=" + patch.variableName,
             DeterministicHash::hashString(patch.variableName));
     }
-    pendingInputs_.push_back(std::move(inputFrame));
+    eventQueue_.enqueueInput(std::move(inputFrame));
 }
 
 void Runtime::enqueueEvent(RuntimeEvent event) {
@@ -659,7 +680,7 @@ void Runtime::enqueueEvent(RuntimeEvent event) {
         "runtime.event.queued",
         "runtime event queued name=" + event.eventName,
         DeterministicHash::hashString(event.eventName));
-    pendingEvents_.push_back(std::move(event));
+    eventQueue_.enqueueEvent(std::move(event));
 }
 
 void Runtime::stop() {
@@ -703,6 +724,7 @@ RuntimeCheckpoint Runtime::createCheckpoint(const std::string& label, const bool
             profileFingerprint,
             label,
             computeHash)};
+    checkpoint.manualEventLog = eventQueue_.manualEvents();
     return checkpoint;
 }
 
@@ -730,6 +752,7 @@ void Runtime::loadCheckpoint(const RuntimeCheckpoint& checkpoint) {
     snapshot_.payloadBytes = checkpoint.stateSnapshot.payloadBytes;
     stateHashHistory_.clear();
     stateHashHistory_.push_back(snapshot_.stateHash);
+    eventQueue_.setManualEvents(checkpoint.manualEventLog);
 
     trace(
         TraceChannel::Replay,
@@ -747,8 +770,274 @@ void Runtime::resetToCheckpoint(const RuntimeCheckpoint& checkpoint) {
         checkpoint.stateSnapshot.stateHash,
         checkpoint.stateSnapshot.header.stepIndex);
     loadCheckpoint(checkpoint);
-    pendingInputs_.clear();
-    pendingEvents_.clear();
+    eventQueue_.clearTransient();
+    pendingPerturbations_.clear();
+}
+
+std::vector<ParameterControl> Runtime::parameterControls() const {
+    std::vector<ParameterControl> controls;
+    controls.reserve(parameterControls_.size());
+    for (const auto& [_, control] : parameterControls_) {
+        controls.push_back(control);
+    }
+    std::sort(controls.begin(), controls.end(), [](const ParameterControl& a, const ParameterControl& b) {
+        return a.name < b.name;
+    });
+    return controls;
+}
+
+bool Runtime::sampleCurrentValue(
+    const std::string& variableName,
+    const std::optional<Cell> cell,
+    float& outValue,
+    std::string& message) const {
+    if (!stateStore_.hasField(variableName)) {
+        message = "manual_patch_failed reason=unknown_variable variable=" + variableName;
+        return false;
+    }
+
+    const Cell sampleCell = cell.value_or(Cell{0u, 0u});
+    const auto sample = stateStore_.trySampleScalar(
+        variableName,
+        CellSigned{static_cast<std::int64_t>(sampleCell.x), static_cast<std::int64_t>(sampleCell.y)});
+    outValue = sample.value_or(0.0f);
+    return true;
+}
+
+bool Runtime::setParameterValue(const std::string& parameterName, const float value, std::string note, std::string& message) {
+    if (status_ != RuntimeStatus::Running) {
+        message = "parameter_set_failed reason=runtime_not_running";
+        return false;
+    }
+
+    auto it = parameterControls_.find(parameterName);
+    if (it == parameterControls_.end()) {
+        message = "parameter_set_failed reason=unknown_parameter name=" + parameterName;
+        return false;
+    }
+
+    ParameterControl& control = it->second;
+    const float clampedValue = std::clamp(value, control.minValue, control.maxValue);
+
+    RuntimeInputFrame frame;
+    frame.scalarPatches.reserve(static_cast<std::size_t>(config_.grid.cellCount()));
+    for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+        for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+            frame.scalarPatches.push_back(ScalarWritePatch{control.targetVariable, Cell{x, y}, clampedValue});
+        }
+    }
+    queueInput(std::move(frame));
+
+    ManualEventRecord record;
+    record.step = stateStore_.header().stepIndex;
+    record.time = static_cast<float>(stateStore_.header().timestampTicks);
+    record.variable = control.targetVariable;
+    record.cellIndex = std::numeric_limits<std::uint64_t>::max();
+    record.oldValue = control.value;
+    record.newValue = clampedValue;
+    record.description = note.empty() ? ("parameter=" + parameterName) : std::move(note);
+    record.timestamp = static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+    record.kind = ManualEventKind::ParameterUpdate;
+    eventQueue_.recordManualEvent(record);
+
+    control.value = clampedValue;
+    message = "parameter_set name=" + parameterName + " value=" + std::to_string(clampedValue);
+    return true;
+}
+
+bool Runtime::applyManualPatch(
+    const std::string& variableName,
+    const std::optional<Cell> cell,
+    const float newValue,
+    std::string note,
+    std::string& message) {
+    if (status_ != RuntimeStatus::Running) {
+        message = "manual_patch_failed reason=runtime_not_running";
+        return false;
+    }
+    if (!paused_) {
+        message = "manual_patch_failed reason=runtime_not_paused";
+        return false;
+    }
+    if (!std::isfinite(newValue)) {
+        message = "manual_patch_failed reason=non_finite_value";
+        return false;
+    }
+
+    float oldValue = 0.0f;
+    if (!sampleCurrentValue(variableName, cell, oldValue, message)) {
+        return false;
+    }
+
+    RuntimeInputFrame inputFrame;
+    if (cell.has_value()) {
+        inputFrame.scalarPatches.push_back(ScalarWritePatch{variableName, *cell, newValue});
+    } else {
+        inputFrame.scalarPatches.reserve(static_cast<std::size_t>(config_.grid.cellCount()));
+        for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+            for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                inputFrame.scalarPatches.push_back(ScalarWritePatch{variableName, Cell{x, y}, newValue});
+            }
+        }
+    }
+    queueInput(std::move(inputFrame));
+
+    ManualEventRecord record;
+    record.step = stateStore_.header().stepIndex;
+    record.time = static_cast<float>(stateStore_.header().timestampTicks);
+    record.variable = variableName;
+    record.cellIndex = cell.has_value() ? stateStore_.indexOf(*cell) : std::numeric_limits<std::uint64_t>::max();
+    record.oldValue = oldValue;
+    record.newValue = newValue;
+    record.description = note.empty() ? "manual_patch" : std::move(note);
+    record.timestamp = static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+    record.kind = ManualEventKind::CellEdit;
+    eventQueue_.recordManualEvent(record);
+
+    message = "manual_patch_queued variable=" + variableName;
+    return true;
+}
+
+RuntimeEvent Runtime::buildUndoEvent(const ManualEventRecord& manualEvent) const {
+    RuntimeEvent event;
+    event.eventName = "undo_manual_patch";
+    if (manualEvent.cellIndex == std::numeric_limits<std::uint64_t>::max()) {
+        event.scalarPatches.reserve(static_cast<std::size_t>(config_.grid.cellCount()));
+        for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+            for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                event.scalarPatches.push_back(ScalarWritePatch{manualEvent.variable, Cell{x, y}, manualEvent.oldValue});
+            }
+        }
+        return event;
+    }
+
+    const Cell cell = stateStore_.cellFromIndex(manualEvent.cellIndex);
+    event.scalarPatches.push_back(ScalarWritePatch{manualEvent.variable, cell, manualEvent.oldValue});
+    return event;
+}
+
+bool Runtime::undoLastManualPatch(std::string& message) {
+    if (status_ != RuntimeStatus::Running) {
+        message = "manual_patch_undo_failed reason=runtime_not_running";
+        return false;
+    }
+    if (!paused_) {
+        message = "manual_patch_undo_failed reason=runtime_not_paused";
+        return false;
+    }
+
+    ManualEventRecord previous;
+    if (!eventQueue_.popLastManualEventOfKind(ManualEventKind::CellEdit, previous)) {
+        message = "manual_patch_undo_failed reason=log_empty";
+        return false;
+    }
+
+    enqueueEvent(buildUndoEvent(previous));
+    message = "manual_patch_undo_queued variable=" + previous.variable;
+    return true;
+}
+
+RuntimeEvent Runtime::buildPerturbationEvent(const PerturbationSpec& perturbation, const std::uint64_t appliedStep) const {
+    RuntimeEvent event;
+    event.eventName = "perturbation." + perturbation.targetVariable;
+    if (!stateStore_.hasField(perturbation.targetVariable)) {
+        return event;
+    }
+
+    const auto clampCell = [&](const std::int64_t x, const std::int64_t y) {
+        return stateStore_.resolveBoundary(CellSigned{x, y});
+    };
+
+    switch (perturbation.type) {
+        case PerturbationType::Gaussian: {
+            const float sigma = std::max(0.5f, perturbation.sigma);
+            const int radius = static_cast<int>(std::ceil(3.0f * sigma));
+            for (int dy = -radius; dy <= radius; ++dy) {
+                for (int dx = -radius; dx <= radius; ++dx) {
+                    const float dist2 = static_cast<float>(dx * dx + dy * dy);
+                    const float weight = std::exp(-dist2 / (2.0f * sigma * sigma));
+                    const Cell c = clampCell(
+                        static_cast<std::int64_t>(perturbation.origin.x) + dx,
+                        static_cast<std::int64_t>(perturbation.origin.y) + dy);
+                    event.scalarPatches.push_back(ScalarWritePatch{perturbation.targetVariable, c, perturbation.amplitude * weight});
+                }
+            }
+            break;
+        }
+        case PerturbationType::Rectangle: {
+            for (std::uint32_t yy = 0; yy < std::max<std::uint32_t>(1u, perturbation.height); ++yy) {
+                for (std::uint32_t xx = 0; xx < std::max<std::uint32_t>(1u, perturbation.width); ++xx) {
+                    const Cell c = clampCell(
+                        static_cast<std::int64_t>(perturbation.origin.x) + static_cast<std::int64_t>(xx),
+                        static_cast<std::int64_t>(perturbation.origin.y) + static_cast<std::int64_t>(yy));
+                    event.scalarPatches.push_back(ScalarWritePatch{perturbation.targetVariable, c, perturbation.amplitude});
+                }
+            }
+            break;
+        }
+        case PerturbationType::Sine: {
+            for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                    const float phase = perturbation.frequency * static_cast<float>(x + y) + 0.1f * static_cast<float>(appliedStep);
+                    const float value = perturbation.amplitude * std::sin(phase);
+                    event.scalarPatches.push_back(ScalarWritePatch{perturbation.targetVariable, Cell{x, y}, value});
+                }
+            }
+            break;
+        }
+        case PerturbationType::WhiteNoise: {
+            for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                    const std::uint64_t h0 = DeterministicHash::combine(perturbation.noiseSeed, DeterministicHash::hashPod(appliedStep));
+                    const std::uint64_t h1 = DeterministicHash::combine(h0, DeterministicHash::hashPod(x));
+                    const std::uint64_t h2 = DeterministicHash::combine(h1, DeterministicHash::hashPod(y));
+                    const float centered = static_cast<float>((h2 >> 40u) & 0xFFFFFFu) / static_cast<float>(0xFFFFFFu) - 0.5f;
+                    event.scalarPatches.push_back(ScalarWritePatch{perturbation.targetVariable, Cell{x, y}, centered * perturbation.amplitude * 2.0f});
+                }
+            }
+            break;
+        }
+        case PerturbationType::Gradient: {
+            const float denom = static_cast<float>(std::max<std::uint32_t>(1u, config_.grid.width - 1u));
+            for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                    const float t = static_cast<float>(x) / denom;
+                    event.scalarPatches.push_back(ScalarWritePatch{perturbation.targetVariable, Cell{x, y}, perturbation.amplitude * t});
+                }
+            }
+            break;
+        }
+    }
+
+    return event;
+}
+
+bool Runtime::enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message) {
+    if (status_ != RuntimeStatus::Running) {
+        message = "perturbation_enqueue_failed reason=runtime_not_running";
+        return false;
+    }
+    if (!stateStore_.hasField(perturbation.targetVariable)) {
+        message = "perturbation_enqueue_failed reason=unknown_variable variable=" + perturbation.targetVariable;
+        return false;
+    }
+
+    pendingPerturbations_.push_back(perturbation);
+
+    ManualEventRecord record;
+    record.step = stateStore_.header().stepIndex;
+    record.time = static_cast<float>(stateStore_.header().timestampTicks);
+    record.variable = perturbation.targetVariable;
+    record.cellIndex = std::numeric_limits<std::uint64_t>::max();
+    record.oldValue = 0.0f;
+    record.newValue = perturbation.amplitude;
+    record.description = perturbation.description.empty() ? "perturbation" : perturbation.description;
+    record.timestamp = static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+    record.kind = ManualEventKind::Perturbation;
+    eventQueue_.recordManualEvent(record);
+
+    message = "perturbation_enqueued target=" + perturbation.targetVariable;
+    return true;
 }
 
 std::uint64_t Runtime::computeStateHash() const noexcept {

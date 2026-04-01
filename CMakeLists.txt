@@ -36,6 +36,7 @@ add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/profile_resolver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/interactions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/observability.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/event_queue.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/replay.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/run_signature.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/scheduler.cpp
@@ -150,6 +151,9 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/display_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/session_manager/session_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/parameter_panel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/perturbation_panel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/event_logger.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/theme_bootstrap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/ui_components.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/node_editor.cpp
@@ -196,6 +200,10 @@ ws_add_test(simulation_loop_test tests/simulation_loop.cpp)
 ws_add_test(subsystems_test tests/subsystems.cpp)
 ws_add_test(interactions_test tests/interactions.cpp)
 ws_add_test(model_parser_test tests/model_parser_test.cpp)
+ws_add_test(live_patching_test tests/live_patching.cpp)
+target_sources(live_patching_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
+)
 
 option(WS_ENABLE_EXTENDED_LEGACY_TESTS "Enable extended legacy integration tests" OFF)
 if(WS_ENABLE_EXTENDED_LEGACY_TESTS)

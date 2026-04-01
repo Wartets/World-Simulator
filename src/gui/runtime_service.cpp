@@ -545,6 +545,94 @@ bool RuntimeService::fieldNames(std::vector<std::string>& names, std::string& me
     }
 }
 
+bool RuntimeService::parameterControls(std::vector<ParameterControl>& controls, std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("parameter_controls", message)) {
+            return false;
+        }
+
+        controls = runtime_->parameterControls();
+        message = "parameter_controls_ready count=" + std::to_string(controls.size());
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("parameter_controls_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::setParameterValue(const std::string& parameterName, const float value, const std::string& note, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("set_parameter", message)) {
+            return false;
+        }
+        return runtime_->setParameterValue(parameterName, value, note, message);
+    } catch (const std::exception& exception) {
+        message = std::string("set_parameter_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::applyManualPatch(
+    const std::string& variableName,
+    const std::optional<Cell> cell,
+    const float newValue,
+    const std::string& note,
+    std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("manual_patch", message)) {
+            return false;
+        }
+        return runtime_->applyManualPatch(variableName, cell, newValue, note, message);
+    } catch (const std::exception& exception) {
+        message = std::string("manual_patch_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::undoLastManualPatch(std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("manual_patch_undo", message)) {
+            return false;
+        }
+        return runtime_->undoLastManualPatch(message);
+    } catch (const std::exception& exception) {
+        message = std::string("manual_patch_undo_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("enqueue_perturbation", message)) {
+            return false;
+        }
+        return runtime_->enqueuePerturbation(perturbation, message);
+    } catch (const std::exception& exception) {
+        message = std::string("enqueue_perturbation_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::manualEventLog(std::vector<ManualEventRecord>& events, std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("manual_event_log", message)) {
+            return false;
+        }
+        events = runtime_->manualEventLog();
+        message = "manual_event_log_ready count=" + std::to_string(events.size());
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("manual_event_log_failed error=") + exception.what();
+        return false;
+    }
+}
+
 bool RuntimeService::createCheckpoint(const std::string& label, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
