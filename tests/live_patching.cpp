@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -29,19 +31,115 @@ ws::ProfileResolverInput baselineProfileInput() {
     return input;
 }
 
-ws::Runtime makeRuntime() {
+struct ModelFixture {
+    std::filesystem::path modelPath;
+    ws::ModelExecutionSpec executionSpec;
+    std::string patchVariable;
+    std::string perturbationVariable;
+};
+
+std::filesystem::path resolveModelsRoot() {
+    const std::filesystem::path direct = "models";
+    if (std::filesystem::exists(direct) && std::filesystem::is_directory(direct)) {
+        return direct;
+    }
+
+    const std::filesystem::path parent = std::filesystem::path("..") / "models";
+    if (std::filesystem::exists(parent) && std::filesystem::is_directory(parent)) {
+        return parent;
+    }
+
+    return {};
+}
+
+std::optional<std::string> tryAliasTarget(
+    const ws::ModelExecutionSpec& executionSpec,
+    const std::string& semanticKey) {
+    const auto it = executionSpec.semanticFieldAliases.find(semanticKey);
+    if (it == executionSpec.semanticFieldAliases.end() || it->second.empty()) {
+        return std::nullopt;
+    }
+    if (std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), it->second) ==
+        executionSpec.cellScalarVariableIds.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+bool hasRequiredPhase4Aliases(const ws::ModelExecutionSpec& executionSpec) {
+    std::set<std::string> requiredSemanticKeys;
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        if (!subsystem) {
+            continue;
+        }
+        for (const auto& key : subsystem->declaredReadSet()) {
+            if (!key.empty()) {
+                requiredSemanticKeys.insert(key);
+            }
+        }
+        for (const auto& key : subsystem->declaredWriteSet()) {
+            if (!key.empty()) {
+                requiredSemanticKeys.insert(key);
+            }
+        }
+    }
+
+    for (const auto& semanticKey : requiredSemanticKeys) {
+        const auto alias = tryAliasTarget(executionSpec, semanticKey);
+        if (!alias.has_value()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+ModelFixture selectModelFixture() {
+    const auto modelsRoot = resolveModelsRoot();
+    assert(!modelsRoot.empty());
+
+    std::vector<std::filesystem::path> candidates;
+    for (const auto& entry : std::filesystem::directory_iterator(modelsRoot)) {
+        if (!entry.is_directory() || entry.path().extension() != ".simmodel") {
+            continue;
+        }
+        candidates.push_back(entry.path());
+    }
+    std::sort(candidates.begin(), candidates.end());
+
+    for (const auto& modelPath : candidates) {
+        ws::ModelExecutionSpec executionSpec;
+        std::string executionMessage;
+        const bool executionOk = ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage);
+        if (!executionOk || executionSpec.cellScalarVariableIds.empty() || !hasRequiredPhase4Aliases(executionSpec)) {
+            continue;
+        }
+
+        const std::string fallback = executionSpec.cellScalarVariableIds.front();
+        const std::string patchVariable = tryAliasTarget(executionSpec, "temperature.current").value_or(fallback);
+        const std::string perturbationVariable = tryAliasTarget(executionSpec, "initialization.waves.target").value_or(fallback);
+        return ModelFixture{modelPath, executionSpec, patchVariable, perturbationVariable};
+    }
+
+    assert(false && "No compatible .simmodel fixture found for live patching test.");
+    return {};
+}
+
+struct RuntimeFixture {
+    ws::Runtime runtime;
+    std::string patchVariable;
+    std::string perturbationVariable;
+};
+
+RuntimeFixture makeRuntimeFixture() {
+    const auto fixture = selectModelFixture();
+
     ws::RuntimeConfig config;
     config.seed = 777;
     config.grid = ws::GridSpec{8, 8};
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     config.profileInput = baselineProfileInput();
 
-    const std::filesystem::path modelPath = std::filesystem::path("..") / "models" / "environmental_model_2d.simmodel";
-    ws::ModelExecutionSpec executionSpec;
-    std::string executionMessage;
-    const bool executionOk = ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage);
-    assert(executionOk);
-    config.modelExecutionSpec = executionSpec;
+    config.modelExecutionSpec = fixture.executionSpec;
 
     ws::Runtime runtime(config);
     runtime.registerSubsystem(std::make_shared<ws::BootstrapSubsystem>());
@@ -50,20 +148,22 @@ ws::Runtime makeRuntime() {
     }
     runtime.start();
     runtime.pause();
-    return runtime;
+    return RuntimeFixture{std::move(runtime), fixture.patchVariable, fixture.perturbationVariable};
 }
 
 void verifyParameterControlAndManualPatch() {
-    auto runtime = makeRuntime();
+    auto fixture = makeRuntimeFixture();
+    auto& runtime = fixture.runtime;
 
     std::string message;
-    const bool manualPatchOk = runtime.applyManualPatch("temperature", ws::Cell{2u, 3u}, 0.91f, "manual_probe", message);
+    const bool manualPatchOk = runtime.applyManualPatch(fixture.patchVariable, ws::Cell{2u, 3u}, 0.91f, "manual_probe", message);
     assert(manualPatchOk);
 
     runtime.controlledStep(1);
     const auto sample = runtime.createCheckpoint("phase6_probe", true).stateSnapshot;
-    const auto it = std::find_if(sample.fields.begin(), sample.fields.end(), [](const auto& f) {
-        return f.spec.name == "temperature";
+    const std::string patchedVariable = fixture.patchVariable;
+    const auto it = std::find_if(sample.fields.begin(), sample.fields.end(), [&](const auto& f) {
+        return f.spec.name == patchedVariable;
     });
     assert(it != sample.fields.end());
     const auto idx = static_cast<std::size_t>(3u * 8u + 2u);
@@ -75,11 +175,12 @@ void verifyParameterControlAndManualPatch() {
 }
 
 void verifyPerturbationAndCheckpointPersistence() {
-    auto runtime = makeRuntime();
+    auto fixture = makeRuntimeFixture();
+    auto& runtime = fixture.runtime;
 
     ws::PerturbationSpec perturbation;
     perturbation.type = ws::PerturbationType::Gaussian;
-    perturbation.targetVariable = "water_height";
+    perturbation.targetVariable = fixture.perturbationVariable;
     perturbation.amplitude = 0.15f;
     perturbation.startStep = 0;
     perturbation.durationSteps = 2;
@@ -96,7 +197,7 @@ void verifyPerturbationAndCheckpointPersistence() {
     const auto checkpoint = runtime.createCheckpoint("phase6_event_checkpoint", true);
     assert(!checkpoint.manualEventLog.empty());
 
-    const auto tmpPath = std::filesystem::path("build") / "phase6_event_checkpoint.wscp";
+    const auto tmpPath = std::filesystem::temp_directory_path() / "phase6_event_checkpoint.wscp";
     ws::app::writeCheckpointFile(checkpoint, tmpPath);
     const auto restored = ws::app::readCheckpointFile(tmpPath);
     assert(restored.manualEventLog.size() == checkpoint.manualEventLog.size());

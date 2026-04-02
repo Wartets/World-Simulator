@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,24 +32,106 @@ ws::ProfileResolverInput baselineProfileInput() {
 }
 
 ws::RuntimeConfig baselineConfig() {
+struct ReplayFixture {
+    ws::RuntimeConfig config;
+    std::string patchVariable;
+};
+
+std::filesystem::path resolveModelsRoot() {
+    const std::filesystem::path direct = "models";
+    if (std::filesystem::exists(direct) && std::filesystem::is_directory(direct)) {
+        return direct;
+    }
+
+    const std::filesystem::path parent = std::filesystem::path("..") / "models";
+    if (std::filesystem::exists(parent) && std::filesystem::is_directory(parent)) {
+        return parent;
+    }
+
+    return {};
+}
+
+std::optional<std::string> tryAliasTarget(
+    const ws::ModelExecutionSpec& executionSpec,
+    const std::string& semanticKey) {
+    const auto it = executionSpec.semanticFieldAliases.find(semanticKey);
+    if (it == executionSpec.semanticFieldAliases.end() || it->second.empty()) {
+        return std::nullopt;
+    }
+    if (std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), it->second) ==
+        executionSpec.cellScalarVariableIds.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+bool hasRequiredPhase4Aliases(const ws::ModelExecutionSpec& executionSpec) {
+    std::set<std::string> requiredSemanticKeys;
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        if (!subsystem) {
+            continue;
+        }
+        for (const auto& key : subsystem->declaredReadSet()) {
+            if (!key.empty()) {
+                requiredSemanticKeys.insert(key);
+            }
+        }
+        for (const auto& key : subsystem->declaredWriteSet()) {
+            if (!key.empty()) {
+                requiredSemanticKeys.insert(key);
+            }
+        }
+    }
+
+    for (const auto& semanticKey : requiredSemanticKeys) {
+        const auto alias = tryAliasTarget(executionSpec, semanticKey);
+        if (!alias.has_value()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+ReplayFixture baselineFixture() {
     ws::RuntimeConfig config;
     config.seed = 20260325;
     config.grid = ws::GridSpec{6, 6};
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     config.profileInput = baselineProfileInput();
 
-    const std::filesystem::path modelPath = std::filesystem::path("..") / "models" / "environmental_model_2d.simmodel";
-    ws::ModelExecutionSpec executionSpec;
-    std::string executionMessage;
-    const bool executionOk = ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage);
-    assert(executionOk);
-    config.modelExecutionSpec = executionSpec;
+    const auto modelsRoot = resolveModelsRoot();
+    assert(!modelsRoot.empty());
 
-    return config;
+    std::vector<std::filesystem::path> candidates;
+    for (const auto& entry : std::filesystem::directory_iterator(modelsRoot)) {
+        if (!entry.is_directory() || entry.path().extension() != ".simmodel") {
+            continue;
+        }
+        candidates.push_back(entry.path());
+    }
+    std::sort(candidates.begin(), candidates.end());
+
+    for (const auto& modelPath : candidates) {
+        ws::ModelExecutionSpec executionSpec;
+        std::string executionMessage;
+        const bool executionOk = ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage);
+        if (!executionOk || executionSpec.cellScalarVariableIds.empty() || !hasRequiredPhase4Aliases(executionSpec)) {
+            continue;
+        }
+
+        config.modelExecutionSpec = executionSpec;
+        const std::string fallback = executionSpec.cellScalarVariableIds.front();
+        const std::string patchVariable = tryAliasTarget(executionSpec, "temperature.current").value_or(fallback);
+        return ReplayFixture{config, patchVariable};
+    }
+
+    assert(false && "No compatible .simmodel fixture found for control replay test.");
+    return ReplayFixture{config, ""};
 }
 
 void verifyControlActionsAreTracedAndDeterministic() {
-    ws::Runtime runtime(baselineConfig());
+    const auto fixture = baselineFixture();
+    ws::Runtime runtime(fixture.config);
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
         runtime.registerSubsystem(subsystem);
     }
@@ -61,12 +145,12 @@ void verifyControlActionsAreTracedAndDeterministic() {
     control.pause();
 
     ws::RuntimeInputFrame inputFrame;
-    inputFrame.scalarPatches.push_back(ws::ScalarWritePatch{"temperature", ws::Cell{1, 1}, 292.0f});
+    inputFrame.scalarPatches.push_back(ws::ScalarWritePatch{fixture.patchVariable, ws::Cell{1, 1}, 292.0f});
     control.queueInput(std::move(inputFrame));
 
     ws::RuntimeEvent event;
     event.eventName = "operator_event";
-    event.scalarPatches.push_back(ws::ScalarWritePatch{"temperature", ws::Cell{1, 1}, 0.8f});
+    event.scalarPatches.push_back(ws::ScalarWritePatch{fixture.patchVariable, ws::Cell{1, 1}, 0.8f});
     control.enqueueEvent(std::move(event));
 
     control.step(1);
@@ -108,7 +192,8 @@ void verifyControlActionsAreTracedAndDeterministic() {
 }
 
 void verifyReplayFromCheckpointAndEventChronology() {
-    ws::Runtime runtime(baselineConfig());
+    const auto fixture = baselineFixture();
+    ws::Runtime runtime(fixture.config);
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
         runtime.registerSubsystem(subsystem);
     }
@@ -124,7 +209,7 @@ void verifyReplayFromCheckpointAndEventChronology() {
         ws::RuntimeEvent event;
         event.eventName = "scheduled_event_" + std::to_string(i);
         event.scalarPatches.push_back(ws::ScalarWritePatch{
-            "temperature",
+            fixture.patchVariable,
             ws::Cell{static_cast<std::uint32_t>(i % 3), static_cast<std::uint32_t>((i + 1) % 3)},
             0.2f + 0.1f * static_cast<float>(i)});
         runtime.enqueueEvent(std::move(event));
@@ -155,7 +240,7 @@ void verifyReplayFromCheckpointAndEventChronology() {
     plan.expectedFinalStateHash = referenceSnapshot.stateHash;
 
     ws::ReplayRunner replayRunner(
-        baselineConfig(),
+        fixture.config,
         []() {
             return ws::makePhase4Subsystems();
         });

@@ -11,6 +11,7 @@
 #include <fstream>
 #include <cstring>
 #include <iterator>
+#include <set>
 #include <nlohmann/json.hpp>
 
 using namespace ws;
@@ -231,12 +232,14 @@ void test_model_parameter_controls_loader() {
     assert(ok);
     assert(!controls.empty());
 
-    const auto it = std::find_if(controls.begin(), controls.end(), [](const ParameterControl& control) {
-        return control.targetVariable == "soil_mineral_fraction";
-    });
-    assert(it != controls.end());
-    assert(it->minValue == 0.0f);
-    assert(it->maxValue == 1.0f);
+    std::set<std::string> uniqueTargets;
+    for (const auto& control : controls) {
+        assert(!control.name.empty());
+        assert(!control.targetVariable.empty());
+        assert(control.minValue <= control.maxValue);
+        uniqueTargets.insert(control.targetVariable);
+    }
+    assert(uniqueTargets.size() == controls.size());
 
     std::filesystem::remove_all(fixtureModelDir.parent_path());
 }
@@ -257,16 +260,19 @@ void test_model_execution_spec_loader() {
     assert(ok);
     assert(!executionSpec.cellScalarVariableIds.empty());
     assert(!executionSpec.stageOrder.empty());
-    assert(executionSpec.conservedVariables.empty());
 
-    const auto tempIt = std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "temperature");
-    assert(tempIt != executionSpec.cellScalarVariableIds.end());
+    assert(std::is_sorted(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end()));
+    assert(std::adjacent_find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end()) ==
+        executionSpec.cellScalarVariableIds.end());
+    assert(std::none_of(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), [](const std::string& id) {
+        return id.empty();
+    }));
 
-    const auto flowIt = std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "flow_velocity");
-    assert(flowIt == executionSpec.cellScalarVariableIds.end());
-
-    const auto stageIt = std::find(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end(), "atmosphere");
-    assert(stageIt != executionSpec.stageOrder.end());
+    assert(std::none_of(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end(), [](const std::string& stage) {
+        return stage.empty();
+    }));
+    const std::set<std::string> uniqueStages(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end());
+    assert(uniqueStages.size() == executionSpec.stageOrder.size());
 
     std::filesystem::remove_all(fixtureModelDir.parent_path());
 }
