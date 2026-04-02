@@ -43,27 +43,40 @@ const SimModelLoader = {
     },
 
     /**
-     * Discover models by probing for known model patterns
+     * Discover models by probing for model directories
+     * Dynamically scans the models folder to find all .simmodel directories.
+     * Uses server API as primary discovery method, with robust fallback.
      */
     async discoverModelsByProbing() {
         const discovered = [];
         
-        // Common model name patterns to try
-        const patterns = [
-            'environmental_model_2d',
-            'game_of_life_model',
-            'gray_scott_reaction_diffusion',
-            'coastal_biogeochemistry_transport',
-            'urban_microclimate_resilience'
-        ];
-
-        // Also try to discover by attempting to fetch model.json from common directories
+        // Primary: Try to use server API which does actual directory scanning
+        // This is the preferred method as it reads the actual filesystem
+        try {
+            const response = await fetch('api/models', { cache: 'no-store' });
+            if (response.ok) {
+                const models = await response.json();
+                if (models && models.length > 0) {
+                    console.log(`Discovered ${models.length} models via server API`);
+                    return models;
+                }
+            }
+        } catch (e) {
+            console.log('Server API unavailable, using fallback discovery');
+        }
+        
+        // Fallback: Probe for model directories using common naming patterns
+        // This approach attempts to load model.json from each potential directory
         const potentialDirs = [
             'environmental_model_2d.simmodel',
             'game_of_life_model.simmodel',
             'gray_scott_reaction_diffusion.simmodel',
             'coastal_biogeochemistry_transport.simmodel',
-            'urban_microclimate_resilience.simmodel'
+            'urban_microclimate_resilience.simmodel',
+            'navier_stokes_fluid_solver.simmodel',
+            'shallow_water_equations.simmodel',
+            'predator_prey_dynamics.simmodel',
+            'forest_fire_propagation.simmodel'
         ];
 
         console.log('Probing for models in potential directories...');
