@@ -245,30 +245,49 @@ public:
         startSnapshotWorker();
         startSimulationWorker();
 
-        modelSelector_.on_edit_model = [this](const ModelInfo& model) {
+        const auto openModelInEditor = [this](const std::filesystem::path& modelPath, const char* errorPrefix) {
+            if (!std::filesystem::exists(modelPath)) {
+                appendLog(std::string(errorPrefix) + "_path_missing=" + modelPath.string());
+                return;
+            }
+
             try {
-                const std::filesystem::path modelPath = model.path;
                 const ModelContext context = ws::ModelParser::load(modelPath);
                 modelEditor_.loadModel(context);
-                modelEditor_.open();
-                appState_ = AppState::ModelEditor;
-            } catch (const std::exception& e) {
-                appendLog(std::string("model_load_error=") + e.what());
-            }
-        };
-        modelSelector_.on_model_created = [this](const std::string& modelName) {
-            try {
-                const std::filesystem::path modelPath = modelName;
-                if (!std::filesystem::exists(modelPath)) {
+            } catch (const std::exception& strictError) {
+                appendLog(std::string(errorPrefix) + "_strict=" + strictError.what());
+                try {
+                    ModelContext fallback;
+                    if (std::filesystem::is_directory(modelPath)) {
+                        fallback = ws::ModelParser::loadFromDirectory(modelPath);
+                    } else {
+                        fallback = ws::ModelParser::loadFromZip(modelPath);
+                    }
+                    modelEditor_.loadModel(fallback);
+                    appendLog(std::string(errorPrefix) + "_fallback=raw_context_loaded");
+                } catch (const std::exception& fallbackError) {
+                    appendLog(std::string(errorPrefix) + "_fallback_error=" + fallbackError.what());
                     return;
                 }
-                const ModelContext context = ws::ModelParser::load(modelPath);
-                modelEditor_.loadModel(context);
-                modelEditor_.open();
-                appState_ = AppState::ModelEditor;
-            } catch (const std::exception& e) {
-                appendLog(std::string("model_create_error=") + e.what());
             }
+
+            modelSelector_.close();
+            modelEditor_.open();
+            appState_ = AppState::ModelEditor;
+        };
+
+        modelSelector_.on_edit_model = [openModelInEditor](const ModelInfo& model) {
+            openModelInEditor(model.path, "model_load_error");
+        };
+        modelSelector_.on_load_model = [this](const ModelInfo& model) {
+            modelSelector_.close();
+            modelEditor_.close();
+            sessionUi_.needsRefresh = true;
+            std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "model_selected=%s", model.name.c_str());
+            appState_ = AppState::SessionManager;
+        };
+        modelSelector_.on_model_created = [openModelInEditor](const std::string& modelName) {
+            openModelInEditor(modelName, "model_create_error");
         };
 
         while (!glfwWindowShouldClose(window)) {

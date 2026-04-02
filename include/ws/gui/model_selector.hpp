@@ -49,6 +49,7 @@ public:
     
     // Callbacks
     std::function<void(const ModelInfo&)> on_edit_model;
+    std::function<void(const ModelInfo&)> on_load_model;
     // The callback receives the full filesystem path to the created/imported model.
     std::function<void(const std::string&)> on_model_created;
     

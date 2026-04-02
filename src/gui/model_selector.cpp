@@ -439,56 +439,15 @@ void ModelSelector::render(ImVec2 available_size) {
         ImGui::Separator();
         ImGui::TextDisabled("Data origins: model fields from metadata.json / version.json / model.json; last modified from filesystem metadata; identity hash computed from metadata.json + version.json + model.json + logic.ir.");
 
-        if (ImGui::BeginPopupContextWindow("ModelSelectorColumns", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-            ImGui::TextDisabled("Toggle table columns");
-            ImGui::Separator();
-            ImGui::Checkbox("ID", &show_column_id);
-            ImGui::Checkbox("Version", &show_column_version);
-            ImGui::Checkbox("Format version", &show_column_format_version);
-            ImGui::Checkbox("Minimum engine version", &show_column_minimum_engine_version);
-            ImGui::Checkbox("Author", &show_column_author);
-            ImGui::Checkbox("Creation date", &show_column_creation_date);
-            ImGui::Checkbox("Tags", &show_column_tags);
-            ImGui::Checkbox("Description", &show_column_description);
-            ImGui::Checkbox("Compatibility", &show_column_compatibility);
-            ImGui::Checkbox("Identity hash", &show_column_identity_hash);
-            ImGui::Checkbox("Last modified", &show_column_last_modified);
-            ImGui::Separator();
-            if (ImGui::MenuItem("Show all")) {
-                show_column_id = true;
-                show_column_version = true;
-                show_column_format_version = true;
-                show_column_minimum_engine_version = true;
-                show_column_author = true;
-                show_column_creation_date = true;
-                show_column_tags = true;
-                show_column_description = true;
-                show_column_compatibility = true;
-                show_column_identity_hash = true;
-                show_column_last_modified = true;
-            }
-            if (ImGui::MenuItem("Show compact")) {
-                show_column_id = true;
-                show_column_version = true;
-                show_column_author = true;
-                show_column_description = true;
-                show_column_identity_hash = true;
-                show_column_last_modified = true;
-                show_column_format_version = false;
-                show_column_minimum_engine_version = false;
-                show_column_tags = false;
-                show_column_compatibility = false;
-            }
-            ImGui::EndPopup();
-        }
-
         const bool hasSelected = selected_model_index >= 0 && selected_model_index < static_cast<int>(models.size());
         if (hasSelected) {
             const auto& selected = models[selected_model_index];
             ImGui::Text("Selected: %s", selected.name.c_str());
             ImGui::SameLine();
             if (ImGui::Button("Load")) {
-                if (on_edit_model) on_edit_model(selected);
+                if (on_load_model) {
+                    on_load_model(selected);
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button("Edit")) {
@@ -558,6 +517,49 @@ void ModelSelector::render(ImVec2 available_size) {
             if (show_column_identity_hash) ImGui::TableSetupColumn("Identity Hash", 0, 0.0f, ColIdentityHash);
             if (show_column_last_modified) ImGui::TableSetupColumn("Last Modified", 0, 0.0f, ColLastModified);
             ImGui::TableHeadersRow();
+
+            if (ImGui::BeginPopupContextItem("ModelSelectorColumns", ImGuiPopupFlags_MouseButtonRight)) {
+                ImGui::TextDisabled("Toggle table columns");
+                ImGui::Separator();
+                ImGui::Checkbox("ID", &show_column_id);
+                ImGui::Checkbox("Version", &show_column_version);
+                ImGui::Checkbox("Format version", &show_column_format_version);
+                ImGui::Checkbox("Minimum engine version", &show_column_minimum_engine_version);
+                ImGui::Checkbox("Author", &show_column_author);
+                ImGui::Checkbox("Creation date", &show_column_creation_date);
+                ImGui::Checkbox("Tags", &show_column_tags);
+                ImGui::Checkbox("Description", &show_column_description);
+                ImGui::Checkbox("Compatibility", &show_column_compatibility);
+                ImGui::Checkbox("Identity hash", &show_column_identity_hash);
+                ImGui::Checkbox("Last modified", &show_column_last_modified);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Show all")) {
+                    show_column_id = true;
+                    show_column_version = true;
+                    show_column_format_version = true;
+                    show_column_minimum_engine_version = true;
+                    show_column_author = true;
+                    show_column_creation_date = true;
+                    show_column_tags = true;
+                    show_column_description = true;
+                    show_column_compatibility = true;
+                    show_column_identity_hash = true;
+                    show_column_last_modified = true;
+                }
+                if (ImGui::MenuItem("Show compact")) {
+                    show_column_id = true;
+                    show_column_version = true;
+                    show_column_author = true;
+                    show_column_description = true;
+                    show_column_identity_hash = true;
+                    show_column_last_modified = true;
+                    show_column_format_version = false;
+                    show_column_minimum_engine_version = false;
+                    show_column_tags = false;
+                    show_column_compatibility = false;
+                }
+                ImGui::EndPopup();
+            }
 
             if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
                 if (sortSpecs->SpecsCount > 0 && sortSpecs->SpecsDirty) {

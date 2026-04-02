@@ -4,8 +4,58 @@
 #include <filesystem>
 #include <memory>
 #include <sstream>
+#include <unordered_map>
+
+#include <nlohmann/json.hpp>
 
 namespace ws::gui {
+
+namespace {
+
+using json = nlohmann::json;
+
+bool isCommentKey(const std::string& key) {
+    return key.rfind("__comment", 0) == 0;
+}
+
+VariableSupport parseSupport(const json& variable) {
+    const std::string support = variable.value("support", std::string{"global"});
+    return support == "cell" ? VariableSupport::Cell : VariableSupport::Global;
+}
+
+VariableRole parseRole(const json& variable) {
+    const std::string role = variable.value("role", std::string{"state"});
+    if (role == "parameter") return VariableRole::Parameter;
+    if (role == "forcing") return VariableRole::Forcing;
+    if (role == "derived") return VariableRole::Derived;
+    if (role == "auxiliary") return VariableRole::Auxiliary;
+    return VariableRole::State;
+}
+
+NodeType nodeTypeForVariable(VariableRole role, VariableSupport support) {
+    if (role == VariableRole::Parameter) return NodeType::Parameter;
+    if (role == VariableRole::Derived) return NodeType::Derived;
+    return support == VariableSupport::Cell ? NodeType::CellVariable : NodeType::GlobalVariable;
+}
+
+DataType parseDataType(const json& variable) {
+    const std::string type = variable.value("type", std::string{"f32"});
+    if (type == "f64") return DataType::F64;
+    if (type == "i32") return DataType::I32;
+    if (type == "u32") return DataType::U32;
+    if (type == "bool") return DataType::Bool;
+    if (type == "vec2") return DataType::Vec2;
+    if (type == "vec3") return DataType::Vec3;
+    return DataType::F32;
+}
+
+std::string valueToString(const json& value) {
+    if (value.is_string()) return value.get<std::string>();
+    if (value.is_number() || value.is_boolean()) return value.dump();
+    return {};
+}
+
+} // namespace
 
 ModelEditorWindow::ModelEditorWindow(const std::string& window_title)
     : window_title(window_title),
@@ -22,6 +72,10 @@ ModelEditorWindow::ModelEditorWindow(const std::string& window_title)
 ModelEditorWindow::~ModelEditorWindow() = default;
 
 void ModelEditorWindow::loadModel(const ModelContext& context) {
+    window_open = true;
+    error_message.clear();
+    status_message = "Model loaded";
+
     // Copy model data (avoid copying unique_ptr)
     current_model.metadata_json = context.metadata_json;
     current_model.version_json = context.version_json;
@@ -42,35 +96,204 @@ void ModelEditorWindow::loadModel(const ModelContext& context) {
 }
 
 void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json_str) {
-    // This is a scaffold implementation that demonstrates how to parse JSON
-    // In a full implementation, this would deserialize the model and create all nodes
-    
-    // Example structure (would be filled from actual JSON):
-    // 1. Create variable nodes from "variables" section
-    // 2. Create stage nodes from "stages" section
-    // 3. Create interaction nodes from interactions within stages
-    // 4. Create connections based on read/write relationships
-    
-    // For now, we create a simple example node graph
-    Node var_node("var_temp", NodeType::CellVariable, "temperature");
-    var_node.position = {100.0f, 100.0f};
-    var_node.data_type = DataType::F32;
-    var_node.units = "K";
-    var_node.output_ports.push_back(Port("temp_out", "temperature", false));
-    node_editor->addNode(var_node);
-    
-    Node eq_node("eq_diffusion", NodeType::Equation, "Diffusion");
-    eq_node.position = {300.0f, 100.0f};
-    eq_node.input_ports.push_back(Port("temp_in", "temperature", true));
-    eq_node.output_ports.push_back(Port("temp_out", "temperature", false));
-    node_editor->addNode(eq_node);
+    const json model = json::parse(model_json_str);
+
+    std::vector<std::string> existingNodeIds;
+    existingNodeIds.reserve(node_editor->getAllNodes().size());
+    for (const auto& node : node_editor->getAllNodes()) {
+        existingNodeIds.push_back(node->id);
+    }
+    for (const auto& nodeId : existingNodeIds) {
+        node_editor->removeNode(nodeId);
+    }
+    node_editor->clearSelection();
+
+    std::unordered_map<std::string, std::string> variableNodeByVariableId;
+    std::unordered_map<std::string, std::string> domainNodeByDomainId;
+
+    float domainY = 80.0f;
+    if (model.contains("domains") && model["domains"].is_object()) {
+        for (const auto& [domainId, domainValue] : model["domains"].items()) {
+            if (isCommentKey(domainId) || !domainValue.is_object()) {
+                continue;
+            }
+
+            Node domainNode("domain_" + domainId, NodeType::Domain, domainId);
+            domainNode.position = ImVec2(60.0f, domainY);
+            domainNode.description = valueToString(domainValue.value("kind", json{}));
+            domainNode.output_ports.push_back(Port("domain", domainId, false));
+            node_editor->addNode(domainNode);
+
+            domainNodeByDomainId[domainId] = domainNode.id;
+            domainY += 86.0f;
+        }
+    }
+
+    float globalVarY = 80.0f;
+    float cellVarY = 80.0f;
+    if (model.contains("variables") && model["variables"].is_array()) {
+        for (const auto& variable : model["variables"]) {
+            if (!variable.is_object()) {
+                continue;
+            }
+            if (!variable.contains("id") || !variable["id"].is_string()) {
+                continue;
+            }
+
+            const std::string variableId = variable["id"].get<std::string>();
+            const VariableSupport support = parseSupport(variable);
+            const VariableRole role = parseRole(variable);
+
+            Node variableNode("var_" + variableId, nodeTypeForVariable(role, support), variableId);
+            variableNode.variable_name = variableId;
+            variableNode.support = support;
+            variableNode.role = role;
+            variableNode.data_type = parseDataType(variable);
+            variableNode.units = variable.value("units", std::string{});
+            variableNode.description = variable.value("description", std::string{});
+            variableNode.domain_ref = variable.value("domain", std::string{});
+            if (variable.contains("initial_value")) {
+                variableNode.initial_value = valueToString(variable["initial_value"]);
+            }
+
+            if (support == VariableSupport::Global) {
+                variableNode.position = ImVec2(300.0f, globalVarY);
+                globalVarY += 86.0f;
+            } else {
+                variableNode.position = ImVec2(540.0f, cellVarY);
+                cellVarY += 86.0f;
+            }
+
+            variableNode.input_ports.push_back(Port("in", variableId, true));
+            variableNode.output_ports.push_back(Port("out", variableId, false));
+            node_editor->addNode(variableNode);
+
+            variableNodeByVariableId[variableId] = variableNode.id;
+        }
+    }
+
+    if (model.contains("variables") && model["variables"].is_array()) {
+        for (const auto& variable : model["variables"]) {
+            if (!variable.is_object() || !variable.contains("id") || !variable["id"].is_string()) {
+                continue;
+            }
+            const std::string variableId = variable["id"].get<std::string>();
+            const std::string domainRef = variable.value("domain", std::string{});
+            if (domainRef.empty()) {
+                continue;
+            }
+
+            const auto varIt = variableNodeByVariableId.find(variableId);
+            const auto domainIt = domainNodeByDomainId.find(domainRef);
+            if (varIt != variableNodeByVariableId.end() && domainIt != domainNodeByDomainId.end()) {
+                node_editor->addConnection(Connection(domainIt->second, varIt->second, "domain", "in"));
+            }
+        }
+    }
+
+    float stageY = 80.0f;
+    if (model.contains("stages") && model["stages"].is_array()) {
+        int stageIndex = 0;
+        for (const auto& stage : model["stages"]) {
+            if (!stage.is_object()) {
+                continue;
+            }
+            const std::string stageId = stage.value("id", std::string{"stage_" + std::to_string(stageIndex)});
+
+            Node stageNode("stage_" + stageId, NodeType::Stage, stageId);
+            stageNode.position = ImVec2(860.0f, stageY);
+            stageNode.description = stage.value("description", std::string{});
+            stageNode.output_ports.push_back(Port("flow", stageId, false));
+            node_editor->addNode(stageNode);
+
+            float interactionY = stageY + 88.0f;
+            if (stage.contains("interactions") && stage["interactions"].is_array()) {
+                int interactionIndex = 0;
+                for (const auto& interaction : stage["interactions"]) {
+                    if (!interaction.is_object()) {
+                        continue;
+                    }
+
+                    const std::string interactionId = interaction.value(
+                        "id", std::string{"interaction_" + std::to_string(stageIndex) + "_" + std::to_string(interactionIndex)});
+
+                    Node interactionNode("interaction_" + interactionId, NodeType::Equation, interactionId);
+                    interactionNode.position = ImVec2(1140.0f, interactionY);
+                    interactionNode.target_type = interaction.value("target_type", std::string{});
+                    interactionNode.input_ports.push_back(Port("stage", stageId, true));
+
+                    if (interaction.contains("reads") && interaction["reads"].is_array()) {
+                        for (const auto& readVar : interaction["reads"]) {
+                            if (readVar.is_string()) {
+                                const std::string varId = readVar.get<std::string>();
+                                interactionNode.input_ports.push_back(Port(varId, varId, true));
+                            }
+                        }
+                    }
+                    if (interaction.contains("writes") && interaction["writes"].is_array()) {
+                        for (const auto& writeVar : interaction["writes"]) {
+                            if (writeVar.is_string()) {
+                                const std::string varId = writeVar.get<std::string>();
+                                interactionNode.output_ports.push_back(Port(varId, varId, false));
+                            }
+                        }
+                    }
+                    if (interactionNode.output_ports.empty()) {
+                        interactionNode.output_ports.push_back(Port("out", interactionId, false));
+                    }
+
+                    node_editor->addNode(interactionNode);
+                    node_editor->addConnection(Connection(stageNode.id, interactionNode.id, "flow", "stage"));
+
+                    if (interaction.contains("reads") && interaction["reads"].is_array()) {
+                        for (const auto& readVar : interaction["reads"]) {
+                            if (!readVar.is_string()) {
+                                continue;
+                            }
+                            const std::string varId = readVar.get<std::string>();
+                            const auto varIt = variableNodeByVariableId.find(varId);
+                            if (varIt != variableNodeByVariableId.end()) {
+                                node_editor->addConnection(Connection(varIt->second, interactionNode.id, "out", varId));
+                            }
+                        }
+                    }
+
+                    if (interaction.contains("writes") && interaction["writes"].is_array()) {
+                        for (const auto& writeVar : interaction["writes"]) {
+                            if (!writeVar.is_string()) {
+                                continue;
+                            }
+                            const std::string varId = writeVar.get<std::string>();
+                            const auto varIt = variableNodeByVariableId.find(varId);
+                            if (varIt != variableNodeByVariableId.end()) {
+                                node_editor->addConnection(Connection(interactionNode.id, varIt->second, varId, "in"));
+                            }
+                        }
+                    }
+
+                    interactionY += 96.0f;
+                    ++interactionIndex;
+                }
+            }
+
+            stageY = std::max(stageY + 140.0f, interactionY + 24.0f);
+            ++stageIndex;
+        }
+    }
+
+    node_editor->resetView();
 }
 
 void ModelEditorWindow::render(ImVec2 available_size) {
     if (!window_open) return;
 
-    ImGui::SetNextWindowSize(available_size, ImGuiCond_FirstUseEver);
-    ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoCollapse;
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(available_size, ImGuiCond_Always);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar |
+                             ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoTitleBar;
 
     // Debounced validation
     double current_time = ImGui::GetTime();
@@ -139,37 +362,52 @@ void ModelEditorWindow::render(ImVec2 available_size) {
             ImGui::EndMenuBar();
         }
 
-        // Node palette (left side)
-        ImGui::SetNextWindowSizeConstraints(ImVec2(180.0f, 400.0f), ImVec2(250.0f, -1.0f));
-        if (ImGui::Begin("Node Palette", nullptr, ImGuiWindowFlags_NoMove)) {
-            renderNodePalette();
-            ImGui::End();
-        }
+        const float paletteWidth = 240.0f;
+        const float propertiesWidth = show_property_inspector ? 320.0f : 0.0f;
+        const float validationHeight = show_validation_panel ? 180.0f : 0.0f;
 
-        // Main canvas area
-        ImGui::SetNextWindowSizeConstraints(ImVec2(400.0f, 300.0f), ImVec2(-1.0f, -1.0f));
-        if (ImGui::Begin("Model Graph", nullptr)) {
-            ImVec2 canvas_size = ImGui::GetContentRegionAvail();
-            node_editor->render(canvas_size);
-            ImGui::End();
-        }
+        if (ImGui::BeginChild("EditorTopRow", ImVec2(0.0f, -validationHeight), false)) {
+            if (ImGui::BeginChild("NodePalettePane", ImVec2(paletteWidth, 0.0f), true)) {
+                ImGui::TextDisabled("Node Palette");
+                ImGui::Separator();
+                renderNodePalette();
+            }
+            ImGui::EndChild();
 
-        // Property inspector (right side)
-        if (show_property_inspector) {
-            ImGui::SetNextWindowSizeConstraints(ImVec2(250.0f, 300.0f), ImVec2(400.0f, -1.0f));
-            if (ImGui::Begin("Properties", &show_property_inspector)) {
-                renderPropertyInspector();
-                ImGui::End();
+            ImGui::SameLine();
+            float graphWidth = ImGui::GetContentRegionAvail().x;
+            if (show_property_inspector) {
+                graphWidth -= propertiesWidth;
+                graphWidth = std::max(graphWidth, 240.0f);
+            }
+
+            if (ImGui::BeginChild("ModelGraphPane", ImVec2(graphWidth, 0.0f), true)) {
+                ImGui::TextDisabled("Model Graph");
+                ImGui::Separator();
+                ImVec2 canvas_size = ImGui::GetContentRegionAvail();
+                node_editor->render(canvas_size);
+            }
+            ImGui::EndChild();
+
+            if (show_property_inspector) {
+                ImGui::SameLine();
+                if (ImGui::BeginChild("PropertiesPane", ImVec2(0.0f, 0.0f), true)) {
+                    ImGui::TextDisabled("Properties");
+                    ImGui::Separator();
+                    renderPropertyInspector();
+                }
+                ImGui::EndChild();
             }
         }
+        ImGui::EndChild();
 
-        // Validation panel (bottom)
         if (show_validation_panel) {
-            ImGui::SetNextWindowSizeConstraints(ImVec2(300.0f, 150.0f), ImVec2(-1.0f, 400.0f));
-            if (ImGui::Begin("Validation", &show_validation_panel)) {
+            if (ImGui::BeginChild("ValidationPane", ImVec2(0.0f, 0.0f), true)) {
+                ImGui::TextDisabled("Validation");
+                ImGui::Separator();
                 renderValidationPanel();
-                ImGui::End();
             }
+            ImGui::EndChild();
         }
 
         // Error/status message
