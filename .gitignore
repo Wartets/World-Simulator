@@ -60,6 +60,7 @@ _deps/
 *.userosscache
 *.sln.docstates
 
+.agents
 plans
 .idea/
 .kilocode

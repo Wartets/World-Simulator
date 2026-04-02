@@ -1,8 +1,10 @@
 #include "ws/gui/model_editor_window.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <sstream>
 #include <unordered_map>
@@ -14,6 +16,68 @@ namespace ws::gui {
 namespace {
 
 using json = nlohmann::json;
+
+std::string toLower(std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+        });
+        return value;
+}
+
+bool containsCaseInsensitive(const std::string& haystack, const std::string& needle) {
+        if (needle.empty()) {
+                return true;
+        }
+        return toLower(haystack).find(toLower(needle)) != std::string::npos;
+}
+
+bool readTextFile(const std::string& path, std::string& out) {
+        std::ifstream in(path, std::ios::in | std::ios::binary);
+        if (!in) {
+                return false;
+        }
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        out = buffer.str();
+        return true;
+}
+
+bool writeTextFile(const std::string& path, const std::string& contents) {
+        std::ofstream out(path, std::ios::out | std::ios::binary | std::ios::trunc);
+        if (!out) {
+                return false;
+        }
+        out << contents;
+        return out.good();
+}
+
+std::string defaultModelTemplateJson() {
+        return R"({
+    "domains": {
+        "main": { "kind": "interval", "label": "Main Domain" }
+    },
+    "variables": [
+        { "id": "state_x", "type": "f32", "role": "state", "support": "cell", "domain": "main", "label": "State X" },
+        { "id": "forcing_u", "type": "f32", "role": "forcing", "support": "global", "label": "Forcing U" }
+    ],
+    "stages": [
+        {
+            "id": "stage_main",
+            "label": "Main Stage",
+            "interactions": [
+                {
+                    "id": "update_x",
+                    "label": "Update X",
+                    "formula": "state_x = state_x + forcing_u;",
+                    "target_type": "grid",
+                    "reads": ["state_x", "forcing_u"],
+                    "writes": ["state_x"]
+                }
+            ]
+        }
+    ]
+})";
+}
 
 bool isCommentKey(const std::string& key) {
     return key.rfind("__comment", 0) == 0;
@@ -104,6 +168,9 @@ ModelEditorWindow::ModelEditorWindow(const std::string& window_title)
       show_validation_panel(true),
       last_validation_time(0.0),
       validation_debounce_ms(500.0) {
+        std::snprintf(open_model_path_buffer, sizeof(open_model_path_buffer), "%s", "models/environmental_model_2d.simmodel/model.json");
+        std::snprintf(save_model_path_buffer, sizeof(save_model_path_buffer), "%s", "checkpoints/worlds/model_editor_export.model.json");
+        status_details.push_back("ready=true");
 }
 
 ModelEditorWindow::~ModelEditorWindow() = default;
@@ -127,8 +194,150 @@ void ModelEditorWindow::loadModel(const ModelContext& context) {
     try {
         populateNodeGraphFromModel(context.model_json);
         history->recordSnapshot("Model loaded");
+        appendStatusDetail("load=ok");
+        appendStatusDetail("nodes=" + std::to_string(node_editor->getAllNodes().size()));
     } catch (const std::exception& e) {
         error_message = std::string("Failed to load model: ") + e.what();
+        appendStatusDetail("load=error");
+    }
+}
+
+void ModelEditorWindow::appendStatusDetail(const std::string& line) {
+    if (line.empty()) {
+        return;
+    }
+    status_details.push_back(line);
+    if (status_details.size() > 12u) {
+        status_details.erase(status_details.begin());
+    }
+}
+
+void ModelEditorWindow::selectAllNodes() {
+    node_editor->clearSelection();
+    for (const auto& node : node_editor->getAllNodes()) {
+        node_editor->selectNode(node->id, true);
+    }
+    status_message = "All nodes selected";
+    appendStatusDetail("selection=" + std::to_string(node_editor->getSelectedNodeIds().size()));
+}
+
+void ModelEditorWindow::deleteSelectedNodes() {
+    const auto selected = node_editor->getSelectedNodeIds();
+    if (selected.empty()) {
+        status_message = "No selected nodes to delete";
+        return;
+    }
+
+    for (const auto& id : selected) {
+        node_editor->removeNode(id);
+    }
+    node_editor->clearSelection();
+    markDirty();
+    history->recordSnapshot("Deleted selected nodes");
+    status_message = "Deleted selected nodes";
+    appendStatusDetail("deleted=" + std::to_string(selected.size()));
+}
+
+void ModelEditorWindow::duplicateSelectedNodes() {
+    const auto selected = node_editor->getSelectedNodeIds();
+    if (selected.empty()) {
+        status_message = "No selected nodes to duplicate";
+        return;
+    }
+
+    int copied = 0;
+    for (const auto& id : selected) {
+        Node* source = node_editor->getNode(id);
+        if (!source) {
+            continue;
+        }
+        Node clone = *source;
+        std::string baseId = source->id + "_copy";
+        std::string candidateId = baseId + "_" + std::to_string(copied);
+        int suffix = copied;
+        while (node_editor->getNode(candidateId) != nullptr) {
+            ++suffix;
+            candidateId = baseId + "_" + std::to_string(suffix);
+        }
+        clone.id = candidateId;
+        clone.position = ImVec2(source->position.x + 36.0f, source->position.y + 26.0f);
+        clone.is_selected = false;
+        clone.is_hovered = false;
+        node_editor->addNode(clone);
+        ++copied;
+    }
+
+    if (copied > 0) {
+        markDirty();
+        history->recordSnapshot("Duplicated selected nodes");
+        status_message = "Duplicated selected nodes";
+        appendStatusDetail("duplicated=" + std::to_string(copied));
+    }
+}
+
+void ModelEditorWindow::showFileActionPopups() {
+    if (ImGui::BeginPopupModal("OpenModelDialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Open model JSON path");
+        ImGui::InputText("##open_model_path", open_model_path_buffer, sizeof(open_model_path_buffer));
+        ImGui::Spacing();
+
+        if (ImGui::Button("Open", ImVec2(120.0f, 0.0f))) {
+            std::string payload;
+            if (readTextFile(open_model_path_buffer, payload)) {
+                current_model.model_json = payload;
+                try {
+                    populateNodeGraphFromModel(payload);
+                    is_modified = false;
+                    status_message = "Model opened";
+                    error_message.clear();
+                    history->recordSnapshot("Opened model from file");
+                    appendStatusDetail("open_path=" + std::string(open_model_path_buffer));
+                    ImGui::CloseCurrentPopup();
+                } catch (const std::exception& e) {
+                    error_message = std::string("Open failed: invalid model JSON: ") + e.what();
+                }
+            } else {
+                error_message = std::string("Open failed: cannot read file '") + open_model_path_buffer + "'";
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopupModal("SaveModelDialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Save model JSON path");
+        ImGui::InputText("##save_model_path", save_model_path_buffer, sizeof(save_model_path_buffer));
+        ImGui::Spacing();
+
+        if (ImGui::Button("Save", ImVec2(120.0f, 0.0f))) {
+            if (current_model.model_json.empty()) {
+                error_message = "Save failed: no model data";
+            } else {
+                std::filesystem::path target(save_model_path_buffer);
+                if (target.has_parent_path()) {
+                    std::error_code ec;
+                    std::filesystem::create_directories(target.parent_path(), ec);
+                }
+                if (writeTextFile(save_model_path_buffer, current_model.model_json)) {
+                    is_modified = false;
+                    status_message = "Model saved";
+                    error_message.clear();
+                    history->recordSnapshot("Saved model to file");
+                    appendStatusDetail("save_path=" + std::string(save_model_path_buffer));
+                    ImGui::CloseCurrentPopup();
+                } else {
+                    error_message = std::string("Save failed: cannot write file '") + save_model_path_buffer + "'";
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -343,6 +552,33 @@ void ModelEditorWindow::render(ImVec2 available_size) {
         runValidation();
         last_validation_time = current_time;
     }
+
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool ctrl = io.KeyCtrl;
+    const bool shift = io.KeyShift;
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        createNewModel();
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+        ImGui::OpenPopup("OpenModelDialog");
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        if (shift) {
+            ImGui::OpenPopup("SaveModelDialog");
+        } else {
+            saveModel();
+        }
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+        selectAllNodes();
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+        node_editor->clearSelection();
+        status_message = "Selection cleared";
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+        deleteSelectedNodes();
+    }
     
     if (ImGui::Begin(window_title.c_str(), &window_open, flags)) {
         // Main menu bar
@@ -352,13 +588,13 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                     createNewModel();
                 }
                 if (ImGui::MenuItem("Open Model", "Ctrl+O")) {
-                    // This would open a file dialog
+                    ImGui::OpenPopup("OpenModelDialog");
                 }
                 if (ImGui::MenuItem("Save Model", "Ctrl+S")) {
                     saveModel();
                 }
                 if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
-                    // This would open a save dialog
+                    ImGui::OpenPopup("SaveModelDialog");
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Export as ZIP")) {
@@ -373,17 +609,30 @@ void ModelEditorWindow::render(ImVec2 available_size) {
 
             if (ImGui::BeginMenu("Edit")) {
                 if (ImGui::MenuItem("Undo", "Ctrl+Z", false, history->canUndo())) {
-                    history->undo();
+                    if (history->undo()) {
+                        status_message = "Undo applied";
+                        appendStatusDetail("undo=true");
+                    }
                 }
                 if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z", false, history->canRedo())) {
-                    history->redo();
+                    if (history->redo()) {
+                        status_message = "Redo applied";
+                        appendStatusDetail("redo=true");
+                    }
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Select All", "Ctrl+A")) {
-                    // Select all nodes
+                    selectAllNodes();
                 }
                 if (ImGui::MenuItem("Deselect All", "Ctrl+D")) {
                     node_editor->clearSelection();
+                    status_message = "Selection cleared";
+                }
+                if (ImGui::MenuItem("Duplicate Selected", "Ctrl+J")) {
+                    duplicateSelectedNodes();
+                }
+                if (ImGui::MenuItem("Delete Selected", "Del")) {
+                    deleteSelectedNodes();
                 }
                 ImGui::EndMenu();
             }
@@ -391,9 +640,11 @@ void ModelEditorWindow::render(ImVec2 available_size) {
             if (ImGui::BeginMenu("View")) {
                 if (ImGui::MenuItem("Auto Layout")) {
                     node_editor->autoLayout();
+                    status_message = "Auto layout completed";
                 }
                 if (ImGui::MenuItem("Reset View")) {
                     node_editor->resetView();
+                    status_message = "View reset";
                 }
                 ImGui::Separator();
                 ImGui::MenuItem("Property Inspector", "P", &show_property_inspector);
@@ -404,11 +655,13 @@ void ModelEditorWindow::render(ImVec2 available_size) {
             ImGui::EndMenuBar();
         }
 
+        showFileActionPopups();
+
         // Compute explicit layout heights to prevent micro-scrolling
         ImVec2 content_avail = ImGui::GetContentRegionAvail();
         const float paletteWidth = 240.0f;
         const float propertiesWidth = show_property_inspector ? 320.0f : 0.0f;
-        const float statusBarHeight = 24.0f;
+        const float statusBarHeight = 78.0f;
         const float spacing = ImGui::GetStyle().ItemSpacing.y;
         const float validationHeight = show_validation_panel ? 180.0f : 0.0f;
         
@@ -470,8 +723,11 @@ void ModelEditorWindow::render(ImVec2 available_size) {
         // === Status Bar (fixed compact footer) ===
         {
             ImVec2 status_region = ImGui::GetContentRegionAvail();
-            if (ImGui::BeginChild("StatusBar", ImVec2(0.0f, status_region.y), false,
+            const float status_height = std::max(statusBarHeight, status_region.y);
+            if (ImGui::BeginChild("StatusBar", ImVec2(0.0f, status_height), true,
                                   ImGuiWindowFlags_NoScrollbar)) {
+                ImGui::TextDisabled("Status");
+                ImGui::Separator();
                 if (!error_message.empty()) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
                     ImGui::TextUnformatted(error_message.c_str());
@@ -480,6 +736,19 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.2f, 1.0f));
                     ImGui::TextUnformatted(status_message.c_str());
                     ImGui::PopStyleColor();
+                } else {
+                    ImGui::TextDisabled("Ready");
+                }
+
+                if (!status_details.empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Details:");
+                    if (ImGui::BeginChild("StatusDetails", ImVec2(0.0f, 34.0f), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+                        for (const auto& detail : status_details) {
+                            ImGui::TextUnformatted(detail.c_str());
+                        }
+                    }
+                    ImGui::EndChild();
                 }
             }
             ImGui::EndChild();
@@ -490,30 +759,73 @@ void ModelEditorWindow::render(ImVec2 available_size) {
 }
 
 void ModelEditorWindow::renderNodePalette() {
-        ImGui::TextDisabled("Variables");
-    if (ImGui::MenuItem("Global Variable")) {
-        addVariableNode(NodeType::GlobalVariable, VariableSupport::Global);
+    ImGui::TextDisabled("Creation Palette");
+    ImGui::SetNextItemWidth(-1.0f);
+    editTextField("##palette_filter", palette_filter, 256);
+
+    const auto showItem = [&](const std::string& name, const std::string& tags) {
+        return containsCaseInsensitive(name, palette_filter) || containsCaseInsensitive(tags, palette_filter);
+    };
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Variables");
+    if (showItem("Global Variable", "variable global state parameter")) {
+        if (ImGui::Button("+ Global Variable", ImVec2(-1.0f, 0.0f))) {
+            addVariableNode(NodeType::GlobalVariable, VariableSupport::Global);
+            status_message = "Added global variable";
+        }
     }
-    if (ImGui::MenuItem("Cell Variable")) {
-        addVariableNode(NodeType::CellVariable, VariableSupport::Cell);
+    if (showItem("Cell Variable", "variable cell state grid")) {
+        if (ImGui::Button("+ Cell Variable", ImVec2(-1.0f, 0.0f))) {
+            addVariableNode(NodeType::CellVariable, VariableSupport::Cell);
+            status_message = "Added cell variable";
+        }
     }
-    
-        ImGui::TextDisabled("Interactions");
-    if (ImGui::MenuItem("Equation Node")) {
-        addInteractionNode(NodeType::Equation);
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Interactions");
+    if (showItem("Equation Node", "interaction equation formula")) {
+        if (ImGui::Button("+ Equation Node", ImVec2(-1.0f, 0.0f))) {
+            addInteractionNode(NodeType::Equation);
+            status_message = "Added equation node";
+        }
     }
-    if (ImGui::MenuItem("Operator Node")) {
-        addInteractionNode(NodeType::Operator);
+    if (showItem("Operator Node", "interaction operator transform")) {
+        if (ImGui::Button("+ Operator Node", ImVec2(-1.0f, 0.0f))) {
+            addInteractionNode(NodeType::Operator);
+            status_message = "Added operator node";
+        }
     }
-    
-        ImGui::TextDisabled("Organization");
-    if (ImGui::MenuItem("Stage")) {
-        addStageNode();
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Organization");
+    if (showItem("Stage", "pipeline stage")) {
+        if (ImGui::Button("+ Stage", ImVec2(-1.0f, 0.0f))) {
+            addStageNode();
+            status_message = "Added stage";
+        }
     }
-    
-        ImGui::TextDisabled("Constraints");
-    if (ImGui::MenuItem("Domain (Interval)")) {
-        addDomainNode(NodeType::Domain);
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Constraints");
+    if (showItem("Domain (Interval)", "domain interval constraints")) {
+        if (ImGui::Button("+ Domain (Interval)", ImVec2(-1.0f, 0.0f))) {
+            addDomainNode(NodeType::Domain);
+            status_message = "Added domain";
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextDisabled("Batch Tools");
+    if (ImGui::Button("Select All Nodes", ImVec2(-1.0f, 0.0f))) {
+        selectAllNodes();
+    }
+    if (ImGui::Button("Duplicate Selected", ImVec2(-1.0f, 0.0f))) {
+        duplicateSelectedNodes();
+    }
+    if (ImGui::Button("Delete Selected", ImVec2(-1.0f, 0.0f))) {
+        deleteSelectedNodes();
     }
 }
 
@@ -569,6 +881,19 @@ void ModelEditorWindow::renderPropertyInspector() {
 
     ImGui::Text("Connections: in %d / out %d", incoming_connections, outgoing_connections);
     ImGui::Text("Ports: %zu inputs / %zu outputs", selected_node->input_ports.size(), selected_node->output_ports.size());
+
+    if (ImGui::Button("Duplicate Node")) {
+        node_editor->clearSelection();
+        node_editor->selectNode(selected_node->id, false);
+        duplicateSelectedNodes();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Delete Node")) {
+        node_editor->clearSelection();
+        node_editor->selectNode(selected_node->id, false);
+        deleteSelectedNodes();
+        return;
+    }
     
     ImGui::Separator();
     
@@ -633,6 +958,41 @@ void ModelEditorWindow::renderPropertyInspector() {
         if (selected_node->type == NodeType::Domain) {
             ImGui::Text("Domain ref:");
             if (editTextField("##domain_label", selected_node->domain_ref)) markDirty();
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Code / Logic", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (selected_node->formula_logic.empty()) {
+            ImGui::TextDisabled("No interaction logic attached to this node.");
+        } else {
+            ImGui::TextDisabled("Runtime logic");
+            std::string preview = selected_node->formula_logic;
+            editMultilineField("##logic_preview", preview, ImVec2(-1.0f, 92.0f));
+            if (ImGui::Button("Copy Logic")) {
+                ImGui::SetClipboardText(selected_node->formula_logic.c_str());
+                status_message = "Logic copied to clipboard";
+            }
+        }
+
+        std::ostringstream codeSummary;
+        codeSummary << "id=" << selected_node->id << "\n";
+        codeSummary << "type=" << static_cast<int>(selected_node->type) << "\n";
+        codeSummary << "label=" << selected_node->label << "\n";
+        codeSummary << "inputs=" << selected_node->input_ports.size() << " outputs=" << selected_node->output_ports.size() << "\n";
+        const std::string codeSummaryText = codeSummary.str();
+        if (ImGui::BeginChild("NodeCodeSummary", ImVec2(-1.0f, 88.0f), true)) {
+            ImGui::TextUnformatted(codeSummaryText.c_str());
+        }
+        ImGui::EndChild();
+    }
+
+    if (ImGui::CollapsingHeader("Connection Context", ImGuiTreeNodeFlags_DefaultOpen)) {
+        for (const auto& connection : node_editor->getConnections()) {
+            if (connection.from_node_id == selected_node->id || connection.to_node_id == selected_node->id) {
+                ImGui::BulletText("%s:%s -> %s:%s",
+                                  connection.from_node_id.c_str(), connection.from_port_name.c_str(),
+                                  connection.to_node_id.c_str(), connection.to_port_name.c_str());
+            }
         }
     }
     
@@ -798,32 +1158,60 @@ void ModelEditorWindow::markDirty() {
 
 void ModelEditorWindow::saveModel() {
     if (current_model.model_json.empty()) {
-        error_message = "No model loaded";
-        return;
+        current_model.model_json = defaultModelTemplateJson();
     }
-    
-    // Serialize node graph back to model.json
-    // This is a scaffold implementation
-    
-    status_message = "Model saved successfully";
-    is_modified = false;
+
+    std::filesystem::path target(save_model_path_buffer);
+    if (target.has_parent_path()) {
+        std::error_code ec;
+        std::filesystem::create_directories(target.parent_path(), ec);
+    }
+
+    if (writeTextFile(save_model_path_buffer, current_model.model_json)) {
+        status_message = "Model saved successfully";
+        error_message.clear();
+        is_modified = false;
+        history->recordSnapshot("Save model");
+        appendStatusDetail("save=ok");
+    } else {
+        error_message = std::string("Failed to save model to '") + save_model_path_buffer + "'";
+        appendStatusDetail("save=error");
+    }
 }
 
 void ModelEditorWindow::exportModel() {
     if (current_model.model_json.empty()) {
         error_message = "No model loaded";
+        appendStatusDetail("export=error");
         return;
     }
-    
-    // Export as ZIP file
-    status_message = "Model exported successfully";
+
+    const std::filesystem::path exportPath = std::filesystem::path("checkpoints/worlds") / "model_editor_export.json";
+    std::error_code ec;
+    std::filesystem::create_directories(exportPath.parent_path(), ec);
+    if (writeTextFile(exportPath.string(), current_model.model_json)) {
+        status_message = "Model exported successfully";
+        error_message.clear();
+        appendStatusDetail("export_path=" + exportPath.string());
+    } else {
+        error_message = "Export failed";
+        appendStatusDetail("export=error");
+    }
 }
 
 void ModelEditorWindow::createNewModel() {
     current_model = ModelContext();
+    current_model.model_json = defaultModelTemplateJson();
     node_editor->clearSelection();
+    try {
+        populateNodeGraphFromModel(current_model.model_json);
+        history->recordSnapshot("Create new model");
+    } catch (const std::exception& e) {
+        error_message = std::string("Failed to initialize new model: ") + e.what();
+    }
     is_modified = false;
     status_message = "New model created";
+    appendStatusDetail("new_model=true");
 }
 
 } // namespace ws::gui

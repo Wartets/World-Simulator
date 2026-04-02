@@ -57,6 +57,10 @@ private:
     // UI state
     bool show_property_inspector;
     bool show_validation_panel;
+    std::vector<std::string> status_details;
+    std::string palette_filter;
+    char open_model_path_buffer[512]{};
+    char save_model_path_buffer[512]{};
     
     // Validation state
     double last_validation_time;
@@ -73,6 +77,13 @@ private:
     void renderNodePalette();
     void renderPropertyInspector();
     void renderValidationPanel();
+    
+    // UI helpers
+    void selectAllNodes();
+    void deleteSelectedNodes();
+    void duplicateSelectedNodes();
+    void showFileActionPopups();
+    void appendStatusDetail(const std::string& line);
     
     // Model graph operations
     void populateNodeGraphFromModel(const std::string& model_json_str);
