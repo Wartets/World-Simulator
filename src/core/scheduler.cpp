@@ -518,9 +518,6 @@ StepDiagnostics Scheduler::step(
         conservedVariables.end());
     std::sort(conservedVariables.begin(), conservedVariables.end());
     conservedVariables.erase(std::unique(conservedVariables.begin(), conservedVariables.end()), conservedVariables.end());
-    if (conservedVariables.empty()) {
-        conservedVariables = {"resource_stock_r", "surface_water_w"};
-    }
 
     for (const auto& subsystem : ordered) {
         subsystem->preStep(profile, stepIndex);
@@ -903,12 +900,11 @@ StepDiagnostics Scheduler::step(
 
     diagnostics.stability.conservationResidualWater = 0.0;
     diagnostics.stability.conservationResidualResources = 0.0;
-    for (const auto& residual : diagnostics.stability.conservationResiduals) {
-        if (residual.variableName == "surface_water_w") {
-            diagnostics.stability.conservationResidualWater = residual.residual;
-        } else if (residual.variableName == "resource_stock_r") {
-            diagnostics.stability.conservationResidualResources = residual.residual;
-        }
+    if (!diagnostics.stability.conservationResiduals.empty()) {
+        diagnostics.stability.conservationResidualWater = diagnostics.stability.conservationResiduals.front().residual;
+    }
+    if (diagnostics.stability.conservationResiduals.size() > 1) {
+        diagnostics.stability.conservationResidualResources = diagnostics.stability.conservationResiduals[1].residual;
     }
 
     return diagnostics;
