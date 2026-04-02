@@ -38,7 +38,6 @@ struct InitializationRequest {
     std::optional<std::string> grayTargetAOverride;
     std::optional<std::string> grayTargetBOverride;
     std::optional<std::string> wavesTargetOverride;
-    bool allowKeywordFallback = false;
 };
 
 struct BindingDecision {

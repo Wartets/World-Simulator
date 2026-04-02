@@ -134,9 +134,7 @@ std::optional<std::size_t> findVariableIndexById(const ModelVariableCatalog& cat
 
 float scoreCandidate(
     const VariableDescriptor& variable,
-    const std::vector<std::string>& semanticHints,
-    const std::vector<std::string>& legacyKeywords,
-    const bool allowLegacyKeywordFallback) {
+    const std::vector<std::string>& semanticHints) {
     if (variable.support != "cell") {
         return -std::numeric_limits<float>::infinity();
     }
@@ -175,14 +173,6 @@ float scoreCandidate(
         }
     }
 
-    if (allowLegacyKeywordFallback && !hasSemanticHit) {
-        for (const auto& keyword : legacyKeywords) {
-            if (idLower.find(keyword) != std::string::npos) {
-                score += 0.35f;
-            }
-        }
-    }
-
     const std::string typeLower = toLowerCopy(variable.type);
     if (typeLower == "u32" || typeLower == "i32") {
         score += 0.2f;
@@ -198,8 +188,6 @@ float scoreCandidate(
 std::optional<std::string> pickBestCandidate(
     const ModelVariableCatalog& catalog,
     const std::vector<std::string>& semanticHints,
-    const std::vector<std::string>& legacyKeywords,
-    const bool allowLegacyKeywordFallback,
     const float minimumScore,
     const std::optional<std::string>& exclude = std::nullopt) {
     std::vector<std::pair<float, std::string>> scored;
@@ -213,7 +201,7 @@ std::optional<std::string> pickBestCandidate(
             continue;
         }
         scored.emplace_back(
-            scoreCandidate(variable, semanticHints, legacyKeywords, allowLegacyKeywordFallback),
+            scoreCandidate(variable, semanticHints),
             variable.id);
     }
 
@@ -241,8 +229,6 @@ void addDecisionFromOverrideOrResolver(
     const std::string& key,
     const std::optional<std::string>& overrideValue,
     const std::vector<std::string>& semanticHints,
-    const std::vector<std::string>& legacyKeywords,
-    const bool allowLegacyKeywordFallback,
     const std::optional<std::string>& exclude = std::nullopt) {
     BindingDecision decision;
     decision.bindingKey = key;
@@ -276,27 +262,21 @@ void addDecisionFromOverrideOrResolver(
         return;
     }
 
-    const float minimumScore = allowLegacyKeywordFallback ? 0.35f : 0.75f;
+    const float minimumScore = 0.75f;
     const auto picked = pickBestCandidate(
         catalog,
         semanticHints,
-        legacyKeywords,
-        allowLegacyKeywordFallback,
         minimumScore,
         exclude);
     if (picked.has_value()) {
         decision.variableId = *picked;
         decision.resolved = true;
-        decision.confidence = allowLegacyKeywordFallback ? 0.65f : 0.85f;
-        decision.rationale = allowLegacyKeywordFallback
-            ? "auto_resolved_catalog_with_legacy_keyword_fallback"
-            : "auto_resolved_from_catalog_metadata";
+        decision.confidence = 0.85f;
+        decision.rationale = "auto_resolved_from_catalog_metadata";
     } else {
         decision.resolved = false;
         decision.confidence = 0.0f;
-        decision.rationale = allowLegacyKeywordFallback
-            ? "no_candidate_available_with_legacy_keyword_fallback"
-            : "no_candidate_available_without_legacy_keyword_fallback";
+        decision.rationale = "no_candidate_available";
         plan.issues.push_back(BindingIssue{
             "binding.missing_candidate",
             "No candidate variable available for binding '" + key + "'.",
@@ -718,8 +698,7 @@ InitializationBindingPlan buildBindingPlan(
                 "conway.target_variable",
                 request.conwayTargetOverride,
                 {"alive", "binary", "state", "vegetation", "biomass"},
-                {"living", "alive", "state", "cell", "binary", "veg", "bio"},
-                request.allowKeywordFallback);
+                {});
             break;
 
         case InitialConditionType::GrayScott: {
@@ -729,8 +708,7 @@ InitializationBindingPlan buildBindingPlan(
                 "gray_scott.target_variable_a",
                 request.grayTargetAOverride,
                 {"gray_scott_u", "reactant_u", "resource", "concentration"},
-                {"u_", "ucon", "resource", "stock", "conc", "density", "nitrate"},
-                request.allowKeywordFallback);
+                {});
 
             std::optional<std::string> exclude;
             if (!plan.decisions.empty() && plan.decisions.front().resolved) {
@@ -743,8 +721,7 @@ InitializationBindingPlan buildBindingPlan(
                 "gray_scott.target_variable_b",
                 request.grayTargetBOverride,
                 {"gray_scott_v", "reactant_v", "biomass", "vegetation", "concentration"},
-                {"v_", "vcon", "vegetation", "phyto", "bio", "oxygen", "detritus"},
-                request.allowKeywordFallback,
+                {},
                 exclude);
 
             if (plan.decisions.size() >= 2 &&
@@ -766,8 +743,7 @@ InitializationBindingPlan buildBindingPlan(
                 "waves.target_variable",
                 request.wavesTargetOverride,
                 {"water", "height", "surface", "wave", "elevation"},
-                {"water", "height", "surface", "moisture", "salinity", "level"},
-                request.allowKeywordFallback);
+                {});
             break;
 
         case InitialConditionType::Terrain:
