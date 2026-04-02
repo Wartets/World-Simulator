@@ -32,29 +32,12 @@ std::uint64_t ModelProfile::fingerprint() const noexcept {
 
 const std::vector<std::string>& ProfileResolver::requiredSubsystems() noexcept {
     static const std::vector<std::string> names = [] {
-        std::vector<std::string> resolved;
-        for (const auto& subsystem : makePhase4Subsystems()) {
-            if (!subsystem) {
-                continue;
-            }
-            const std::string subsystemName = subsystem->name();
-            if (!subsystemName.empty()) {
-                resolved.push_back(subsystemName);
-            }
-        }
-        resolved.push_back("temporal");
-        std::sort(resolved.begin(), resolved.end());
-        resolved.erase(std::unique(resolved.begin(), resolved.end()), resolved.end());
-        return resolved;
+        return std::vector<std::string>{};
     }();
     return names;
 }
 
 ModelProfile ProfileResolver::resolve(const ProfileResolverInput& input) const {
-    if (input.requestedSubsystemTiers.empty()) {
-        throw std::invalid_argument("ProfileResolver requires at least one subsystem profile entry");
-    }
-
     ModelProfile profile;
     for (const auto& [subsystemName, tier] : input.requestedSubsystemTiers) {
         if (subsystemName.empty()) {
@@ -65,10 +48,6 @@ ModelProfile ProfileResolver::resolve(const ProfileResolverInput& input) const {
     profile.compatibilityAssumptions = input.compatibilityAssumptions;
     profile.conservedVariables = input.conservedVariables;
 
-    if (profile.subsystemTiers.empty()) {
-        throw std::invalid_argument("ProfileResolver requires at least one non-empty subsystem profile entry");
-    }
-
     profile.conservedVariables.erase(
         std::remove_if(profile.conservedVariables.begin(), profile.conservedVariables.end(), [](const std::string& variable) {
             return variable.empty();
@@ -78,10 +57,6 @@ ModelProfile ProfileResolver::resolve(const ProfileResolverInput& input) const {
     profile.conservedVariables.erase(
         std::unique(profile.conservedVariables.begin(), profile.conservedVariables.end()),
         profile.conservedVariables.end());
-
-    if (profile.compatibilityAssumptions.empty()) {
-        throw std::invalid_argument("ProfileResolver requires at least one explicit compatibility assumption");
-    }
 
     return profile;
 }

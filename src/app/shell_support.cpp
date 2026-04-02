@@ -231,10 +231,8 @@ std::vector<ModelCatalogEntry> listAvailableModels(const std::filesystem::path& 
 }
 
 ProfileResolverInput buildProfileInput(const ModelTier tier) {
+    (void)tier;
     ProfileResolverInput input;
-    for (const auto& subsystem : ProfileResolver::requiredSubsystems()) {
-        input.requestedSubsystemTiers[subsystem] = tier;
-    }
     input.compatibilityAssumptions = {
         "interactive_shell",
         "runtime_manual_control"

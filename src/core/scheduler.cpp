@@ -20,13 +20,6 @@ void ISubsystem::postStep(const ModelProfile&, const std::uint64_t) {}
 
 namespace {
 
-bool matchesPhase(const ModelTier tier, const std::uint32_t phaseIndex) {
-    if (phaseIndex == 0u) {
-        return tier == ModelTier::A;
-    }
-    return tier == ModelTier::B || tier == ModelTier::C;
-}
-
 std::vector<std::string> lexicalNamesFromSubsystems(const std::vector<std::shared_ptr<ISubsystem>>& subsystems) {
     std::vector<std::string> names;
     names.reserve(subsystems.size());
@@ -38,26 +31,6 @@ std::vector<std::string> lexicalNamesFromSubsystems(const std::vector<std::share
     std::sort(names.begin(), names.end());
     names.erase(std::unique(names.begin(), names.end()), names.end());
     return names;
-}
-
-ReproducibilityClass classifyReproducibility(const ModelProfile& profile) {
-    std::size_t cTierCount = 0;
-    for (const auto& [subsystemName, tier] : profile.subsystemTiers) {
-        if (subsystemName == "temporal") {
-            continue;
-        }
-        if (tier == ModelTier::C) {
-            cTierCount += 1;
-        }
-    }
-
-    if (cTierCount == 0) {
-        return ReproducibilityClass::Strict;
-    }
-    if (cTierCount <= 3) {
-        return ReproducibilityClass::BoundedDivergence;
-    }
-    return ReproducibilityClass::Exploratory;
 }
 
 using FieldSnapshot = std::unordered_map<std::string, std::vector<float>>;
@@ -504,7 +477,6 @@ StepDiagnostics Scheduler::step(
     }
 
     StepDiagnostics diagnostics;
-    diagnostics.reproducibilityClass = classifyReproducibility(profile);
     diagnostics.executionPolicyMode = executionPolicyMode_;
     diagnostics.orderingLog.push_back("pipeline:begin_step_contracts");
 
@@ -518,6 +490,14 @@ StepDiagnostics Scheduler::step(
         conservedVariables.end());
     std::sort(conservedVariables.begin(), conservedVariables.end());
     conservedVariables.erase(std::unique(conservedVariables.begin(), conservedVariables.end()), conservedVariables.end());
+
+    if (ordered.size() <= 4 && conservedVariables.size() <= 1) {
+        diagnostics.reproducibilityClass = ReproducibilityClass::Strict;
+    } else if (ordered.size() <= 8 && conservedVariables.size() <= 3) {
+        diagnostics.reproducibilityClass = ReproducibilityClass::BoundedDivergence;
+    } else {
+        diagnostics.reproducibilityClass = ReproducibilityClass::Exploratory;
+    }
 
     for (const auto& subsystem : ordered) {
         subsystem->preStep(profile, stepIndex);
@@ -705,25 +685,16 @@ StepDiagnostics Scheduler::step(
     };
 
     auto runPhasedPass = [&]() {
-        for (std::uint32_t phase = 0; phase < 2; ++phase) {
-            for (const auto& subsystem : ordered) {
-                const auto tierIt = profile.subsystemTiers.find(subsystem->name());
-                const ModelTier tier = tierIt == profile.subsystemTiers.end() ? ModelTier::A : tierIt->second;
-
-                if (!matchesPhase(tier, phase)) {
-                    continue;
-                }
-
-                diagnostics.orderingLog.push_back("phase" + std::to_string(phase) + ":update:" + subsystem->name());
-                attachObserverForSubsystem(stateStore, subsystem);
-                const auto writeSet = effectiveWriteSetFor(subsystem);
-                StateStore::WriteSession session(
-                    stateStore,
-                    subsystem->name(),
-                    std::vector<std::string>(writeSet.begin(), writeSet.end()));
-                subsystem->step(stateStore, session, profile, stepIndex);
-                stateStore.clearAccessObserver();
-            }
+        for (const auto& subsystem : ordered) {
+            diagnostics.orderingLog.push_back("phase0:update:" + subsystem->name());
+            attachObserverForSubsystem(stateStore, subsystem);
+            const auto writeSet = effectiveWriteSetFor(subsystem);
+            StateStore::WriteSession session(
+                stateStore,
+                subsystem->name(),
+                std::vector<std::string>(writeSet.begin(), writeSet.end()));
+            subsystem->step(stateStore, session, profile, stepIndex);
+            stateStore.clearAccessObserver();
         }
     };
 
