@@ -1,4 +1,5 @@
 #include "ws/core/profile.hpp"
+#include "ws/core/subsystems/subsystems.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -30,33 +31,43 @@ std::uint64_t ModelProfile::fingerprint() const noexcept {
 }
 
 const std::vector<std::string>& ProfileResolver::requiredSubsystems() noexcept {
-    static const std::vector<std::string> names = {
-        "generation",
-        "hydrology",
-        "temperature",
-        "humidity",
-        "wind",
-        "climate",
-        "soil",
-        "resources",
-        "vegetation",
-        "events",
-        "temporal"
-    };
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> resolved;
+        for (const auto& subsystem : makePhase4Subsystems()) {
+            if (!subsystem) {
+                continue;
+            }
+            const std::string subsystemName = subsystem->name();
+            if (!subsystemName.empty()) {
+                resolved.push_back(subsystemName);
+            }
+        }
+        resolved.push_back("temporal");
+        std::sort(resolved.begin(), resolved.end());
+        resolved.erase(std::unique(resolved.begin(), resolved.end()), resolved.end());
+        return resolved;
+    }();
     return names;
 }
 
 ModelProfile ProfileResolver::resolve(const ProfileResolverInput& input) const {
-    for (const auto& subsystem : requiredSubsystems()) {
-        if (!input.requestedSubsystemTiers.contains(subsystem)) {
-            throw std::invalid_argument("ProfileResolver missing tier for subsystem: " + subsystem);
-        }
+    if (input.requestedSubsystemTiers.empty()) {
+        throw std::invalid_argument("ProfileResolver requires at least one subsystem profile entry");
     }
 
     ModelProfile profile;
-    profile.subsystemTiers = input.requestedSubsystemTiers;
+    for (const auto& [subsystemName, tier] : input.requestedSubsystemTiers) {
+        if (subsystemName.empty()) {
+            continue;
+        }
+        profile.subsystemTiers.insert_or_assign(subsystemName, tier);
+    }
     profile.compatibilityAssumptions = input.compatibilityAssumptions;
     profile.conservedVariables = input.conservedVariables;
+
+    if (profile.subsystemTiers.empty()) {
+        throw std::invalid_argument("ProfileResolver requires at least one non-empty subsystem profile entry");
+    }
 
     profile.conservedVariables.erase(
         std::remove_if(profile.conservedVariables.begin(), profile.conservedVariables.end(), [](const std::string& variable) {
@@ -67,10 +78,6 @@ ModelProfile ProfileResolver::resolve(const ProfileResolverInput& input) const {
     profile.conservedVariables.erase(
         std::unique(profile.conservedVariables.begin(), profile.conservedVariables.end()),
         profile.conservedVariables.end());
-
-    if (profile.conservedVariables.empty()) {
-        profile.conservedVariables = {"resource_stock_r", "surface_water_w"};
-    }
 
     if (profile.compatibilityAssumptions.empty()) {
         throw std::invalid_argument("ProfileResolver requires at least one explicit compatibility assumption");
