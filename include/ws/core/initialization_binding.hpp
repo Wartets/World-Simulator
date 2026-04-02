@@ -16,6 +16,7 @@ struct VariableDescriptor {
     std::string support;
     std::string type;
     std::string units;
+    std::vector<std::string> tags;
     bool hasDomainMin = false;
     bool hasDomainMax = false;
     float domainMin = 0.0f;
@@ -37,6 +38,7 @@ struct InitializationRequest {
     std::optional<std::string> grayTargetAOverride;
     std::optional<std::string> grayTargetBOverride;
     std::optional<std::string> wavesTargetOverride;
+    bool allowKeywordFallback = false;
 };
 
 struct BindingDecision {

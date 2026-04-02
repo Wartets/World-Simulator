@@ -93,21 +93,14 @@ bool fieldHasTag(
     return false;
 }
 
-int findFieldIndexByTagOrKeyword(
+int findFieldIndexByTag(
     const std::vector<StateStoreSnapshot::FieldPayload>& fields,
     const std::unordered_map<std::string, std::vector<std::string>>& fieldDisplayTags,
-    const std::initializer_list<const char*> preferredTags,
-    const std::initializer_list<const char*> keywords) {
+    const std::initializer_list<const char*> preferredTags) {
     for (int i = 0; i < static_cast<int>(fields.size()); ++i) {
         std::string name = fields[static_cast<std::size_t>(i)].spec.name;
-        const std::string nameLower = toLowerCopy(name);
         if (fieldHasTag(name, preferredTags, fieldDisplayTags)) {
             return i;
-        }
-        for (const char* keyword : keywords) {
-            if (nameLower.find(keyword) != std::string::npos) {
-                return i;
-            }
         }
     }
     return -1;
@@ -264,31 +257,26 @@ DisplayBuffer buildDisplayBufferFromSnapshot(
 
     const auto primary = mergedFieldValues(fields[static_cast<std::size_t>(clampedPrimary)], includeSparseOverlay);
 
-    const int terrainIdx = findFieldIndexByTagOrKeyword(
+    const int terrainIdx = findFieldIndexByTag(
         fields,
         fieldDisplayTags,
-        {"terrain", "elevation", "surface", "height", "altitude"},
-        {"terrain_elevation", "elevation", "terrain", "height", "altitude"});
-    const int waterIdx = findFieldIndexByTagOrKeyword(
+        {"terrain", "elevation", "surface", "height", "altitude"});
+    const int waterIdx = findFieldIndexByTag(
         fields,
         fieldDisplayTags,
-        {"water", "moisture", "hydro", "water_depth"},
-        {"surface_water", "water", "hydro"});
-    const int humidityIdx = findFieldIndexByTagOrKeyword(
+        {"water", "moisture", "hydro", "water_depth"});
+    const int humidityIdx = findFieldIndexByTag(
         fields,
         fieldDisplayTags,
-        {"moisture", "humidity", "humid"},
-        {"humidity_q", "humidity", "humid", "moisture"});
-    const int windUIdx = findFieldIndexByTagOrKeyword(
+        {"moisture", "humidity", "humid"});
+    const int windUIdx = findFieldIndexByTag(
         fields,
         fieldDisplayTags,
-        {"vector_x", "wind_u", "wind"},
-        {"wind_u", "wind"});
-    const int windVIdx = findFieldIndexByTagOrKeyword(
+        {"vector_x", "wind_u", "wind"});
+    const int windVIdx = findFieldIndexByTag(
         fields,
         fieldDisplayTags,
-        {"vector_y", "wind_v", "wind"},
-        {"wind_v"});
+        {"vector_y", "wind_v", "wind"});
 
     const std::vector<float> terrain = (terrainIdx >= 0)
         ? mergedFieldValues(fields[static_cast<std::size_t>(terrainIdx)], includeSparseOverlay)

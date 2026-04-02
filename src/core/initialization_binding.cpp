@@ -36,6 +36,17 @@ std::optional<float> readDomainBound(const json& domain, const char* key) {
     return std::nullopt;
 }
 
+void normalizeStringVector(std::vector<std::string>& values) {
+    values.erase(
+        std::remove_if(values.begin(), values.end(), [](const std::string& value) { return value.empty(); }),
+        values.end());
+    for (auto& value : values) {
+        value = toLowerCopy(value);
+    }
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+}
+
 bool populateCatalogFromModelJson(
     const std::filesystem::path& modelPath,
     const std::string& modelJson,
@@ -66,6 +77,18 @@ bool populateCatalogFromModelJson(
             descriptor.support = variable.contains("support") && variable["support"].is_string() ? variable["support"].get<std::string>() : std::string();
             descriptor.type = variable.contains("type") && variable["type"].is_string() ? variable["type"].get<std::string>() : std::string();
             descriptor.units = variable.contains("units") && variable["units"].is_string() ? variable["units"].get<std::string>() : std::string();
+
+            if (variable.contains("display_tags") && variable["display_tags"].is_array()) {
+                for (const auto& tagValue : variable["display_tags"]) {
+                    if (tagValue.is_string()) {
+                        descriptor.tags.push_back(tagValue.get<std::string>());
+                    }
+                }
+            }
+            if (variable.contains("display_channel") && variable["display_channel"].is_string()) {
+                descriptor.tags.push_back(variable["display_channel"].get<std::string>());
+            }
+            normalizeStringVector(descriptor.tags);
 
             const auto minBound = readDomainBound(variable, "min");
             const auto maxBound = readDomainBound(variable, "max");
@@ -109,26 +132,59 @@ std::optional<std::size_t> findVariableIndexById(const ModelVariableCatalog& cat
     return std::nullopt;
 }
 
-float scoreCandidate(const VariableDescriptor& variable, const std::vector<std::string>& keywords) {
+float scoreCandidate(
+    const VariableDescriptor& variable,
+    const std::vector<std::string>& semanticHints,
+    const std::vector<std::string>& legacyKeywords,
+    const bool allowLegacyKeywordFallback) {
     if (variable.support != "cell") {
         return -std::numeric_limits<float>::infinity();
     }
 
     float score = 0.0f;
+    bool hasSemanticHit = false;
+
     if (variable.role == "state") {
-        score += 2.5f;
+        score += 2.0f;
     } else if (variable.role == "derived") {
-        score += 0.5f;
+        score += 0.3f;
+    } else if (variable.role == "parameter") {
+        score -= 1.5f;
     }
 
     const std::string idLower = toLowerCopy(variable.id);
-    for (const auto& keyword : keywords) {
-        if (idLower.find(keyword) != std::string::npos) {
-            score += 1.0f;
+
+    for (const auto& semanticHint : semanticHints) {
+        if (semanticHint.empty()) {
+            continue;
+        }
+
+        const bool roleMatch = (toLowerCopy(variable.role) == semanticHint);
+        const bool tagMatch = std::binary_search(variable.tags.begin(), variable.tags.end(), semanticHint);
+        const bool idExactMatch = (idLower == semanticHint);
+        const bool idContainsMatch = (idLower.find(semanticHint) != std::string::npos);
+
+        if (roleMatch || tagMatch || idExactMatch) {
+            hasSemanticHit = true;
+            score += 2.2f;
+            continue;
+        }
+        if (idContainsMatch) {
+            hasSemanticHit = true;
+            score += 0.8f;
         }
     }
 
-    if (variable.type == "u32" || variable.type == "i32") {
+    if (allowLegacyKeywordFallback && !hasSemanticHit) {
+        for (const auto& keyword : legacyKeywords) {
+            if (idLower.find(keyword) != std::string::npos) {
+                score += 0.35f;
+            }
+        }
+    }
+
+    const std::string typeLower = toLowerCopy(variable.type);
+    if (typeLower == "u32" || typeLower == "i32") {
         score += 0.2f;
     }
 
@@ -141,7 +197,10 @@ float scoreCandidate(const VariableDescriptor& variable, const std::vector<std::
 
 std::optional<std::string> pickBestCandidate(
     const ModelVariableCatalog& catalog,
-    const std::vector<std::string>& keywords,
+    const std::vector<std::string>& semanticHints,
+    const std::vector<std::string>& legacyKeywords,
+    const bool allowLegacyKeywordFallback,
+    const float minimumScore,
     const std::optional<std::string>& exclude = std::nullopt) {
     std::vector<std::pair<float, std::string>> scored;
     scored.reserve(catalog.variables.size());
@@ -153,7 +212,9 @@ std::optional<std::string> pickBestCandidate(
         if (exclude.has_value() && variable.id == *exclude) {
             continue;
         }
-        scored.emplace_back(scoreCandidate(variable, keywords), variable.id);
+        scored.emplace_back(
+            scoreCandidate(variable, semanticHints, legacyKeywords, allowLegacyKeywordFallback),
+            variable.id);
     }
 
     if (scored.empty()) {
@@ -167,6 +228,10 @@ std::optional<std::string> pickBestCandidate(
         return lhs.second < rhs.second;
     });
 
+    if (scored.front().first < minimumScore) {
+        return std::nullopt;
+    }
+
     return scored.front().second;
 }
 
@@ -175,7 +240,9 @@ void addDecisionFromOverrideOrResolver(
     const ModelVariableCatalog& catalog,
     const std::string& key,
     const std::optional<std::string>& overrideValue,
-    const std::vector<std::string>& keywords,
+    const std::vector<std::string>& semanticHints,
+    const std::vector<std::string>& legacyKeywords,
+    const bool allowLegacyKeywordFallback,
     const std::optional<std::string>& exclude = std::nullopt) {
     BindingDecision decision;
     decision.bindingKey = key;
@@ -209,16 +276,27 @@ void addDecisionFromOverrideOrResolver(
         return;
     }
 
-    const auto picked = pickBestCandidate(catalog, keywords, exclude);
+    const float minimumScore = allowLegacyKeywordFallback ? 0.35f : 0.75f;
+    const auto picked = pickBestCandidate(
+        catalog,
+        semanticHints,
+        legacyKeywords,
+        allowLegacyKeywordFallback,
+        minimumScore,
+        exclude);
     if (picked.has_value()) {
         decision.variableId = *picked;
         decision.resolved = true;
-        decision.confidence = 0.75f;
-        decision.rationale = "auto_resolved_from_model_catalog";
+        decision.confidence = allowLegacyKeywordFallback ? 0.65f : 0.85f;
+        decision.rationale = allowLegacyKeywordFallback
+            ? "auto_resolved_catalog_with_legacy_keyword_fallback"
+            : "auto_resolved_from_catalog_metadata";
     } else {
         decision.resolved = false;
         decision.confidence = 0.0f;
-        decision.rationale = "no_candidate_available";
+        decision.rationale = allowLegacyKeywordFallback
+            ? "no_candidate_available_with_legacy_keyword_fallback"
+            : "no_candidate_available_without_legacy_keyword_fallback";
         plan.issues.push_back(BindingIssue{
             "binding.missing_candidate",
             "No candidate variable available for binding '" + key + "'.",
@@ -639,7 +717,9 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "conway.target_variable",
                 request.conwayTargetOverride,
-                {"living", "alive", "state", "cell", "binary", "veg", "bio"});
+                {"alive", "binary", "state", "vegetation", "biomass"},
+                {"living", "alive", "state", "cell", "binary", "veg", "bio"},
+                request.allowKeywordFallback);
             break;
 
         case InitialConditionType::GrayScott: {
@@ -648,7 +728,9 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "gray_scott.target_variable_a",
                 request.grayTargetAOverride,
-                {"u_", "ucon", "resource", "stock", "conc", "density", "nitrate"});
+                {"gray_scott_u", "reactant_u", "resource", "concentration"},
+                {"u_", "ucon", "resource", "stock", "conc", "density", "nitrate"},
+                request.allowKeywordFallback);
 
             std::optional<std::string> exclude;
             if (!plan.decisions.empty() && plan.decisions.front().resolved) {
@@ -660,7 +742,9 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "gray_scott.target_variable_b",
                 request.grayTargetBOverride,
+                {"gray_scott_v", "reactant_v", "biomass", "vegetation", "concentration"},
                 {"v_", "vcon", "vegetation", "phyto", "bio", "oxygen", "detritus"},
+                request.allowKeywordFallback,
                 exclude);
 
             if (plan.decisions.size() >= 2 &&
@@ -681,7 +765,9 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "waves.target_variable",
                 request.wavesTargetOverride,
-                {"water", "height", "surface", "moisture", "salinity", "level"});
+                {"water", "height", "surface", "wave", "elevation"},
+                {"water", "height", "surface", "moisture", "salinity", "level"},
+                request.allowKeywordFallback);
             break;
 
         case InitialConditionType::Terrain:
