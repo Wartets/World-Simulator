@@ -1,1 +1,339 @@
 # World-Simulator
+
+A generalized 2D/3D physics simulation engine for interactive, real-time, grid-based numerical simulations.
+
+## Overview
+
+World-Simulator (also known as **Symbiose**) is a standalone, highly portable, and interactive software application dedicated to simulating complex physical systems in two dimensions (with potential extension to higher dimensions). The core principle of this project is **absolute decoupling** between simulation logic (the "Model") and the dynamic system state data (the "World State").
+
+This separation allows users to transport, share, and reproduce complex simulation experiments using only two files: a physical model definition file (`.simmodel`) and a binary state dump file. Whether you're simulating weather patterns, ecological systems, fluid dynamics, or cellular automata, World-Simulator provides a unified, extensible framework.
+
+### Target Audiences
+
+- **Researchers and Scientists**: A testing environment for physical, ecological, economic, and other hypotheses
+- **Educators and Students**: A pedagogical tool for interactively visualizing complex phenomena  
+- **Game Developers**: A simulation backend for procedural content generation and physics visualization
+- **Engineers and Modelers**: A rapid prototyping platform for computational models
+
+---
+
+## Features
+
+### Core Capabilities
+
+- **Multi-Physics Simulation**: Support for diverse simulation types including fluid dynamics, reaction-diffusion systems, ecological models, atmospheric science, urban climate, and more
+- **Interactive Runtime**: Real-time parameter modification, perturbation injection, and live visualization
+- **Model Editor**: Visual and text-based editing for creating and modifying simulation models
+- **World Generator**: Procedural terrain and state initialization using Perlin/Simplex noise
+- **Checkpoints & Replay**: Full state persistence with time-travel capabilities
+- **Live Patching**: Modify simulation parameters and inject perturbations during runtime
+
+### Technical Features
+
+- **Strictly Typed IR**: High-performance Intermediate Representation for simulation logic
+- **Domain Constraints**: Physical validity checks and automatic clamping
+- **Multiple Time Integrators**: Explicit Euler, RK4, Verlet, Crank-Nicolson, and more
+- **Spatial Operators**: Laplacian, gradient, advection, diffusion with configurable schemes
+- **Deterministic Execution**: Reproducible results across runs and platforms
+- **GPU-Ready Architecture**: Designed for SIMD and GPU acceleration
+
+### Built-in Models
+
+The project ships with several pre-configured simulation models:
+
+- **Conway's Game of Life** - Classic cellular automaton
+- **Gray-Scott Reaction-Diffusion** - Chemical pattern formation
+- **Environmental Model 2D** - Atmosphere, hydrology, and biosphere
+- **Coastal Biogeochemistry** - Estuarine ecosystem and transport
+- **Urban Microclimate** - City-scale thermo-hydrologic dynamics
+
+---
+
+## Installation
+
+### Prerequisites
+
+| Requirement | Minimum Version | Notes |
+|-------------|:---------------:|-------|
+| C++ Compiler | C++20 capable | GCC 11+, Clang 15+, MSVC 2022+ |
+| CMake | 3.20+ | Build system |
+| OpenGL | 3.3+ | For GUI rendering |
+| GLFW | 3.4+ | Window management (fetched) |
+| Git | Any recent | For version control |
+
+### Platform Support
+
+- **Windows 10/11** (Primary - tested)
+- **Linux** (Supported)
+- **macOS** (Supported, requires X11 or Cocoa)
+
+### Build Instructions
+
+#### 1. Clone the Repository
+
+```bash
+git clone https://github.com/wartets/World-Simulator.git
+cd World-Simulator
+```
+
+#### 2. Create Build Directory
+
+```bash
+mkdir build && cd build
+```
+
+#### 3. Configure and Build
+
+```bash
+# On Windows (CMake GUI or command line)
+cmake .. -G "Visual Studio 17 2022" -A x64
+cmake --build . --config Release
+
+# On Linux/macOS
+cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build . -j$(nproc)
+```
+
+#### 4. (Optional) Enable OpenMP Acceleration
+
+For multi-threaded simulation performance:
+
+```bash
+cmake .. -DWS_ENABLE_OPENMP=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build . -j$(nproc)
+```
+
+#### 5. Run the Executables
+
+After building, you will have:
+
+- `world_sim` - Command-line simulation runtime
+- `world_sim_gui` - Interactive GUI application
+
+---
+
+## Quick Start
+
+### Running the GUI
+
+Launch the graphical interface:
+
+```bash
+# Windows
+./build/Release/world_sim_gui.exe
+
+# Linux/macOS
+./build/world_sim_gui
+```
+
+### Running from Command Line
+
+```bash
+# Run with a specific model
+./build/world_sim --model models/game_of_life_model.simmodel --grid 128x128
+
+# Run the environmental model
+./build/world_sim --model models/environmental_model_2d.simmodel --steps 1000
+```
+
+### Creating a New Simulation
+
+1. Open `world_sim_gui`
+2. Select **Model Editor** from the main menu
+3. Create new variables (state, parameter, derived, forcing)
+4. Define interactions between variables
+5. Save the model as `my_model.simmodel`
+6. Generate a world using the **World Generator**
+7. Run and observe the simulation
+
+---
+
+## Simulation Models
+
+### Available Models
+
+| Model | Description | Complexity |
+|-------|-------------|:----------:|
+| [Game of Life](models/game_of_life_model.simmodel/) | Conway's classic cellular automaton | Tier 1 |
+| [Gray-Scott RD](models/gray_scott_reaction_diffusion.simmodel/) | Chemical reaction-diffusion patterns | Tier 2 |
+| [Environmental 2D](models/environmental_model_2d.simmodel/) | Atmosphere, hydrology, biosphere | Tier 3 |
+| [Coastal Biogeochemistry](models/coastal_biogeochemistry_transport.simmodel/) | Estuarine ecosystem dynamics | Tier 3 |
+| [Urban Microclimate](models/urban_microclimate_resilience.simmodel/) | City-scale climate modeling | Tier 4 |
+
+### Model Structure
+
+Each `.simmodel` package contains:
+
+- `model.json` - Variable definitions and stage graph
+- `logic.ir` - Intermediate Representation computations
+- `metadata.json` - Model metadata and author information
+- `version.json` - Format and engine version compatibility
+
+### Creating Custom Models
+
+Define your simulation by specifying:
+
+1. **Grid Configuration**: Dimensions, topology, boundary conditions
+2. **Variables**: State, parameter, derived, and forcing types
+3. **Domains**: Physical validity constraints (min/max intervals)
+4. **Stages**: Ordered execution stages for one timestep
+5. **Interactions**: Mathematical logic in IR format
+
+Example variable definition:
+
+```json
+{
+  "id": "temperature",
+  "role": "state",
+  "support": "cell",
+  "type": "f32",
+  "units": "K",
+  "domain": "temperature_physical"
+}
+```
+
+Example interaction:
+
+```cpp
+// Simple diffusion interaction
+@interaction(diffuse_temperature)
+func diffuse_temperature() {
+    %temp = Load("temperature", 0, 0)
+    %lap = Laplacian("temperature")
+    %diff_coeff = GlobalLoad("diffusivity")
+    %dt = GlobalLoad("dt")
+    %change = Mul(%diff_coeff, %lap)
+    %delta = Mul(%change, %dt)
+    Store("temperature", Add(%temp, %delta))
+}
+```
+
+---
+
+## Usage
+
+### GUI Controls
+
+| Action | Control |
+|-------:|:--------|
+| Play/Pause | Space bar or button |
+| Step Forward | Right arrow |
+| Step Backward | Left arrow |
+| Time Jump | Timeline slider |
+| Pan View | Middle mouse drag |
+| Zoom | Scroll wheel |
+| Paint Tool | Left click + drag |
+| Select Region | Ctrl + drag |
+
+### Command-Line Options
+
+```bash
+world_sim [OPTIONS]
+
+Options:
+  --model <path>           Path to .simmodel file
+  --world <path>           Path to world/state file
+  --grid <WxH>             Grid dimensions (e.g., 256x256)
+  --steps <N>              Number of steps to run
+  --output <path>          Output checkpoint file
+  --profile <name>         Runtime profile to use
+  --verbose                Enable verbose logging
+  --help                   Show this help message
+```
+
+### Parameter Modification
+
+During runtime, you can:
+
+- **Modify global parameters**: Double-click parameter in the panel
+- **Paint cell values**: Select paint tool and draw on grid
+- **Inject perturbations**: Define forcing regions with the perturbation tool
+- **Create checkpoints**: Save state at any timestep for later replay
+
+---
+
+## Architecture
+
+### Key Components
+
+```
+World-Simulator/
+├── src/
+│   ├── core/          # Simulation engine (IR, scheduler, runtime)
+│   ├── app/           # High-level application (shell, storage)
+│   └── gui/           # Graphical user interface
+├── include/ws/        # Public API headers
+├── models/            # Built-in simulation models
+└── docs/              # Documentation
+```
+
+### Design Principles
+
+1. **Model-State Separation**: Models define rules; state holds data
+2. **Stage-Based Execution**: Ordered computation stages per timestep
+3. **Double Buffering**: Read/write state isolation for parallelism
+4. **Type Safety**: Strict typing in IR prevents runtime errors
+5. **Optimized IR**: Compilation to SIMD/GPU-native code
+
+### Technical Stack
+
+- **Language**: C++20
+- **Build System**: CMake 3.20+
+- **UI Framework**: Dear ImGui
+- **Graphics**: OpenGL 3.3+
+- **JSON Parsing**: nlohmann/json
+- **Schema**: FlatBuffers
+- **Compression**: miniz
+
+---
+
+## Contributing
+
+Contributions are welcome! Please read our guidelines before submitting.
+
+### How to Contribute
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
+3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
+4. **Push** to the branch (`git push origin feature/amazing-feature`)
+5. **Open** a Pull Request
+
+### Contribution Areas
+
+- New simulation model implementations
+- Performance optimizations
+- GUI improvements and new visualizations
+- Documentation improvements
+- Bug fixes and test coverage
+- Platform support enhancements
+
+### Coding Standards
+
+- Follow C++20 best practices
+- Use meaningful variable and function names
+- Add documentation for new features
+- Ensure cross-platform compatibility
+- Test thoroughly before submitting
+
+---
+
+## License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Acknowledgments
+
+### Dependencies
+
+World-Simulator uses the following open-source libraries:
+
+- **[Dear ImGui](https://github.com/ocornut/imgui)** - Bloat-free immediate mode GUI
+- **[GLFW](https://www.glfw.org/)** - Window and input management
+- **[nlohmann/json](https://github.com/nlohmann/json)** - JSON parsing
+- **[FlatBuffers](https://google.github.io/flatbuffers/)** - Schema-based serialization
+- **[miniz](https://github.com/richgel999/miniz)** - ZIP file handling
+- **[Google Test](https://google.github.io/googletest/)** - Unit testing framework
+- **[CMake](https://cmake.org/)** - Build system
