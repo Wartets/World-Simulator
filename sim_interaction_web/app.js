@@ -65,6 +65,7 @@ const EDGE_COLORS = {
     },
 };
 let graphContainer = null;
+let graphLoader = null;
 let countsLabel = null;
 let selectionTitle = null;
 let selectionSubtitle = null;
@@ -72,6 +73,7 @@ let detailContent = null;
 
 function initializeDOMReferences() {
     graphContainer = document.getElementById("graph");
+    graphLoader = document.getElementById("graphLoader");
     countsLabel = document.getElementById("countsLabel");
     selectionTitle = document.getElementById("selectionTitle");
     selectionSubtitle = document.getElementById("selectionSubtitle");
@@ -79,10 +81,23 @@ function initializeDOMReferences() {
     
     console.log("DOM references initialized:", {
         graphContainer: !!graphContainer,
+        graphLoader: !!graphLoader,
         countsLabel: !!countsLabel,
         selectionTitle: !!selectionTitle,
         detailContent: !!detailContent
     });
+}
+
+function showGraphLoader() {
+    if (graphLoader) {
+        graphLoader.classList.add("visible");
+    }
+}
+
+function hideGraphLoader() {
+    if (graphLoader) {
+        graphLoader.classList.remove("visible");
+    }
 }
 
 function escapeHtml(value) {
@@ -879,6 +894,9 @@ async function initialize() {
                     return;
                 }
                 
+                // Show loading indicator
+                showGraphLoader();
+                
                 try {
                     console.log("Loading interaction data for:", newModelId);
                     await loadInteractionData(newModelId);
@@ -897,6 +915,9 @@ async function initialize() {
                     detailContent.innerHTML = `
                         <div class="empty-state">${escapeHtml(error.message)}</div>
                     `;
+                } finally {
+                    // Hide loading indicator when done (success or error)
+                    hideGraphLoader();
                 }
             });
         }
