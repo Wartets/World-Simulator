@@ -105,23 +105,33 @@ struct Node {
     // Get port position in world space
     ImVec2 getPortWorldPosition(const Port& port) const {
         const ImVec2 center(position.x + size.x * 0.5f, position.y + size.y * 0.5f);
-        const float radius = std::max(24.0f, 0.5f * std::min(size.x, size.y) - 8.0f);
+        const float half_w = std::max(24.0f, size.x * 0.5f - 6.0f);
+        const float half_h = std::max(14.0f, size.y * 0.5f - 6.0f);
+        const float shape_n = 4.0f; // superellipse exponent ~ rounded rectangle
         const std::size_t hash = std::hash<std::string>{}(port.name + "|" + port.variable_id + (port.is_input ? "|in" : "|out"));
         const float hash01 = static_cast<float>(hash & 0xFFFFu) / 65535.0f;
         const float angle = hash01 * 6.28318530718f;
-        return ImVec2(center.x + std::cos(angle) * radius,
-                      center.y + std::sin(angle) * radius);
+        const float dx = std::cos(angle);
+        const float dy = std::sin(angle);
+        const float norm = std::pow(std::pow(std::fabs(dx) / half_w, shape_n) +
+                                    std::pow(std::fabs(dy) / half_h, shape_n),
+                                    1.0f / shape_n);
+        const float scale = (norm > 0.000001f) ? (1.0f / norm) : 1.0f;
+        return ImVec2(center.x + dx * scale,
+                      center.y + dy * scale);
     }
 
     ImVec2 getConnectionAnchorWorldPosition(const ImVec2& other_center) const {
         const ImVec2 center(position.x + size.x * 0.5f, position.y + size.y * 0.5f);
         const float dx = other_center.x - center.x;
         const float dy = other_center.y - center.y;
-        const float rx = std::max(20.0f, size.x * 0.5f - 4.0f);
-        const float ry = std::max(20.0f, size.y * 0.5f - 4.0f);
-        const float sx = std::max(0.001f, std::fabs(dx) / rx);
-        const float sy = std::max(0.001f, std::fabs(dy) / ry);
-        const float scale = 1.0f / std::max(sx, sy);
+        const float half_w = std::max(20.0f, size.x * 0.5f - 4.0f);
+        const float half_h = std::max(12.0f, size.y * 0.5f - 4.0f);
+        const float shape_n = 4.0f;
+        const float norm = std::pow(std::pow(std::fabs(dx) / half_w, shape_n) +
+                                    std::pow(std::fabs(dy) / half_h, shape_n),
+                                    1.0f / shape_n);
+        const float scale = (norm > 0.000001f) ? (1.0f / norm) : 1.0f;
         return ImVec2(center.x + dx * scale, center.y + dy * scale);
     }
 };
@@ -203,6 +213,14 @@ private:
     ImVec2 view_offset{0.0f, 0.0f};
     float zoom{1.0f};
     bool needs_fit{true};
+    
+    // Layout relaxation periodic update counter
+    // Allows smooth graph optimization without calling relaxCircularLayout() every frame
+    int layout_relax_counter{0};
+    static constexpr int LAYOUT_RELAX_INTERVAL = 3;  // Update every 3 frames (~50ms at 60fps)
+    static constexpr double LAYOUT_INTERACTION_COOLDOWN_SEC = 0.22;
+    double last_user_interaction_time{-1.0};
+    int repulsion_phase{0};
     
     // Interaction state
     std::string dragging_node_id;

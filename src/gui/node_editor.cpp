@@ -30,6 +30,103 @@ ImVec2 clampLength(const ImVec2& v, float maxLen) {
     return ImVec2(v.x * scale, v.y * scale);
 }
 
+std::string normalizeNodeLabel(const std::string& label) {
+    std::string out;
+    out.reserve(label.size());
+    bool prev_space = false;
+    for (char c : label) {
+        const bool make_space = (c == '-' || c == '_' || c == '/');
+        const char mapped = make_space ? ' ' : c;
+        if (mapped == ' ') {
+            if (!prev_space) {
+                out.push_back(' ');
+            }
+            prev_space = true;
+        } else {
+            out.push_back(mapped);
+            prev_space = false;
+        }
+    }
+    while (!out.empty() && out.front() == ' ') out.erase(out.begin());
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+std::string wrapLabelToWidth(const std::string& text, float max_width, int max_lines) {
+    if (text.empty() || max_width <= 8.0f || max_lines <= 1) {
+        return text;
+    }
+
+    std::vector<std::string> words;
+    std::string token;
+    for (char c : text) {
+        if (c == ' ' || c == '\n' || c == '\t') {
+            if (!token.empty()) {
+                words.push_back(token);
+                token.clear();
+            }
+        } else {
+            token.push_back(c);
+        }
+    }
+    if (!token.empty()) {
+        words.push_back(token);
+    }
+    if (words.empty()) {
+        return text;
+    }
+
+    std::vector<std::string> lines;
+    std::string current;
+    for (std::size_t i = 0; i < words.size(); ++i) {
+        const std::string candidate = current.empty() ? words[i] : (current + " " + words[i]);
+        if (ImGui::CalcTextSize(candidate.c_str()).x <= max_width || current.empty()) {
+            current = candidate;
+            continue;
+        }
+
+        lines.push_back(current);
+        current = words[i];
+        if (static_cast<int>(lines.size()) >= max_lines - 1) {
+            break;
+        }
+    }
+
+    if (!current.empty()) {
+        lines.push_back(current);
+    }
+
+    if (static_cast<int>(lines.size()) > max_lines) {
+        lines.resize(static_cast<std::size_t>(max_lines));
+    }
+    if (lines.empty()) {
+        return text;
+    }
+
+    std::string wrapped;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        wrapped += lines[i];
+        if (i + 1 < lines.size()) {
+            wrapped += '\n';
+        }
+    }
+    return wrapped;
+}
+
+const char* nodeSymbol(ws::gui::NodeType type) {
+    switch (type) {
+        case ws::gui::NodeType::GlobalVariable: return "G";
+        case ws::gui::NodeType::CellVariable: return "C";
+        case ws::gui::NodeType::Parameter: return "P";
+        case ws::gui::NodeType::Derived: return "D";
+        case ws::gui::NodeType::Equation: return "Eq";
+        case ws::gui::NodeType::Operator: return "Op";
+        case ws::gui::NodeType::Stage: return "S";
+        case ws::gui::NodeType::Domain: return "Dm";
+    }
+    return "?";
+}
+
 ImVec2 normalizedOr(const ImVec2& v, const ImVec2& fallback) {
     const float lenSq = v.x * v.x + v.y * v.y;
     if (lenSq <= 0.000001f) {
@@ -37,6 +134,94 @@ ImVec2 normalizedOr(const ImVec2& v, const ImVec2& fallback) {
     }
     const float invLen = 1.0f / std::sqrt(lenSq);
     return ImVec2(v.x * invLen, v.y * invLen);
+}
+
+float dot(const ImVec2& a, const ImVec2& b) {
+    return a.x * b.x + a.y * b.y;
+}
+
+ImVec2 superellipsePoint(const ws::gui::Node& node, float angle, float inset = 4.0f) {
+    const ImVec2 center(node.position.x + node.size.x * 0.5f, node.position.y + node.size.y * 0.5f);
+    const float half_w = std::max(20.0f, node.size.x * 0.5f - inset);
+    const float half_h = std::max(12.0f, node.size.y * 0.5f - inset);
+    const float n = 8.0f;
+    const float dx = std::cos(angle);
+    const float dy = std::sin(angle);
+    const float norm = std::pow(std::pow(std::fabs(dx) / half_w, n) +
+                                std::pow(std::fabs(dy) / half_h, n),
+                                1.0f / n);
+    const float scale = (norm > 0.000001f) ? (1.0f / norm) : 1.0f;
+    return ImVec2(center.x + dx * scale, center.y + dy * scale);
+}
+
+ImVec2 connectionAnchorForNode(const ws::gui::Node& node,
+                               const ImVec2& other_center,
+                               const ws::gui::Connection& conn,
+                               bool source_side) {
+    const ImVec2 center(node.position.x + node.size.x * 0.5f, node.position.y + node.size.y * 0.5f);
+    const float base_angle = std::atan2(other_center.y - center.y, other_center.x - center.x);
+
+    const std::string hashKey = source_side
+        ? (conn.from_node_id + "|" + conn.from_port_name + "|" + conn.to_node_id + "|" + conn.to_port_name)
+        : (conn.to_node_id + "|" + conn.to_port_name + "|" + conn.from_node_id + "|" + conn.from_port_name);
+    const std::size_t h = std::hash<std::string>{}(hashKey);
+    const float u = static_cast<float>(h & 0xFFFFu) / 65535.0f; // [0,1]
+    const float signed_u = (u * 2.0f) - 1.0f; // [-1,1]
+
+    const float dist = std::sqrt((other_center.x - center.x) * (other_center.x - center.x) +
+                                 (other_center.y - center.y) * (other_center.y - center.y));
+    const float spread = std::clamp(0.16f + 80.0f / std::max(80.0f, dist), 0.18f, 0.52f);
+    const float angle = base_angle + signed_u * spread;
+    return superellipsePoint(node, angle, 4.5f);
+}
+
+ImVec2 connectionAnchorForLabelBox(const ws::gui::Node& node,
+                                    const ImVec2& other_center,
+                                    const ws::gui::Connection& conn,
+                                    bool source_side) {
+    const ImVec2 center(node.position.x + node.size.x * 0.5f, node.position.y + node.size.y * 0.5f);
+    const ImVec2 dx_vec(other_center.x - center.x, other_center.y - center.y);
+    const float dist_to_other = std::sqrt(dx_vec.x * dx_vec.x + dx_vec.y * dx_vec.y);
+    
+    if (dist_to_other < 0.001f) {
+        // If other node is at same position, use default anchor
+        return ImVec2(center.x + node.size.x * 0.5f, center.y);
+    }
+    
+    const float base_angle = std::atan2(dx_vec.y, dx_vec.x);
+    
+    // Hash-based angular spread to distribute multiple edges around the perimeter
+    const std::string hashKey = source_side
+        ? (conn.from_node_id + "|" + conn.from_port_name + "|" + conn.to_node_id + "|" + conn.to_port_name)
+        : (conn.to_node_id + "|" + conn.to_port_name + "|" + conn.from_node_id + "|" + conn.from_port_name);
+    const std::size_t h = std::hash<std::string>{}(hashKey);
+    const float u = static_cast<float>(h & 0xFFFFu) / 65535.0f;
+    const float signed_u = (u * 2.0f) - 1.0f;
+    
+    // Spread angle based on distance to other node
+    const float spread = std::clamp(0.12f + 60.0f / std::max(80.0f, dist_to_other), 0.12f, 0.48f);
+    const float final_angle = base_angle + signed_u * spread;
+    
+    // Exact label dimensions from Node::render():
+    // - max_label_width = scaled_size.x - 18.0f (in world space: node.size.x - 18.0f)
+    // - Vertical: full node height (text centered in entire node)
+    const float half_width = std::max(10.0f, (node.size.x - 18.0f) * 0.5f);
+    const float half_height = node.size.y * 0.5f;
+    
+    // Rounded rectangle perimeter intersection using superellipse (n=4)
+    const float abs_cos = std::fabs(std::cos(final_angle));
+    const float abs_sin = std::fabs(std::sin(final_angle));
+    const float shape_n = 8.0f;
+    
+    const float norm = std::pow(std::pow(abs_cos / half_width, shape_n) +
+                                std::pow(abs_sin / half_height, shape_n),
+                                1.0f / shape_n);
+    
+    const float scale = (norm > 0.000001f) ? (1.0f / norm) : 1.0f;
+    
+    const ImVec2 anchor(center.x + std::cos(final_angle) * scale,
+                       center.y + std::sin(final_angle) * scale);
+    return anchor;
 }
 
 void drawArrowHead(ImDrawList* draw_list, const ImVec2& from, const ImVec2& to, ImU32 color, float size) {
@@ -98,10 +283,11 @@ ImU32 Node::getColorU32() const {
 bool Node::contains(ImVec2 point) const {
     const ImVec2 center(position.x + size.x * 0.5f, position.y + size.y * 0.5f);
     const float rx = std::max(18.0f, size.x * 0.5f);
-    const float ry = std::max(18.0f, size.y * 0.5f);
-    const float dx = (point.x - center.x) / rx;
-    const float dy = (point.y - center.y) / ry;
-    return (dx * dx + dy * dy) <= 1.0f;
+    const float ry = std::max(10.0f, size.y * 0.5f);
+    const float n = 4.0f;
+    const float dx = std::fabs(point.x - center.x) / rx;
+    const float dy = std::fabs(point.y - center.y) / ry;
+    return std::pow(dx, n) + std::pow(dy, n) <= 1.0f;
 }
 
 void Node::render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is_hovered_node) {
@@ -123,63 +309,39 @@ void Node::render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is
                              ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.03f)),
                              rounding * 0.75f);
 
+    draw_list->AddRectFilled(ImVec2(min_pos.x + 1.0f * scale, min_pos.y + 1.0f * scale),
+                             ImVec2(max_pos.x - 1.0f * scale, min_pos.y + 14.0f * scale),
+                             ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.08f)),
+                             rounding,
+                             ImDrawFlags_RoundCornersTop);
+
     const ImVec2 center(screen_pos.x + scaled_size.x * 0.5f, screen_pos.y + scaled_size.y * 0.5f);
-    const float radius = std::max(20.0f, std::min(scaled_size.x, scaled_size.y) * 0.5f - 3.0f);
 
     // Draw label (hide when zoomed out too far)
-    if (scale > 0.35f) {
+    if (scale > 0.34f) {
         ImU32 text_color = ImGui::GetColorU32(ImVec4(0.05f, 0.06f, 0.08f, 1.0f));
-        
-        // Truncate long labels
-        std::string display_label = label;
-        if (display_label.length() > 14) {
-            display_label = display_label.substr(0, 11) + "...";
+        std::string display_label = normalizeNodeLabel(label);
+        if (display_label.empty()) {
+            display_label = nodeSymbol(type);
         }
-        
-        // Scale font for zoom (use SetFontSize temporarily)
+
         float original_font_size = ImGui::GetFont()->FontSize;
-        float scaled_font_size = original_font_size * std::max(0.95f, scale * 1.15f);
-        scaled_font_size = std::max(scaled_font_size, 12.0f); // Minimum readable size
+        float scaled_font_size = original_font_size * std::max(0.92f, scale * 1.10f);
+        scaled_font_size = std::max(scaled_font_size, 12.0f);
+
+        const float max_label_width = std::max(24.0f, scaled_size.x - 18.0f * scale);
+        const int max_lines = std::max(1, static_cast<int>((scaled_size.y - 10.0f * scale) / (scaled_font_size * 1.1f)));
+        display_label = wrapLabelToWidth(display_label, max_label_width, std::min(3, max_lines));
 
         const ImVec2 text_size = ImGui::CalcTextSize(display_label.c_str());
-        const ImVec2 text_pos(center.x - text_size.x * 0.5f, center.y - text_size.y * 0.7f);
+        const ImVec2 text_pos(center.x - text_size.x * 0.5f, center.y - text_size.y * 0.5f);
         draw_list->AddText(ImGui::GetFont(), scaled_font_size, text_pos, text_color, display_label.c_str());
-
-        if (!description.empty()) {
-            const std::string subtitle = (type == NodeType::Stage) ? "Stage" :
-                                         (type == NodeType::Domain) ? "Domain" :
-                                         (type == NodeType::GlobalVariable || type == NodeType::CellVariable) ? variable_name :
-                                         formula_logic;
-            if (!subtitle.empty()) {
-                ImVec2 sub_pos(center.x - ImGui::CalcTextSize(subtitle.c_str()).x * 0.5f,
-                               center.y + radius * 0.18f);
-                draw_list->AddText(ImGui::GetFont(), std::max(10.0f, scaled_font_size * 0.72f), sub_pos,
-                                   ImGui::GetColorU32(ImVec4(0.12f, 0.14f, 0.18f, 1.0f)), subtitle.c_str());
-            }
-        }
-    }
-    
-    // Draw input ports (left side)
-    float port_radius = 4.0f * scale;
-    for (const auto& port : input_ports) {
-        ImVec2 port_world = getPortWorldPosition(port);
-        ImVec2 port_screen = ImVec2(
-            screen_pos.x + (port_world.x - position.x) * scale,
-            screen_pos.y + (port_world.y - position.y) * scale
-        );
-        ImU32 port_color = ImGui::GetColorU32(ImVec4(0.18f, 0.82f, 0.70f, 1.0f));
-        draw_list->AddCircleFilled(port_screen, port_radius, port_color);
-    }
-    
-    // Draw output ports (right side)
-    for (const auto& port : output_ports) {
-        ImVec2 port_world = getPortWorldPosition(port);
-        ImVec2 port_screen = ImVec2(
-            screen_pos.x + (port_world.x - position.x) * scale,
-            screen_pos.y + (port_world.y - position.y) * scale
-        );
-        ImU32 port_color = ImGui::GetColorU32(ImVec4(1.0f, 0.36f, 0.30f, 1.0f));
-        draw_list->AddCircleFilled(port_screen, port_radius, port_color);
+    } else {
+        const char* symbol = nodeSymbol(type);
+        const float icon_size = std::max(10.0f, ImGui::GetFont()->FontSize * std::max(0.95f, scale * 1.8f));
+        const ImVec2 sym_size = ImGui::CalcTextSize(symbol);
+        const ImVec2 sym_pos(center.x - sym_size.x * 0.5f, center.y - sym_size.y * 0.5f);
+        draw_list->AddText(ImGui::GetFont(), icon_size, sym_pos, ImGui::GetColorU32(ImVec4(0.07f, 0.08f, 0.10f, 0.95f)), symbol);
     }
 }
 
@@ -348,13 +510,39 @@ void NodeEditor::render(ImVec2 avail_size) {
     } else {
         // Release drag if mouse leaves canvas
         if (!dragging_node_id.empty()) {
+            last_user_interaction_time = ImGui::GetTime();
             dragging_node_id.clear();
         }
         panning = false;
+        layout_relax_counter = 0;
     }
+    
+    // Layout relaxation is not called during render to prevent instability
+    // when user is dragging nodes. The graph remains responsive and stable.
+    // Use autoLayout() only at initialization if needed.
+    
+    // Periodic smooth graph layout updates for dynamic optimization.
+    // Pause briefly after direct user interaction to avoid contention and UI stalls.
+    const double now = ImGui::GetTime();
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool mouse_buttons_down = io.MouseDown[ImGuiMouseButton_Left] || io.MouseDown[ImGuiMouseButton_Right];
+    const bool user_interacting_now = mouse_buttons_down || std::fabs(io.MouseWheel) > 0.0f;
+    const bool in_cooldown = last_user_interaction_time >= 0.0 &&
+                             (now - last_user_interaction_time) < LAYOUT_INTERACTION_COOLDOWN_SEC;
+    const int adaptive_interval = std::clamp(
+        LAYOUT_RELAX_INTERVAL + static_cast<int>(nodes.size() / 36u),
+        LAYOUT_RELAX_INTERVAL,
+        20
+    );
 
-    if (!nodes.empty()) {
-        relaxCircularLayout();
+    if (!nodes.empty() && dragging_node_id.empty() && !panning && !in_cooldown && !user_interacting_now) {
+        layout_relax_counter++;
+        if (layout_relax_counter >= adaptive_interval) {
+            relaxCircularLayout();
+            layout_relax_counter = 0;
+        }
+    } else {
+        layout_relax_counter = 0;
     }
     
     // Set up clipping region
@@ -382,6 +570,7 @@ void NodeEditor::handleMouseInput(ImVec2 mouse_pos, bool lmb_down, bool rmb_down
     ImVec2 world_mouse = screenToWorld(mouse_pos);
     
     if (!lmb_down && !dragging_node_id.empty()) {
+        last_user_interaction_time = ImGui::GetTime();
         dragging_node_id.clear();
     }
 
@@ -402,6 +591,7 @@ void NodeEditor::handleMouseInput(ImVec2 mouse_pos, bool lmb_down, bool rmb_down
             dragging_node_id = clicked_node->id;
             drag_offset = ImVec2(clicked_node->position.x - world_mouse.x, 
                                  clicked_node->position.y - world_mouse.y);
+            last_user_interaction_time = ImGui::GetTime();
             
             // Select the node
             bool multi = ImGui::GetIO().KeyCtrl;
@@ -412,6 +602,7 @@ void NodeEditor::handleMouseInput(ImVec2 mouse_pos, bool lmb_down, bool rmb_down
             clearSelection();
             panning = true;
             pan_start = mouse_pos;
+            last_user_interaction_time = ImGui::GetTime();
         }
     }
     
@@ -419,18 +610,25 @@ void NodeEditor::handleMouseInput(ImVec2 mouse_pos, bool lmb_down, bool rmb_down
         Node* node = getNode(dragging_node_id);
         if (node) {
             node->position = ImVec2(world_mouse.x + drag_offset.x, world_mouse.y + drag_offset.y);
+            last_user_interaction_time = ImGui::GetTime();
+        } else {
+            // Node was removed or invalidated while dragging
+            last_user_interaction_time = ImGui::GetTime();
+            dragging_node_id.clear();
         }
     }
 
     if (rmb_down && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         panning = true;
         pan_start = mouse_pos;
+        last_user_interaction_time = ImGui::GetTime();
     }
 }
 
 void NodeEditor::handlePanning(ImVec2 delta) {
     // Delta is in screen pixels; convert to world offset change
     view_offset = ImVec2(view_offset.x + delta.x / zoom, view_offset.y + delta.y / zoom);
+    last_user_interaction_time = ImGui::GetTime();
 }
 
 void NodeEditor::handleZoom(float delta, ImVec2 mouse_screen_pos) {
@@ -448,6 +646,7 @@ void NodeEditor::handleZoom(float delta, ImVec2 mouse_screen_pos) {
         (mouse_screen_pos.y - canvas_origin.y) / zoom - world_before.y
     );
     view_offset = new_view_offset;
+    last_user_interaction_time = ImGui::GetTime();
 }
 
 // === Layout ===
@@ -478,6 +677,18 @@ void NodeEditor::relaxCircularLayout() {
         return;
     }
 
+    const std::size_t node_count = nodes.size();
+    std::size_t repulsion_stride = 1;
+    if (node_count > 260u) {
+        repulsion_stride = (node_count / 260u) + 1u;
+    }
+
+    // Build node ID -> index map to avoid O(n) lookups in connection processing
+    std::unordered_map<std::string, std::size_t> nodeIdToIndex;
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        nodeIdToIndex[nodes[i]->id] = i;
+    }
+
     std::vector<ImVec2> forces(nodes.size(), ImVec2(0.0f, 0.0f));
     std::vector<ImVec2> centers(nodes.size());
     for (std::size_t i = 0; i < nodes.size(); ++i) {
@@ -489,8 +700,11 @@ void NodeEditor::relaxCircularLayout() {
     const float idealEdgeLength = 320.0f;
     const float centerPull = 0.006f;
 
-    for (std::size_t i = 0; i < nodes.size(); ++i) {
-        for (std::size_t j = i + 1; j < nodes.size(); ++j) {
+    // Pairwise repulsion: prevent node overlap
+    const std::size_t phase = static_cast<std::size_t>(repulsion_phase) % repulsion_stride;
+    for (std::size_t i = 0; i < node_count; ++i) {
+        std::size_t j = i + 1 + phase;
+        for (; j < node_count; j += repulsion_stride) {
             ImVec2 delta(centers[i].x - centers[j].x, centers[i].y - centers[j].y);
             float distSq = delta.x * delta.x + delta.y * delta.y + 0.01f;
             float dist = std::sqrt(distSq);
@@ -503,14 +717,18 @@ void NodeEditor::relaxCircularLayout() {
         }
     }
 
-    for (const auto& conn : connections) {
-        Node* from = getNode(conn.from_node_id);
-        Node* to = getNode(conn.to_node_id);
-        if (!from || !to) continue;
+    repulsion_phase = static_cast<int>((phase + 1u) % repulsion_stride);
 
-        const std::size_t fi = static_cast<std::size_t>(std::distance(nodes.begin(), std::find_if(nodes.begin(), nodes.end(), [&](const auto& ptr) { return ptr.get() == from; })));
-        const std::size_t ti = static_cast<std::size_t>(std::distance(nodes.begin(), std::find_if(nodes.begin(), nodes.end(), [&](const auto& ptr) { return ptr.get() == to; })));
-        if (fi >= nodes.size() || ti >= nodes.size()) continue;
+    // Edge spring forces: use pre-built index map to avoid O(n) searches per edge
+    for (const auto& conn : connections) {
+        auto fitIter = nodeIdToIndex.find(conn.from_node_id);
+        auto tiIter = nodeIdToIndex.find(conn.to_node_id);
+        if (fitIter == nodeIdToIndex.end() || tiIter == nodeIdToIndex.end()) {
+            continue;  // Skip invalid edges
+        }
+
+        const std::size_t fi = fitIter->second;
+        const std::size_t ti = tiIter->second;
 
         ImVec2 delta(centers[ti].x - centers[fi].x, centers[ti].y - centers[fi].y);
         float dist = std::sqrt(delta.x * delta.x + delta.y * delta.y) + 0.01f;
@@ -522,6 +740,7 @@ void NodeEditor::relaxCircularLayout() {
         forces[ti].y -= dir.y * pull;
     }
 
+    // Center-of-mass pull to keep graph centered
     ImVec2 centerOfMass(0.0f, 0.0f);
     for (const auto& c : centers) {
         centerOfMass.x += c.x;
@@ -530,14 +749,19 @@ void NodeEditor::relaxCircularLayout() {
     centerOfMass.x /= static_cast<float>(nodes.size());
     centerOfMass.y /= static_cast<float>(nodes.size());
 
+    // Apply forces to move nodes with damping for smooth updates
+    // Damping prevents oscillation and creates smooth, natural motion
+    const float damping = 0.065f;  // Reduced from 0.090f for gentler, smoother motion
+    const float maxStep = 55.0f;   // Reduced from 62.0f to limit per-frame movement
+    
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         ImVec2 toCenter(centerOfMass.x - centers[i].x, centerOfMass.y - centers[i].y);
         forces[i].x += toCenter.x * centerPull;
         forces[i].y += toCenter.y * centerPull;
 
-        ImVec2 step = clampLength(forces[i], 62.0f);
-        nodes[i]->position.x += step.x * 0.090f;
-        nodes[i]->position.y += step.y * 0.090f;
+        ImVec2 step = clampLength(forces[i], maxStep);
+        nodes[i]->position.x += step.x * damping;
+        nodes[i]->position.y += step.y * damping;
     }
 }
 
@@ -670,36 +894,19 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
         }
         
         if (from_port && to_port) {
-            // Attach edges to actual perimeter ports for fully distributed arrival points.
             const ImVec2 from_center_world(from_node->position.x + from_node->size.x * 0.5f,
                                            from_node->position.y + from_node->size.y * 0.5f);
             const ImVec2 to_center_world(to_node->position.x + to_node->size.x * 0.5f,
                                          to_node->position.y + to_node->size.y * 0.5f);
 
-            const ImVec2 from_world = from_node->getPortWorldPosition(*from_port);
-            const ImVec2 to_world = to_node->getPortWorldPosition(*to_port);
+            // Use intelligent label-box aware anchors that distribute edges around the perimeter
+            const ImVec2 from_world = connectionAnchorForLabelBox(*from_node, to_center_world, conn, true);
+            const ImVec2 to_world = connectionAnchorForLabelBox(*to_node, from_center_world, conn, false);
 
             const ImVec2 from_screen = worldToScreen(from_world);
             const ImVec2 to_screen = worldToScreen(to_world);
-            const ImVec2 from_center_screen = worldToScreen(from_center_world);
-            const ImVec2 to_center_screen = worldToScreen(to_center_world);
 
-            const ImVec2 from_dir = normalizedOr(
-                ImVec2(from_screen.x - from_center_screen.x, from_screen.y - from_center_screen.y),
-                ImVec2(1.0f, 0.0f));
-            const ImVec2 to_dir = normalizedOr(
-                ImVec2(to_screen.x - to_center_screen.x, to_screen.y - to_center_screen.y),
-                ImVec2(-1.0f, 0.0f));
-            
             ImU32 line_color = ImGui::GetColorU32(ImVec4(0.68f, 0.76f, 0.90f, 0.85f));
-            const float direct = std::sqrt((to_screen.x - from_screen.x) * (to_screen.x - from_screen.x) +
-                                           (to_screen.y - from_screen.y) * (to_screen.y - from_screen.y));
-            const float handle = std::clamp(direct * 0.42f, 40.0f * zoom, 220.0f * zoom);
-            ImVec2 control1 = ImVec2(from_screen.x + from_dir.x * handle,
-                                     from_screen.y + from_dir.y * handle);
-            ImVec2 control2 = ImVec2(to_screen.x - to_dir.x * handle,
-                                     to_screen.y - to_dir.y * handle);
-
             if (from_node->type == NodeType::Stage || to_node->type == NodeType::Stage) {
                 line_color = ImGui::GetColorU32(ImVec4(0.88f, 0.80f, 0.34f, 0.92f));
             } else if (from_node->type == NodeType::Domain || to_node->type == NodeType::Domain) {
@@ -708,10 +915,57 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
                 line_color = ImGui::GetColorU32(ImVec4(0.36f, 0.90f, 0.64f, 0.88f));
             }
 
-            draw_list->AddBezierCubic(from_screen, control1, control2, to_screen, line_color, line_width, 42);
+            const ImVec2 delta(to_screen.x - from_screen.x, to_screen.y - from_screen.y);
+            const float direct = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+            if (direct < 1.0f) {
+                continue;
+            }
 
-            const ImVec2 tail = lerp(control2, to_screen, 0.90f);
-            drawArrowHead(draw_list, tail, to_screen, brighten(line_color, 1.08f), std::max(8.0f, 8.0f * zoom));
+            // Zoom-stable Bézier control point calculation (screen-space only)
+            // to prevent exaggerated loops when zooming out.
+            float base_handle = direct * 0.34f;
+            base_handle = std::clamp(base_handle, 14.0f, 180.0f);
+            
+            // Direction vectors for control points - perpendicular to connection axis
+            const ImVec2 axis = normalizedOr(delta, ImVec2(1.0f, 0.0f));
+            const ImVec2 perp = ImVec2(-axis.y, axis.x);
+            
+            // Calculate node direction vectors at anchor points
+            const ImVec2 from_center_screen = worldToScreen(from_center_world);
+            const ImVec2 to_center_screen = worldToScreen(to_center_world);
+            const ImVec2 from_dir = normalizedOr(
+                ImVec2(from_screen.x - from_center_screen.x, from_screen.y - from_center_screen.y),
+                axis);
+            const ImVec2 to_dir = normalizedOr(
+                ImVec2(to_screen.x - to_center_screen.x, to_screen.y - to_center_screen.y),
+                ImVec2(-axis.x, -axis.y));
+            
+            // Control handle length varies based on directional alignment.
+            const float from_align = std::max(0.0f, dot(from_dir, axis));
+            const float to_align = std::max(0.0f, dot(to_dir, ImVec2(-axis.x, -axis.y)));
+            
+            // Keep handles proportional to the visible segment to avoid self-loops.
+            const float alignment_factor = 0.58f + 0.42f * (from_align + to_align) * 0.5f;
+            const float handle_length = std::min(base_handle * alignment_factor, direct * 0.46f);
+            
+            // Perpendicular offset to separate nearby edges - context-aware edge bundling
+            // Uses connection hash to offset each edge slightly, creating natural separation
+            const std::string edge_hash_key = conn.from_node_id + "|" + conn.to_node_id + "|" + conn.from_port_name + "|" + conn.to_port_name;
+            const std::size_t edge_hash = std::hash<std::string>{}(edge_hash_key);
+            const float hash01 = static_cast<float>(edge_hash & 0xFFFFu) / 65535.0f;
+            const float edge_offset = (hash01 - 0.5f) * std::min(24.0f, direct * 0.12f);
+            
+            // Control points: one on source node direction, one on target node direction
+            // With perpendicular offset for edge separation
+            const ImVec2 control1(from_screen.x + from_dir.x * handle_length + perp.x * edge_offset,
+                                  from_screen.y + from_dir.y * handle_length + perp.y * edge_offset);
+            const ImVec2 control2(to_screen.x + to_dir.x * handle_length + perp.x * edge_offset,
+                                  to_screen.y + to_dir.y * handle_length + perp.y * edge_offset);
+
+            draw_list->AddBezierCubic(from_screen, control1, control2, to_screen, line_color, line_width, 40);
+
+            const ImVec2 tail = lerp(control2, to_screen, 0.88f);
+            drawArrowHead(draw_list, tail, to_screen, brighten(line_color, 1.08f), std::max(7.0f, 7.0f * zoom));
         }
     }
 }
@@ -725,43 +979,48 @@ void NodeEditor::renderConnectionPreview(ImDrawList* draw_list) {
 }
 
 void NodeEditor::renderGrid(ImDrawList* draw_list, ImVec2 grid_canvas_size) {
-    ImU32 grid_color = ImGui::GetColorU32(ImVec4(0.4f, 0.4f, 0.4f, 0.15f));
-    ImU32 grid_color_major = ImGui::GetColorU32(ImVec4(0.4f, 0.4f, 0.4f, 0.3f));
-    
-    const float base_grid_size = 32.0f;
-    float scaled_grid = base_grid_size * zoom;
-    
-    // Don't draw grid lines if they'd be too dense
-    if (scaled_grid < 4.0f) return;
-    
-    // Grid offset accounts for panning
-    float offset_x = fmodf(view_offset.x * zoom, scaled_grid);
-    float offset_y = fmodf(view_offset.y * zoom, scaled_grid);
-    
-    // Ensure positive modulus
-    if (offset_x < 0.0f) offset_x += scaled_grid;
-    if (offset_y < 0.0f) offset_y += scaled_grid;
-    
-    int line_index = 0;
-    for (float x = offset_x; x < grid_canvas_size.x; x += scaled_grid) {
-        bool major = (line_index % 4 == 0);
-        draw_list->AddLine(
-            ImVec2(canvas_origin.x + x, canvas_origin.y),
-            ImVec2(canvas_origin.x + x, canvas_origin.y + grid_canvas_size.y),
-            major ? grid_color_major : grid_color, major ? 1.0f : 0.5f
-        );
-        ++line_index;
+    ImU32 grid_color = ImGui::GetColorU32(ImVec4(0.40f, 0.40f, 0.40f, 0.11f));
+    ImU32 grid_color_major = ImGui::GetColorU32(ImVec4(0.40f, 0.40f, 0.40f, 0.24f));
+
+    // Half the previous density: 32 -> 64 world units.
+    const float base_grid_world = 64.0f;
+    const float major_every = 4.0f;
+
+    const float scaled_grid = base_grid_world * zoom;
+    if (scaled_grid < 6.0f) {
+        return;
     }
-    
-    line_index = 0;
-    for (float y = offset_y; y < grid_canvas_size.y; y += scaled_grid) {
-        bool major = (line_index % 4 == 0);
-        draw_list->AddLine(
-            ImVec2(canvas_origin.x, canvas_origin.y + y),
-            ImVec2(canvas_origin.x + grid_canvas_size.x, canvas_origin.y + y),
-            major ? grid_color_major : grid_color, major ? 1.0f : 0.5f
-        );
-        ++line_index;
+
+    const ImVec2 world_min = screenToWorld(canvas_origin);
+    const ImVec2 world_max = screenToWorld(ImVec2(canvas_origin.x + grid_canvas_size.x,
+                                                  canvas_origin.y + grid_canvas_size.y));
+
+    const float left = std::min(world_min.x, world_max.x);
+    const float right = std::max(world_min.x, world_max.x);
+    const float top = std::min(world_min.y, world_max.y);
+    const float bottom = std::max(world_min.y, world_max.y);
+
+    const float first_x = std::floor(left / base_grid_world) * base_grid_world;
+    const float first_y = std::floor(top / base_grid_world) * base_grid_world;
+
+    for (float xw = first_x; xw <= right + base_grid_world; xw += base_grid_world) {
+        const ImVec2 a = worldToScreen(ImVec2(xw, top));
+        const long long major_index = static_cast<long long>(std::llround(xw / base_grid_world));
+        const bool major = (major_index % static_cast<long long>(major_every)) == 0;
+        draw_list->AddLine(ImVec2(a.x, canvas_origin.y),
+                           ImVec2(a.x, canvas_origin.y + grid_canvas_size.y),
+                           major ? grid_color_major : grid_color,
+                           major ? 1.0f : 0.6f);
+    }
+
+    for (float yw = first_y; yw <= bottom + base_grid_world; yw += base_grid_world) {
+        const ImVec2 a = worldToScreen(ImVec2(left, yw));
+        const long long major_index = static_cast<long long>(std::llround(yw / base_grid_world));
+        const bool major = (major_index % static_cast<long long>(major_every)) == 0;
+        draw_list->AddLine(ImVec2(canvas_origin.x, a.y),
+                           ImVec2(canvas_origin.x + grid_canvas_size.x, a.y),
+                           major ? grid_color_major : grid_color,
+                           major ? 1.0f : 0.6f);
     }
 }
 

@@ -50,6 +50,22 @@ DataType parseDataType(const json& variable) {
     return DataType::F32;
 }
 
+std::string parseLabel(const json& object, const std::string& fallback) {
+    if (object.contains("label") && object["label"].is_string()) {
+        const auto value = object["label"].get<std::string>();
+        if (!value.empty()) {
+            return value;
+        }
+    }
+    if (object.contains("name") && object["name"].is_string()) {
+        const auto value = object["name"].get<std::string>();
+        if (!value.empty()) {
+            return value;
+        }
+    }
+    return fallback;
+}
+
 std::string valueToString(const json& value) {
     if (value.is_string()) return value.get<std::string>();
     if (value.is_number() || value.is_boolean()) return value.dump();
@@ -139,7 +155,7 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
                 continue;
             }
 
-            Node domainNode("domain_" + domainId, NodeType::Domain, domainId);
+            Node domainNode("domain_" + domainId, NodeType::Domain, parseLabel(domainValue, domainId));
             domainNode.position = ImVec2(60.0f, domainY);
             domainNode.description = valueToString(domainValue.value("kind", json{}));
             domainNode.output_ports.push_back(Port("domain", domainId, false));
@@ -168,7 +184,7 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
         const VariableSupport support = parseSupport(variable);
         const VariableRole role = parseRole(variable);
 
-        Node variableNode("var_" + variableId, nodeTypeForVariable(role, support), variableId);
+        Node variableNode("var_" + variableId, nodeTypeForVariable(role, support), parseLabel(variable, variableId));
         variableNode.variable_name = variableId;
         variableNode.support = support;
         variableNode.role = role;
@@ -222,7 +238,7 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
 
             const std::string stageId = stage.value("id", std::string{"stage_" + std::to_string(stageIndex)});
 
-            Node stageNode("stage_" + stageId, NodeType::Stage, stageId);
+            Node stageNode("stage_" + stageId, NodeType::Stage, parseLabel(stage, stageId));
             stageNode.position = ImVec2(860.0f, stageY);
             stageNode.description = stage.value("description", std::string{});
             node_editor->addNode(stageNode);
@@ -238,7 +254,7 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
                     const std::string interactionId = interaction.value(
                         "id", std::string{"interaction_" + std::to_string(stageIndex) + "_" + std::to_string(interactionIndex)});
 
-                    Node interactionNode("interaction_" + interactionId, NodeType::Equation, interactionId);
+                    Node interactionNode("interaction_" + interactionId, NodeType::Equation, parseLabel(interaction, interactionId));
                     interactionNode.position = ImVec2(1140.0f, interactionY);
                     interactionNode.target_type = interaction.value("target_type", std::string{});
                     interactionNode.formula_logic = interaction.value("formula", std::string{});
