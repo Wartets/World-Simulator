@@ -117,6 +117,7 @@ public:
     void registerFieldAlias(const std::string& semanticKey, const std::string& variableName);
     [[nodiscard]] bool hasFieldAlias(const std::string& semanticKey) const noexcept;
     [[nodiscard]] std::optional<std::string> resolveFieldAlias(const std::string& semanticKey) const;
+    [[nodiscard]] const std::unordered_map<std::string, std::string>& fieldAliases() const noexcept { return fieldAliases_; }
     void clearFieldAliases() noexcept;
     [[nodiscard]] std::uint64_t logicalCellCount(const std::string& name) const;
     [[nodiscard]] const std::vector<float>& scalarField(const std::string& name) const;

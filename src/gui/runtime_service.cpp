@@ -10,8 +10,74 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace ws::gui {
+
+namespace {
+
+bool canResolveSubsystemKey(
+    const std::string& key,
+    const std::unordered_set<std::string>& variableIds,
+    const std::unordered_map<std::string, std::string>& aliases) {
+    if (key.empty()) {
+        return true;
+    }
+    if (variableIds.contains(key)) {
+        return true;
+    }
+
+    const auto aliasIt = aliases.find(key);
+    if (aliasIt != aliases.end() && variableIds.contains(aliasIt->second)) {
+        return true;
+    }
+
+    // Internal runtime-owned writes (without semantic namespace) are allowed.
+    return key.find('.') == std::string::npos;
+}
+
+std::vector<std::shared_ptr<ISubsystem>> selectCompatibleSubsystems(const std::optional<ModelExecutionSpec>& executionSpec) {
+    const auto all = makePhase4Subsystems();
+    if (!executionSpec.has_value()) {
+        return all;
+    }
+
+    const std::unordered_set<std::string> variableIds(
+        executionSpec->cellScalarVariableIds.begin(),
+        executionSpec->cellScalarVariableIds.end());
+
+    std::vector<std::shared_ptr<ISubsystem>> selected;
+    selected.reserve(all.size());
+    for (const auto& subsystem : all) {
+        if (!subsystem) {
+            continue;
+        }
+
+        bool compatible = true;
+        for (const auto& readKey : subsystem->declaredReadSet()) {
+            if (!canResolveSubsystemKey(readKey, variableIds, executionSpec->semanticFieldAliases)) {
+                compatible = false;
+                break;
+            }
+        }
+        if (!compatible) {
+            continue;
+        }
+        for (const auto& writeKey : subsystem->declaredWriteSet()) {
+            if (!canResolveSubsystemKey(writeKey, variableIds, executionSpec->semanticFieldAliases)) {
+                compatible = false;
+                break;
+            }
+        }
+        if (compatible) {
+            selected.push_back(subsystem);
+        }
+    }
+
+    return selected;
+}
+
+} // namespace
 
 RuntimeService::RuntimeService() = default;
 
@@ -130,8 +196,10 @@ bool RuntimeService::start(std::string& message) {
             }
         }
 
+        const auto compatibleSubsystems = selectCompatibleSubsystems(runtimeConfig.modelExecutionSpec);
+
         auto runtime = std::make_unique<Runtime>(std::move(runtimeConfig));
-        for (const auto& subsystem : makePhase4Subsystems()) {
+        for (const auto& subsystem : compatibleSubsystems) {
             runtime->registerSubsystem(subsystem);
         }
         runtime->start();

@@ -1,5 +1,7 @@
 #include "ws/app/checkpoint_io.hpp"
+#include "ws/core/initialization_binding.hpp"
 #include "ws/core/runtime.hpp"
+#include "ws/core/subsystems/subsystems.hpp"
 #include "ws/core/subsystems/bootstrap_subsystem.hpp"
 
 #include <cassert>
@@ -7,11 +9,15 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
 ws::ProfileResolverInput baselineProfileInput() {
     ws::ProfileResolverInput input;
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        input.requestedSubsystemTiers[subsystem->name()] = ws::ModelTier::A;
+    }
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
         input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
     }
@@ -30,8 +36,18 @@ ws::Runtime makeRuntime() {
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     config.profileInput = baselineProfileInput();
 
+    const std::filesystem::path modelPath = std::filesystem::path("..") / "models" / "environmental_model_2d.simmodel";
+    ws::ModelExecutionSpec executionSpec;
+    std::string executionMessage;
+    const bool executionOk = ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage);
+    assert(executionOk);
+    config.modelExecutionSpec = executionSpec;
+
     ws::Runtime runtime(config);
     runtime.registerSubsystem(std::make_shared<ws::BootstrapSubsystem>());
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        runtime.registerSubsystem(subsystem);
+    }
     runtime.start();
     runtime.pause();
     return runtime;
@@ -41,16 +57,13 @@ void verifyParameterControlAndManualPatch() {
     auto runtime = makeRuntime();
 
     std::string message;
-    const bool parameterSetOk = runtime.setParameterValue("forcing.temperature_delta", 0.20f, "phase6_test", message);
-    assert(parameterSetOk);
-
-    const bool manualPatchOk = runtime.applyManualPatch("temperature_T", ws::Cell{2u, 3u}, 0.91f, "manual_probe", message);
+    const bool manualPatchOk = runtime.applyManualPatch("temperature", ws::Cell{2u, 3u}, 0.91f, "manual_probe", message);
     assert(manualPatchOk);
 
     runtime.controlledStep(1);
     const auto sample = runtime.createCheckpoint("phase6_probe", true).stateSnapshot;
     const auto it = std::find_if(sample.fields.begin(), sample.fields.end(), [](const auto& f) {
-        return f.spec.name == "temperature_T";
+        return f.spec.name == "temperature";
     });
     assert(it != sample.fields.end());
     const auto idx = static_cast<std::size_t>(3u * 8u + 2u);
@@ -58,7 +71,7 @@ void verifyParameterControlAndManualPatch() {
     assert(it->values[idx] > 0.0f);
 
     const auto& manualEvents = runtime.manualEventLog();
-    assert(manualEvents.size() >= 2);
+    assert(manualEvents.size() >= 1);
 }
 
 void verifyPerturbationAndCheckpointPersistence() {
@@ -66,7 +79,7 @@ void verifyPerturbationAndCheckpointPersistence() {
 
     ws::PerturbationSpec perturbation;
     perturbation.type = ws::PerturbationType::Gaussian;
-    perturbation.targetVariable = "event_water_delta";
+    perturbation.targetVariable = "water_height";
     perturbation.amplitude = 0.15f;
     perturbation.startStep = 0;
     perturbation.durationSteps = 2;

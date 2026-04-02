@@ -1,4 +1,5 @@
 #include "ws/core/control_surface.hpp"
+#include "ws/core/initialization_binding.hpp"
 #include "ws/core/replay.hpp"
 #include "ws/core/runtime.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
@@ -6,13 +7,18 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace {
 
 ws::ProfileResolverInput baselineProfileInput() {
     ws::ProfileResolverInput input;
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        input.requestedSubsystemTiers[subsystem->name()] = ws::ModelTier::A;
+    }
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
         input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
     }
@@ -29,6 +35,14 @@ ws::RuntimeConfig baselineConfig() {
     config.grid = ws::GridSpec{6, 6};
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     config.profileInput = baselineProfileInput();
+
+    const std::filesystem::path modelPath = std::filesystem::path("..") / "models" / "environmental_model_2d.simmodel";
+    ws::ModelExecutionSpec executionSpec;
+    std::string executionMessage;
+    const bool executionOk = ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage);
+    assert(executionOk);
+    config.modelExecutionSpec = executionSpec;
+
     return config;
 }
 
@@ -47,12 +61,12 @@ void verifyControlActionsAreTracedAndDeterministic() {
     control.pause();
 
     ws::RuntimeInputFrame inputFrame;
-    inputFrame.scalarPatches.push_back(ws::ScalarWritePatch{"temperature_T", ws::Cell{1, 1}, 292.0f});
+    inputFrame.scalarPatches.push_back(ws::ScalarWritePatch{"temperature", ws::Cell{1, 1}, 292.0f});
     control.queueInput(std::move(inputFrame));
 
     ws::RuntimeEvent event;
     event.eventName = "operator_event";
-    event.scalarPatches.push_back(ws::ScalarWritePatch{"event_signal_e", ws::Cell{1, 1}, 0.8f});
+    event.scalarPatches.push_back(ws::ScalarWritePatch{"temperature", ws::Cell{1, 1}, 0.8f});
     control.enqueueEvent(std::move(event));
 
     control.step(1);
@@ -110,7 +124,7 @@ void verifyReplayFromCheckpointAndEventChronology() {
         ws::RuntimeEvent event;
         event.eventName = "scheduled_event_" + std::to_string(i);
         event.scalarPatches.push_back(ws::ScalarWritePatch{
-            "event_signal_e",
+            "temperature",
             ws::Cell{static_cast<std::uint32_t>(i % 3), static_cast<std::uint32_t>((i + 1) % 3)},
             0.2f + 0.1f * static_cast<float>(i)});
         runtime.enqueueEvent(std::move(event));

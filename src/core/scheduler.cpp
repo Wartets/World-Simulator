@@ -366,9 +366,68 @@ std::set<std::string, std::less<>> Scheduler::effectiveWriteSetFor(const std::sh
     return effective;
 }
 
+std::set<std::string, std::less<>> Scheduler::resolveRuntimeWriteSet(
+    const std::shared_ptr<ISubsystem>& subsystem,
+    const StateStore& stateStore) const {
+    std::set<std::string, std::less<>> resolved;
+    for (const auto& writeKey : effectiveWriteSetFor(subsystem)) {
+        if (const auto alias = stateStore.resolveFieldAlias(writeKey); alias.has_value()) {
+            if (stateStore.hasField(*alias)) {
+                resolved.insert(*alias);
+            }
+            continue;
+        }
+        if (stateStore.hasField(writeKey)) {
+            resolved.insert(writeKey);
+        }
+    }
+    return resolved;
+}
+
 void Scheduler::attachObserverForSubsystem(StateStore& stateStore, const std::shared_ptr<ISubsystem>& subsystem) {
-    stateStore.setAccessObserver([this, subsystemName = subsystem->name()](const std::string& variableName, const StateStore::AccessKind kind) {
+    const auto declaredReadVec = subsystem->declaredReadSet();
+    const auto declaredWriteVec = subsystem->declaredWriteSet();
+    std::set<std::string, std::less<>> declaredReads(declaredReadVec.begin(), declaredReadVec.end());
+    std::set<std::string, std::less<>> declaredWrites(declaredWriteVec.begin(), declaredWriteVec.end());
+
+    std::unordered_multimap<std::string, std::string> runtimeToSemantic;
+    for (const auto& [semanticKey, variableId] : stateStore.fieldAliases()) {
+        if (semanticKey.empty() || variableId.empty()) {
+            continue;
+        }
+        if (declaredReads.contains(semanticKey) || declaredWrites.contains(semanticKey)) {
+            runtimeToSemantic.emplace(variableId, semanticKey);
+        }
+    }
+
+    stateStore.setAccessObserver([this,
+                                  subsystemName = subsystem->name(),
+                                  declaredReads = std::move(declaredReads),
+                                  declaredWrites = std::move(declaredWrites),
+                                  runtimeToSemantic = std::move(runtimeToSemantic)](const std::string& variableName, const StateStore::AccessKind kind) {
         auto& observation = observedDataFlow_[subsystemName];
+
+        bool mapped = false;
+        const auto [it, end] = runtimeToSemantic.equal_range(variableName);
+        for (auto aliasIt = it; aliasIt != end; ++aliasIt) {
+            const auto& semanticKey = aliasIt->second;
+            if (kind == StateStore::AccessKind::Read) {
+                if (declaredReads.contains(semanticKey)) {
+                    observation.reads.insert(semanticKey);
+                    mapped = true;
+                }
+            } else {
+                if (declaredWrites.contains(semanticKey)) {
+                    observation.writes.insert(semanticKey);
+                    mapped = true;
+                }
+            }
+        }
+
+        if (mapped) {
+            return;
+        }
+
         if (kind == StateStore::AccessKind::Read) {
             observation.reads.insert(variableName);
             return;
@@ -438,7 +497,7 @@ void Scheduler::initialize(StateStore& stateStore, const ModelProfile& profile) 
 
     for (const auto& subsystem : orderedSubsystems()) {
         attachObserverForSubsystem(stateStore, subsystem);
-        const auto writeSet = effectiveWriteSetFor(subsystem);
+        const auto writeSet = resolveRuntimeWriteSet(subsystem, stateStore);
         StateStore::WriteSession session(
             stateStore,
             subsystem->name(),
@@ -533,7 +592,7 @@ StepDiagnostics Scheduler::step(
             for (const auto& subsystem : ordered) {
                 diagnostics.orderingLog.push_back("update:" + subsystem->name());
                 attachObserverForSubsystem(stateStore, subsystem);
-                const auto writeSet = effectiveWriteSetFor(subsystem);
+                const auto writeSet = resolveRuntimeWriteSet(subsystem, stateStore);
                 StateStore::WriteSession session(
                     stateStore,
                     subsystem->name(),
@@ -550,7 +609,7 @@ StepDiagnostics Scheduler::step(
             for (const auto& subsystem : ordered) {
                 diagnostics.orderingLog.push_back("update:" + subsystem->name());
                 attachObserverForSubsystem(stateStore, subsystem);
-                const auto writeSet = effectiveWriteSetFor(subsystem);
+                const auto writeSet = resolveRuntimeWriteSet(subsystem, stateStore);
                 StateStore::WriteSession session(
                     stateStore,
                     subsystem->name(),
@@ -582,17 +641,23 @@ StepDiagnostics Scheduler::step(
                 }
 
                 const auto& subsystem = subsystemIt->second;
-                const auto writeSet = effectiveWriteSetFor(subsystem);
+                const auto writeSet = resolveRuntimeWriteSet(subsystem, stateStore);
+                const auto aliasMap = stateStore.fieldAliases();
                 const auto baselineCopy = std::make_shared<StateStoreSnapshot>(batchBaseline);
 
                 diagnostics.parallelTasksDispatched += 1;
-                futures.push_back(std::async(std::launch::async, [&, subsystem, writeSet, baselineCopy]() {
+                futures.push_back(std::async(std::launch::async, [&, subsystem, writeSet, aliasMap, baselineCopy]() {
                     StateStore localState(
                         stateStore.grid(),
                         stateStore.boundaryMode(),
                         stateStore.topologyBackend(),
                         stateStore.memoryLayoutPolicy());
                     localState.loadSnapshot(*baselineCopy, 0, 0);
+                    for (const auto& [semanticKey, variableId] : aliasMap) {
+                        if (!semanticKey.empty() && !variableId.empty() && localState.hasField(variableId)) {
+                            localState.registerFieldAlias(semanticKey, variableId);
+                        }
+                    }
 
                     StateStore::WriteSession localWriteSession(
                         localState,
@@ -688,7 +753,7 @@ StepDiagnostics Scheduler::step(
         for (const auto& subsystem : ordered) {
             diagnostics.orderingLog.push_back("phase0:update:" + subsystem->name());
             attachObserverForSubsystem(stateStore, subsystem);
-            const auto writeSet = effectiveWriteSetFor(subsystem);
+            const auto writeSet = resolveRuntimeWriteSet(subsystem, stateStore);
             StateStore::WriteSession session(
                 stateStore,
                 subsystem->name(),
@@ -729,7 +794,7 @@ StepDiagnostics Scheduler::step(
                         ":iter" + std::to_string(iteration) +
                         ":update:" + subsystem->name());
                     attachObserverForSubsystem(stateStore, subsystem);
-                    const auto writeSet = effectiveWriteSetFor(subsystem);
+                    const auto writeSet = resolveRuntimeWriteSet(subsystem, stateStore);
                     StateStore::WriteSession session(
                         stateStore,
                         subsystem->name(),

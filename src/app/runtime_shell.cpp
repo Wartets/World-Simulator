@@ -4,6 +4,7 @@
 #include "ws/app/profile_store.hpp"
 #include "ws/app/shell_support.hpp"
 #include "ws/app/world_store.hpp"
+#include "ws/core/initialization_binding.hpp"
 #include "ws/core/runtime.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
 
@@ -21,12 +22,74 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace ws::app {
 
 namespace {
+
+bool canResolveSubsystemKey(
+    const std::string& key,
+    const std::unordered_set<std::string>& variableIds,
+    const std::unordered_map<std::string, std::string>& aliases) {
+    if (key.empty()) {
+        return true;
+    }
+    if (variableIds.contains(key)) {
+        return true;
+    }
+
+    const auto aliasIt = aliases.find(key);
+    if (aliasIt != aliases.end() && variableIds.contains(aliasIt->second)) {
+        return true;
+    }
+
+    return key.find('.') == std::string::npos;
+}
+
+std::vector<std::shared_ptr<ISubsystem>> selectCompatibleSubsystems(const std::optional<ModelExecutionSpec>& executionSpec) {
+    const auto all = makePhase4Subsystems();
+    if (!executionSpec.has_value()) {
+        return all;
+    }
+
+    const std::unordered_set<std::string> variableIds(
+        executionSpec->cellScalarVariableIds.begin(),
+        executionSpec->cellScalarVariableIds.end());
+
+    std::vector<std::shared_ptr<ISubsystem>> selected;
+    selected.reserve(all.size());
+    for (const auto& subsystem : all) {
+        if (!subsystem) {
+            continue;
+        }
+
+        bool compatible = true;
+        for (const auto& readKey : subsystem->declaredReadSet()) {
+            if (!canResolveSubsystemKey(readKey, variableIds, executionSpec->semanticFieldAliases)) {
+                compatible = false;
+                break;
+            }
+        }
+        if (!compatible) {
+            continue;
+        }
+
+        for (const auto& writeKey : subsystem->declaredWriteSet()) {
+            if (!canResolveSubsystemKey(writeKey, variableIds, executionSpec->semanticFieldAliases)) {
+                compatible = false;
+                break;
+            }
+        }
+        if (compatible) {
+            selected.push_back(subsystem);
+        }
+    }
+
+    return selected;
+}
 
 class WorldSimApp {
 public:
@@ -1197,8 +1260,31 @@ private:
         stopRuntime();
         checkpoints_.clear();
 
-        auto runtime = std::make_unique<Runtime>(makeRuntimeConfig(launchConfig_));
-        for (const auto& subsystem : makePhase4Subsystems()) {
+        auto config = makeRuntimeConfig(launchConfig_);
+        if (const auto modelPath = resolveSelectedModelPath(); modelPath.has_value()) {
+            ModelExecutionSpec modelExecutionSpec;
+            std::string executionSpecMessage;
+            if (initialization::loadModelExecutionSpec(*modelPath, modelExecutionSpec, executionSpecMessage)) {
+                if (!modelExecutionSpec.conservedVariables.empty()) {
+                    config.profileInput.conservedVariables = modelExecutionSpec.conservedVariables;
+                }
+                config.modelExecutionSpec = std::move(modelExecutionSpec);
+            }
+
+            std::vector<ParameterControl> modelParameterControls;
+            std::string parameterControlsMessage;
+            if (initialization::loadModelParameterControls(*modelPath, modelParameterControls, parameterControlsMessage)) {
+                config.modelParameterControls = std::move(modelParameterControls);
+            }
+        }
+
+        auto compatibleSubsystems = selectCompatibleSubsystems(config.modelExecutionSpec);
+        if (!config.modelExecutionSpec.has_value() && currentModelKey() == "legacy") {
+            compatibleSubsystems.clear();
+        }
+
+        auto runtime = std::make_unique<Runtime>(std::move(config));
+        for (const auto& subsystem : compatibleSubsystems) {
             runtime->registerSubsystem(subsystem);
         }
         runtime->start();
@@ -1250,6 +1336,20 @@ private:
 
     std::string currentModelKey() const {
         return selectedModelKey_.empty() ? std::string{"legacy"} : selectedModelKey_;
+    }
+
+    std::optional<std::filesystem::path> resolveSelectedModelPath() const {
+        const std::string key = currentModelKey();
+        if (key.empty() || key == "legacy") {
+            return std::nullopt;
+        }
+
+        for (const auto& model : listAvailableModels()) {
+            if (model.key == key) {
+                return model.path;
+            }
+        }
+        return std::nullopt;
     }
 
     void stopRuntime() {

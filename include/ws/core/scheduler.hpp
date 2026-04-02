@@ -102,6 +102,9 @@ private:
     void validateWriteOwnership() const;
     [[nodiscard]] std::vector<std::shared_ptr<ISubsystem>> orderedSubsystems() const;
     [[nodiscard]] std::set<std::string, std::less<>> effectiveWriteSetFor(const std::shared_ptr<ISubsystem>& subsystem) const;
+    [[nodiscard]] std::set<std::string, std::less<>> resolveRuntimeWriteSet(
+        const std::shared_ptr<ISubsystem>& subsystem,
+        const StateStore& stateStore) const;
     void attachObserverForSubsystem(StateStore& stateStore, const std::shared_ptr<ISubsystem>& subsystem);
 
     std::vector<std::shared_ptr<ISubsystem>> subsystems_;

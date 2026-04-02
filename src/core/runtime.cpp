@@ -331,7 +331,7 @@ void Runtime::start() {
         }
         scheduler_.setAdmissionReport(admissionReport_);
 
-        allocateCanonicalFields();
+        allocateRuntimeFieldsFromModelSpec();
 
         stateStore_.clearFieldAliases();
         if (config_.modelExecutionSpec.has_value()) {
@@ -396,6 +396,36 @@ void Runtime::start() {
 
                 const float aspect = static_cast<float>(config_.grid.width) / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.height));
                 const float zoneScale = std::max(0.08f, 0.40f / std::max(0.25f, baseFreq));
+
+                const auto resolveSeedTarget = [&](const std::string& semanticKey) -> std::optional<std::string> {
+                    if (semanticKey.empty()) {
+                        return std::nullopt;
+                    }
+                    if (const auto alias = stateStore_.resolveFieldAlias(semanticKey); alias.has_value() && stateStore_.hasField(*alias)) {
+                        return *alias;
+                    }
+                    if (stateStore_.hasField(semanticKey)) {
+                        return semanticKey;
+                    }
+                    return std::nullopt;
+                };
+
+                const auto terrainElevationVar = resolveSeedTarget("generation.elevation");
+                const auto hydrologyWaterVar = resolveSeedTarget("hydrology.water");
+                const auto temperatureVar = resolveSeedTarget("temperature.current");
+                const auto humidityVar = resolveSeedTarget("humidity.current");
+                const auto windAxisXVar = resolveSeedTarget("wind.vector.axis_x");
+                const auto windAxisYVar = resolveSeedTarget("wind.vector.axis_y");
+                const auto climateVar = resolveSeedTarget("climate.current");
+                const auto soilFertilityVar = resolveSeedTarget("soil.fertility");
+                const auto vegetationVar = resolveSeedTarget("vegetation.current");
+                const auto resourcesVar = resolveSeedTarget("resources.current");
+                const auto eventSignalVar = resolveSeedTarget("events.signal");
+                const auto eventWaterDeltaVar = resolveSeedTarget("events.water_delta");
+                const auto eventTemperatureDeltaVar = resolveSeedTarget("events.temperature_delta");
+                const std::optional<std::string> seedProbeVar = stateStore_.hasField("seed_probe")
+                    ? std::optional<std::string>("seed_probe")
+                    : std::nullopt;
 
                 for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
                     for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
@@ -523,27 +553,26 @@ void Runtime::start() {
                         const float resources = std::clamp(0.15f + 0.55f * vegetation + 0.15f * water + 0.15f * biomeNoise, 0.0f, 1.0f);
                         const float eventSignal = std::clamp(0.15f + 0.85f * fbm2D(noiseSeedA, domainX * 10.0f + 3.0f, domainY * 10.0f + 5.0f, 3, 2.1f, 0.58f), 0.0f, 1.0f);
 
-                        const auto writeIfPresent = [&](const std::string& variableName, const float value) {
-                            if (stateStore_.hasField(variableName)) {
-                                seedWriter.setScalar(variableName, Cell{x, y}, value);
+                        const auto writeIfResolved = [&](const std::optional<std::string>& variableName, const float value) {
+                            if (variableName.has_value()) {
+                                seedWriter.setScalar(*variableName, Cell{x, y}, value);
                             }
                         };
 
-                        writeIfPresent("terrain_elevation_h", elevation);
-                        writeIfPresent("surface_water_w", water);
-                        writeIfPresent("temperature_T", temperature);
-                        writeIfPresent("humidity_q", humidity);
-                        writeIfPresent("wind_u", wind);
-                        writeIfPresent("wind_v", windV);
-                        writeIfPresent("climate_index_c", climate);
-                        writeIfPresent("fertility_phi", fertility);
-                        writeIfPresent("vegetation_v", vegetation);
-                        writeIfPresent("resource_stock_r", resources);
-                        writeIfPresent("event_signal_e", eventSignal);
-                        writeIfPresent("event_water_delta", 0.0f);
-                        writeIfPresent("event_temperature_delta", 0.0f);
-                        writeIfPresent("bootstrap_marker", biomeNoise);
-                        writeIfPresent("seed_probe", continental);
+                        writeIfResolved(terrainElevationVar, elevation);
+                        writeIfResolved(hydrologyWaterVar, water);
+                        writeIfResolved(temperatureVar, temperature);
+                        writeIfResolved(humidityVar, humidity);
+                        writeIfResolved(windAxisXVar, wind);
+                        writeIfResolved(windAxisYVar, windV);
+                        writeIfResolved(climateVar, climate);
+                        writeIfResolved(soilFertilityVar, fertility);
+                        writeIfResolved(vegetationVar, vegetation);
+                        writeIfResolved(resourcesVar, resources);
+                        writeIfResolved(eventSignalVar, eventSignal);
+                        writeIfResolved(eventWaterDeltaVar, 0.0f);
+                        writeIfResolved(eventTemperatureDeltaVar, 0.0f);
+                        writeIfResolved(seedProbeVar, continental);
                     }
                 }
                 break;
@@ -652,15 +681,25 @@ void Runtime::initializeParameterControls() {
     }
 
     if (parameterControls_.empty()) {
-        if (stateStore_.hasField("event_water_delta")) {
+        const auto resolveControlTarget = [&](const std::string& semanticKey) -> std::optional<std::string> {
+            if (const auto alias = stateStore_.resolveFieldAlias(semanticKey); alias.has_value() && stateStore_.hasField(*alias)) {
+                return *alias;
+            }
+            if (stateStore_.hasField(semanticKey)) {
+                return semanticKey;
+            }
+            return std::nullopt;
+        };
+
+        if (const auto waterDeltaTarget = resolveControlTarget("events.water_delta"); waterDeltaTarget.has_value()) {
             parameterControls_.emplace(
                 "forcing.water_delta",
-                ParameterControl{"forcing.water_delta", "event_water_delta", 0.0f, -1.0f, 1.0f, 0.0f, "1"});
+                ParameterControl{"forcing.water_delta", *waterDeltaTarget, 0.0f, -1.0f, 1.0f, 0.0f, "1"});
         }
-        if (stateStore_.hasField("event_temperature_delta")) {
+        if (const auto temperatureDeltaTarget = resolveControlTarget("events.temperature_delta"); temperatureDeltaTarget.has_value()) {
             parameterControls_.emplace(
                 "forcing.temperature_delta",
-                ParameterControl{"forcing.temperature_delta", "event_temperature_delta", 0.0f, -1.0f, 1.0f, 0.0f, "1"});
+                ParameterControl{"forcing.temperature_delta", *temperatureDeltaTarget, 0.0f, -1.0f, 1.0f, 0.0f, "1"});
         }
     }
 }
@@ -1230,7 +1269,7 @@ bool Runtime::validateDeterminism(const std::vector<std::uint64_t>& referenceHas
     return true;
 }
 
-void Runtime::allocateCanonicalFields() {
+void Runtime::allocateRuntimeFieldsFromModelSpec() {
     std::uint32_t nextRuntimeVariableId = 1000u;
 
     if (config_.modelExecutionSpec.has_value()) {
@@ -1251,10 +1290,23 @@ void Runtime::allocateCanonicalFields() {
         }
     }
 
-    for (const auto& internalVariableName : std::vector<std::string>{"bootstrap_marker", "seed_probe"}) {
-        if (!stateStore_.hasField(internalVariableName)) {
-            stateStore_.allocateScalarField(VariableSpec{nextRuntimeVariableId++, internalVariableName});
+    for (const auto& subsystem : scheduler_.registeredSubsystems()) {
+        if (!subsystem) {
+            continue;
         }
+        for (const auto& writeKey : subsystem->declaredWriteSet()) {
+            if (writeKey.empty() || stateStore_.hasField(writeKey)) {
+                continue;
+            }
+            if (writeKey.find('.') != std::string::npos) {
+                continue;
+            }
+            stateStore_.allocateScalarField(VariableSpec{nextRuntimeVariableId++, writeKey});
+        }
+    }
+
+    if (!stateStore_.hasField("seed_probe")) {
+        stateStore_.allocateScalarField(VariableSpec{nextRuntimeVariableId++, "seed_probe"});
     }
 }
 

@@ -192,8 +192,8 @@ void test_model_execution_spec_loader() {
     const auto tempIt = std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "temperature");
     assert(tempIt != executionSpec.cellScalarVariableIds.end());
 
-    const auto windIt = std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "wind_velocity");
-    assert(windIt == executionSpec.cellScalarVariableIds.end());
+    const auto flowIt = std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "flow_velocity");
+    assert(flowIt == executionSpec.cellScalarVariableIds.end());
 
     const auto stageIt = std::find(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end(), "atmosphere");
     assert(stageIt != executionSpec.stageOrder.end());
@@ -227,7 +227,7 @@ void test_model_display_spec_loader() {
                 const std::string id = variable["id"].get<std::string>();
                 if (id == "water_height") {
                     variable["display_tags"] = {"water", "terrain"};
-                } else if (id == "wind_velocity") {
+                } else if (id == "flow_velocity") {
                     variable["display_tags"] = {"vector_x", "vector_y"};
                 } else if (id == "soil_water_fraction") {
                     variable["display_tags"] = {"moisture"};
@@ -237,8 +237,8 @@ void test_model_display_spec_loader() {
 
         model["display_channels"] = {
             {"terrain", {"water_height"}},
-            {"wind_u", {"wind_velocity"}},
-            {"wind_v", {"wind_velocity"}},
+            {"flow_x", {"flow_velocity"}},
+            {"flow_y", {"flow_velocity"}},
             {"moisture", {"soil_water_fraction"}}
         };
 
@@ -261,12 +261,12 @@ void test_model_display_spec_loader() {
     assert(std::find(waterIt->second.begin(), waterIt->second.end(), "terrain") != waterIt->second.end());
     assert(std::find(waterIt->second.begin(), waterIt->second.end(), "water") != waterIt->second.end());
 
-    const auto windIt = displaySpec.fieldTags.find("wind_velocity");
-    assert(windIt != displaySpec.fieldTags.end());
-    assert(std::find(windIt->second.begin(), windIt->second.end(), "vector_x") != windIt->second.end());
-    assert(std::find(windIt->second.begin(), windIt->second.end(), "vector_y") != windIt->second.end());
-    assert(std::find(windIt->second.begin(), windIt->second.end(), "wind_u") != windIt->second.end());
-    assert(std::find(windIt->second.begin(), windIt->second.end(), "wind_v") != windIt->second.end());
+    const auto flowIt2 = displaySpec.fieldTags.find("flow_velocity");
+    assert(flowIt2 != displaySpec.fieldTags.end());
+    assert(std::find(flowIt2->second.begin(), flowIt2->second.end(), "vector_x") != flowIt2->second.end());
+    assert(std::find(flowIt2->second.begin(), flowIt2->second.end(), "vector_y") != flowIt2->second.end());
+    assert(std::find(flowIt2->second.begin(), flowIt2->second.end(), "flow_x") != flowIt2->second.end());
+    assert(std::find(flowIt2->second.begin(), flowIt2->second.end(), "flow_y") != flowIt2->second.end());
 
     const auto soilIt = displaySpec.fieldTags.find("soil_water_fraction");
     assert(soilIt != displaySpec.fieldTags.end());

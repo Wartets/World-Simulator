@@ -1,4 +1,5 @@
 #include "ws/app/shell_support.hpp"
+#include "ws/core/subsystems/subsystems.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -231,8 +232,13 @@ std::vector<ModelCatalogEntry> listAvailableModels(const std::filesystem::path& 
 }
 
 ProfileResolverInput buildProfileInput(const ModelTier tier) {
-    (void)tier;
     ProfileResolverInput input;
+    for (const auto& subsystem : makePhase4Subsystems()) {
+        if (!subsystem) {
+            continue;
+        }
+        input.requestedSubsystemTiers[subsystem->name()] = tier;
+    }
     input.compatibilityAssumptions = {
         "interactive_shell",
         "runtime_manual_control"

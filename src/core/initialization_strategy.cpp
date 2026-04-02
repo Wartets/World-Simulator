@@ -26,9 +26,26 @@ float hash01(const std::uint64_t seed, const int x, const int y) {
     return static_cast<float>(top24) / static_cast<float>(0xFFFFFFu);
 }
 
+std::string resolveTargetVariable(StateStore& stateStore, const std::string& token, const std::string& modeName) {
+    if (token.empty()) {
+        throw std::runtime_error("Initialization target token is empty for mode: " + modeName);
+    }
+    if (stateStore.hasField(token)) {
+        return token;
+    }
+    if (const auto alias = stateStore.resolveFieldAlias(token); alias.has_value() && stateStore.hasField(*alias)) {
+        return *alias;
+    }
+
+    const auto generatedId = static_cast<std::uint32_t>(1000000u + stateStore.variableNames().size());
+    stateStore.allocateScalarField(VariableSpec{generatedId, token});
+    return token;
+}
+
 void applyConway(StateStore& stateStore, const RuntimeConfig& config) {
     const auto& p = config.initialConditions.conway;
-    const std::string targetVariable = p.targetVariable.empty() ? "vegetation_v" : p.targetVariable;
+    const std::string targetToken = p.targetVariable.empty() ? "initialization.conway.target" : p.targetVariable;
+    const std::string targetVariable = resolveTargetVariable(stateStore, targetToken, "conway");
     StateStore::WriteSession seedWriter(stateStore, "runtime_seed_pipeline", std::vector<std::string>{targetVariable});
 
     const float aliveProbability = std::clamp(p.aliveProbability, 0.0f, 1.0f);
@@ -90,8 +107,10 @@ void applyConway(StateStore& stateStore, const RuntimeConfig& config) {
 
 void applyGrayScott(StateStore& stateStore, const RuntimeConfig& config) {
     const auto& p = config.initialConditions.grayScott;
-    const std::string targetA = p.targetVariableA.empty() ? "resource_stock_r" : p.targetVariableA;
-    const std::string targetB = p.targetVariableB.empty() ? "vegetation_v" : p.targetVariableB;
+    const std::string targetAToken = p.targetVariableA.empty() ? "initialization.gray_scott.target_a" : p.targetVariableA;
+    const std::string targetBToken = p.targetVariableB.empty() ? "initialization.gray_scott.target_b" : p.targetVariableB;
+    const std::string targetA = resolveTargetVariable(stateStore, targetAToken, "gray_scott");
+    const std::string targetB = resolveTargetVariable(stateStore, targetBToken, "gray_scott");
     StateStore::WriteSession seedWriter(stateStore, "runtime_seed_pipeline", std::vector<std::string>{targetA, targetB});
 
     for (std::uint32_t y = 0; y < config.grid.height; ++y) {
@@ -127,7 +146,8 @@ void applyGrayScott(StateStore& stateStore, const RuntimeConfig& config) {
 
 void applyWaves(StateStore& stateStore, const RuntimeConfig& config) {
     const auto& p = config.initialConditions.waves;
-    const std::string targetVariable = p.targetVariable.empty() ? "surface_water_w" : p.targetVariable;
+    const std::string targetToken = p.targetVariable.empty() ? "initialization.waves.target" : p.targetVariable;
+    const std::string targetVariable = resolveTargetVariable(stateStore, targetToken, "waves");
     StateStore::WriteSession seedWriter(stateStore, "runtime_seed_pipeline", std::vector<std::string>{targetVariable});
     const float centerX = static_cast<float>(config.grid.width) * 0.5f;
     const float centerY = static_cast<float>(config.grid.height) * 0.5f;

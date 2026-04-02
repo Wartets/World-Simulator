@@ -73,7 +73,7 @@ ScenarioResult runScenario(const ws::ModelTier tier, const std::uint64_t seed) {
 
     ws::RuntimeEvent rainPulse;
     rainPulse.eventName = "exogenous_rain";
-    rainPulse.scalarPatches.push_back(ws::ScalarWritePatch{"event_signal_e", ws::Cell{3, 4}, 0.9f});
+    rainPulse.scalarPatches.push_back(ws::ScalarWritePatch{"events.signal", ws::Cell{3, 4}, 0.9f});
     runtime.enqueueEvent(std::move(rainPulse));
 
     for (std::uint64_t step = 0; step < 32; ++step) {
@@ -85,9 +85,9 @@ ScenarioResult runScenario(const ws::ModelTier tier, const std::uint64_t seed) {
     ScenarioResult result;
     result.identityHash = runtime.snapshot().runSignature.identityHash();
     result.stateHash = runtime.snapshot().stateHash;
-    result.avgWater = fieldAverage(checkpoint.stateSnapshot, "surface_water_w");
-    result.avgTemperature = fieldAverage(checkpoint.stateSnapshot, "temperature_T");
-    result.avgResources = fieldAverage(checkpoint.stateSnapshot, "resource_stock_r");
+    result.avgWater = fieldAverage(checkpoint.stateSnapshot, "hydrology.water");
+    result.avgTemperature = fieldAverage(checkpoint.stateSnapshot, "temperature.current");
+    result.avgResources = fieldAverage(checkpoint.stateSnapshot, "resources.current");
 
     runtime.stop();
     return result;
@@ -101,28 +101,29 @@ void verifyOwnershipContracts() {
 
     const auto ownership = scheduler.writeOwnershipByVariable();
     const std::vector<std::string> expectedOwnedVariables = {
-        "terrain_elevation_h",
-        "surface_water_w",
-        "temperature_T",
-        "humidity_q",
-        "wind_u",
-        "climate_index_c",
-        "fertility_phi",
-        "vegetation_v",
-        "resource_stock_r",
-        "event_signal_e",
-        "event_water_delta",
-        "event_temperature_delta"
+        "generation.elevation",
+        "hydrology.water",
+        "temperature.current",
+        "humidity.current",
+        "wind.vector.axis_x",
+        "wind.vector.axis_y",
+        "climate.current",
+        "soil.fertility",
+        "vegetation.current",
+        "resources.current",
+        "events.signal",
+        "events.water_delta",
+        "events.temperature_delta"
     };
 
     for (const auto& variable : expectedOwnedVariables) {
         assert(ownership.contains(variable));
     }
 
-    assert(ownership.at("terrain_elevation_h") == "generation");
-    assert(ownership.at("surface_water_w") == "hydrology");
-    assert(ownership.at("temperature_T") == "temperature");
-    assert(ownership.at("event_signal_e") == "events");
+    assert(ownership.at("generation.elevation") == "generation");
+    assert(ownership.at("hydrology.water") == "hydrology");
+    assert(ownership.at("temperature.current") == "temperature");
+    assert(ownership.at("events.signal") == "events");
 }
 
 void verifyInitializationAndStepping() {

@@ -59,7 +59,7 @@ int main() {
 
     ws::InitialConditionConfig conwayLow;
     conwayLow.type = ws::InitialConditionType::Conway;
-    conwayLow.conway.targetVariable = "vegetation_v";
+    conwayLow.conway.targetVariable = "initialization.conway.target";
     conwayLow.conway.aliveProbability = 0.15f;
 
     ws::InitialConditionConfig conwayHigh = conwayLow;

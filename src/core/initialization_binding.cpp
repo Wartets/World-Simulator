@@ -619,9 +619,151 @@ bool loadModelExecutionSpec(
             " aliases=" + std::to_string(executionSpec.semanticFieldAliases.size());
         return true;
     } catch (const std::exception& exception) {
-        executionSpec = ModelExecutionSpec{};
-        message = std::string("model_execution_spec_failed error=") + exception.what();
-        return false;
+        // Fallback path for model packages where IR parsing fails but model.json / metadata.json are valid.
+        try {
+            if (!std::filesystem::is_directory(modelPath)) {
+                executionSpec = ModelExecutionSpec{};
+                message = std::string("model_execution_spec_failed error=") + exception.what();
+                return false;
+            }
+
+            const auto modelJsonPath = modelPath / "model.json";
+            if (!std::filesystem::exists(modelJsonPath)) {
+                executionSpec = ModelExecutionSpec{};
+                message = std::string("model_execution_spec_failed error=") + exception.what();
+                return false;
+            }
+
+            std::ifstream modelIn(modelJsonPath);
+            if (!modelIn) {
+                executionSpec = ModelExecutionSpec{};
+                message = "model_execution_spec_failed reason=file_open_failed path=" + modelJsonPath.string();
+                return false;
+            }
+
+            const std::string modelJson((std::istreambuf_iterator<char>(modelIn)), std::istreambuf_iterator<char>());
+            const json parsed = json::parse(modelJson);
+
+            json metadataParsed;
+            const auto metadataJsonPath = modelPath / "metadata.json";
+            if (std::filesystem::exists(metadataJsonPath)) {
+                std::ifstream metadataIn(metadataJsonPath);
+                if (metadataIn) {
+                    const std::string metadataJson((std::istreambuf_iterator<char>(metadataIn)), std::istreambuf_iterator<char>());
+                    if (!metadataJson.empty()) {
+                        metadataParsed = json::parse(metadataJson);
+                    }
+                }
+            }
+
+            executionSpec = ModelExecutionSpec{};
+            if (parsed.contains("variables") && parsed["variables"].is_array()) {
+                for (const auto& variable : parsed["variables"]) {
+                    if (!variable.is_object()) {
+                        continue;
+                    }
+                    if (!variable.contains("id") || !variable["id"].is_string()) {
+                        continue;
+                    }
+
+                    const std::string support = variable.contains("support") && variable["support"].is_string()
+                        ? variable["support"].get<std::string>()
+                        : std::string{};
+                    if (support != "cell") {
+                        continue;
+                    }
+
+                    const std::string type = variable.contains("type") && variable["type"].is_string()
+                        ? variable["type"].get<std::string>()
+                        : std::string{"f32"};
+                    const bool scalarType =
+                        (type == "f32") || (type == "f64") ||
+                        (type == "i32") || (type == "u32") ||
+                        (type == "bool");
+                    if (!scalarType) {
+                        continue;
+                    }
+
+                    executionSpec.cellScalarVariableIds.push_back(variable["id"].get<std::string>());
+                }
+            }
+
+            if (parsed.contains("stages") && parsed["stages"].is_array()) {
+                for (const auto& stage : parsed["stages"]) {
+                    if (!stage.is_object() || !stage.contains("id") || !stage["id"].is_string()) {
+                        continue;
+                    }
+                    executionSpec.stageOrder.push_back(stage["id"].get<std::string>());
+                }
+            }
+
+            if (parsed.contains("diagnostics") && parsed["diagnostics"].is_object()) {
+                const auto& diagnostics = parsed["diagnostics"];
+                if (diagnostics.contains("conserved_variables") && diagnostics["conserved_variables"].is_array()) {
+                    for (const auto& name : diagnostics["conserved_variables"]) {
+                        if (name.is_string()) {
+                            executionSpec.conservedVariables.push_back(name.get<std::string>());
+                        }
+                    }
+                }
+                if (executionSpec.conservedVariables.empty() &&
+                    diagnostics.contains("conservation") && diagnostics["conservation"].is_array()) {
+                    for (const auto& name : diagnostics["conservation"]) {
+                        if (name.is_string()) {
+                            executionSpec.conservedVariables.push_back(name.get<std::string>());
+                        }
+                    }
+                }
+            }
+
+            if (metadataParsed.is_object() &&
+                metadataParsed.contains("runtime_field_aliases") &&
+                metadataParsed["runtime_field_aliases"].is_object()) {
+                for (auto it = metadataParsed["runtime_field_aliases"].begin();
+                     it != metadataParsed["runtime_field_aliases"].end();
+                     ++it) {
+                    if (!it.value().is_string()) {
+                        continue;
+                    }
+                    const std::string semanticKey = it.key();
+                    const std::string variableId = it.value().get<std::string>();
+                    if (semanticKey.empty() || variableId.empty()) {
+                        continue;
+                    }
+                    executionSpec.semanticFieldAliases.insert_or_assign(semanticKey, variableId);
+                }
+            }
+
+            auto normalize = [](std::vector<std::string>& values) {
+                values.erase(
+                    std::remove_if(values.begin(), values.end(), [](const std::string& value) { return value.empty(); }),
+                    values.end());
+                std::sort(values.begin(), values.end());
+                values.erase(std::unique(values.begin(), values.end()), values.end());
+            };
+
+            normalize(executionSpec.cellScalarVariableIds);
+            normalize(executionSpec.conservedVariables);
+            executionSpec.stageOrder.erase(
+                std::remove_if(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end(), [](const std::string& stage) {
+                    return stage.empty();
+                }),
+                executionSpec.stageOrder.end());
+            executionSpec.stageOrder.erase(
+                std::unique(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end()),
+                executionSpec.stageOrder.end());
+
+            message = "model_execution_spec_ready_fallback variables=" + std::to_string(executionSpec.cellScalarVariableIds.size()) +
+                " stages=" + std::to_string(executionSpec.stageOrder.size()) +
+                " conserved=" + std::to_string(executionSpec.conservedVariables.size()) +
+                " aliases=" + std::to_string(executionSpec.semanticFieldAliases.size());
+            return true;
+        } catch (const std::exception& fallbackException) {
+            executionSpec = ModelExecutionSpec{};
+            message = std::string("model_execution_spec_failed error=") + exception.what() +
+                " fallback_error=" + fallbackException.what();
+            return false;
+        }
     }
 }
 

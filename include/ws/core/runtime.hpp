@@ -50,7 +50,7 @@ struct TerrainParams {
 };
 
 struct ConwayParams {
-    std::string targetVariable = "vegetation_v";
+    std::string targetVariable = "initialization.conway.target";
     float aliveProbability = 0.5f;
     float aliveValue = 1.0f;
     float deadValue = 0.0f;
@@ -58,8 +58,8 @@ struct ConwayParams {
 };
 
 struct GrayScottParams {
-    std::string targetVariableA = "resource_stock_r";
-    std::string targetVariableB = "vegetation_v";
+    std::string targetVariableA = "initialization.gray_scott.target_a";
+    std::string targetVariableB = "initialization.gray_scott.target_b";
     float backgroundA = 1.0f;
     float backgroundB = 0.0f;
     float spotValueA = 0.0f;
@@ -70,7 +70,7 @@ struct GrayScottParams {
 };
 
 struct WaveParams {
-    std::string targetVariable = "surface_water_w";
+    std::string targetVariable = "initialization.waves.target";
     float baseline = 0.0f;
     float dropAmplitude = 1.0f;
     float dropRadius = 5.0f;
@@ -218,7 +218,7 @@ public:
     void clearProbes() noexcept;
 
 private:
-    void allocateCanonicalFields();
+    void allocateRuntimeFieldsFromModelSpec();
     void initializeParameterControls();
     void stepImpl(bool controlledByRuntimeControl);
     void trace(

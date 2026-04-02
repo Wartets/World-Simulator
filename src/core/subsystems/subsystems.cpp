@@ -1,4 +1,5 @@
 ﻿#include "ws/core/subsystems/subsystems.hpp"
+#include "ws/core/field_resolver.hpp"
 #include "ws/core/openmp_support.hpp"
 
 #include <algorithm>
@@ -14,11 +15,32 @@ float clampRange(const float value, const float low, const float high) {
     return std::clamp(value, low, high);
 }
 
+StateStore::FieldHandle resolveReadHandle(
+    const StateStore& stateStore,
+    const std::string& semanticKey,
+    const std::string& subsystemName) {
+    return FieldResolver::resolveRequiredFieldHandle(stateStore, semanticKey, subsystemName);
+}
+
+StateStore::FieldHandle resolveWriteHandle(
+    const StateStore& stateStore,
+    StateStore::WriteSession& writeSession,
+    const std::string& semanticKey,
+    const std::string& subsystemName) {
+    const auto variableName = FieldResolver::resolveRequiredField(stateStore, semanticKey, subsystemName);
+    const auto handle = writeSession.getFieldHandle(variableName);
+    if (handle == StateStore::InvalidHandle) {
+        throw std::runtime_error(
+            subsystemName + ": variable '" + variableName + "' is not writable in current session");
+    }
+    return handle;
+}
+
 } // namespace
 
 std::string GenerationSubsystem::name() const { return "generation"; }
-std::vector<std::string> GenerationSubsystem::declaredReadSet() const { return {"seed_probe", "terrain_elevation_h"}; }
-std::vector<std::string> GenerationSubsystem::declaredWriteSet() const { return {"terrain_elevation_h"}; }
+std::vector<std::string> GenerationSubsystem::declaredReadSet() const { return {"generation.elevation"}; }
+std::vector<std::string> GenerationSubsystem::declaredWriteSet() const { return {"generation.elevation"}; }
 
 void GenerationSubsystem::initialize(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
     (void)stateStore;
@@ -31,8 +53,8 @@ void GenerationSubsystem::initialize(const StateStore& stateStore, StateStore::W
 void GenerationSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
     (void)profile;
 
-    const auto h_terrain = stateStore.getFieldHandle("terrain_elevation_h");
-    const auto w_terrain = writeSession.getFieldHandle("terrain_elevation_h");
+    const auto h_terrain = resolveReadHandle(stateStore, "generation.elevation", name());
+    const auto w_terrain = resolveWriteHandle(stateStore, writeSession, "generation.elevation", name());
     const GridSpec& grid = stateStore.grid();
     const float* h_terrain_ptr = stateStore.scalarFieldRawPtr(h_terrain);
     float* w_terrain_ptr = stateStore.scalarFieldRawPtrMut(w_terrain);
@@ -59,8 +81,8 @@ void GenerationSubsystem::step(const StateStore& stateStore, StateStore::WriteSe
 }
 
 std::string HydrologySubsystem::name() const { return "hydrology"; }
-std::vector<std::string> HydrologySubsystem::declaredReadSet() const { return {"terrain_elevation_h", "humidity_q", "climate_index_c", "event_water_delta", "surface_water_w", "wind_u", "wind_v"}; }
-std::vector<std::string> HydrologySubsystem::declaredWriteSet() const { return {"surface_water_w"}; }
+std::vector<std::string> HydrologySubsystem::declaredReadSet() const { return {"hydrology.elevation", "hydrology.humidity", "hydrology.climate", "hydrology.event_water_delta", "hydrology.water", "hydrology.transport.axis_x", "hydrology.transport.axis_y"}; }
+std::vector<std::string> HydrologySubsystem::declaredWriteSet() const { return {"hydrology.water"}; }
 
 void HydrologySubsystem::initialize(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
     (void)stateStore;
@@ -72,14 +94,14 @@ void HydrologySubsystem::step(const StateStore& stateStore, StateStore::WriteSes
     (void)profile;
     double total = 0.0;
     
-    const auto h_elevation = stateStore.getFieldHandle("terrain_elevation_h");
-    const auto h_humidity = stateStore.getFieldHandle("humidity_q");
-    const auto h_climate = stateStore.getFieldHandle("climate_index_c");
-    const auto h_water = stateStore.getFieldHandle("surface_water_w");
-    const auto h_eventWater = stateStore.getFieldHandle("event_water_delta");
-    const auto h_wind = stateStore.getFieldHandle("wind_u");
-    const auto h_wind_v = stateStore.getFieldHandle("wind_v");
-    const auto w_water = writeSession.getFieldHandle("surface_water_w");
+    const auto h_elevation = resolveReadHandle(stateStore, "hydrology.elevation", name());
+    const auto h_humidity = resolveReadHandle(stateStore, "hydrology.humidity", name());
+    const auto h_climate = resolveReadHandle(stateStore, "hydrology.climate", name());
+    const auto h_water = resolveReadHandle(stateStore, "hydrology.water", name());
+    const auto h_eventWater = resolveReadHandle(stateStore, "hydrology.event_water_delta", name());
+    const auto h_wind = resolveReadHandle(stateStore, "hydrology.transport.axis_x", name());
+    const auto h_wind_v = resolveReadHandle(stateStore, "hydrology.transport.axis_y", name());
+    const auto w_water = resolveWriteHandle(stateStore, writeSession, "hydrology.water", name());
     
     const GridSpec& grid = stateStore.grid();
     const float* h_elevation_ptr = stateStore.scalarFieldRawPtr(h_elevation);
@@ -131,8 +153,8 @@ void HydrologySubsystem::step(const StateStore& stateStore, StateStore::WriteSes
 }
 
 std::string TemperatureSubsystem::name() const { return "temperature"; }
-std::vector<std::string> TemperatureSubsystem::declaredReadSet() const { return {"climate_index_c", "wind_u", "event_temperature_delta", "temperature_T", "humidity_q"}; }
-std::vector<std::string> TemperatureSubsystem::declaredWriteSet() const { return {"temperature_T"}; }
+std::vector<std::string> TemperatureSubsystem::declaredReadSet() const { return {"temperature.elevation", "temperature.current", "temperature.climate", "temperature.transport.axis_x", "temperature.event_delta", "temperature.humidity"}; }
+std::vector<std::string> TemperatureSubsystem::declaredWriteSet() const { return {"temperature.current"}; }
 
 void TemperatureSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
     (void)writeSession;
@@ -148,14 +170,14 @@ void TemperatureSubsystem::step(const StateStore& stateStore, StateStore::WriteS
     // That's why temperature is totally flat to start! We should inject some variance based on terrain.
     // User requested "is the same everywhere" - actually, it just updates flatly as well if terrain isn't affecting it fast enough.
     // Terrain has elevation, we should add an elevation effect!
-    const auto h_terrain = stateStore.getFieldHandle("terrain_elevation_h");
-    
-    const auto h_prior = stateStore.getFieldHandle("temperature_T");
-    const auto h_climate = stateStore.getFieldHandle("climate_index_c");
-    const auto h_wind = stateStore.getFieldHandle("wind_u");
-    const auto h_eventDelta = stateStore.getFieldHandle("event_temperature_delta");
-    const auto h_humidity = stateStore.getFieldHandle("humidity_q");
-    const auto w_temp = writeSession.getFieldHandle("temperature_T");
+    const auto h_terrain = resolveReadHandle(stateStore, "temperature.elevation", name());
+
+    const auto h_prior = resolveReadHandle(stateStore, "temperature.current", name());
+    const auto h_climate = resolveReadHandle(stateStore, "temperature.climate", name());
+    const auto h_wind = resolveReadHandle(stateStore, "temperature.transport.axis_x", name());
+    const auto h_eventDelta = resolveReadHandle(stateStore, "temperature.event_delta", name());
+    const auto h_humidity = resolveReadHandle(stateStore, "temperature.humidity", name());
+    const auto w_temp = resolveWriteHandle(stateStore, writeSession, "temperature.current", name());
     
     const GridSpec& grid = stateStore.grid();
     const float* h_terrain_ptr = stateStore.scalarFieldRawPtr(h_terrain);
@@ -201,8 +223,8 @@ void TemperatureSubsystem::step(const StateStore& stateStore, StateStore::WriteS
 }
 
 std::string HumiditySubsystem::name() const { return "humidity"; }
-std::vector<std::string> HumiditySubsystem::declaredReadSet() const { return {"surface_water_w", "temperature_T", "vegetation_v", "humidity_q", "climate_index_c"}; }
-std::vector<std::string> HumiditySubsystem::declaredWriteSet() const { return {"humidity_q"}; }
+std::vector<std::string> HumiditySubsystem::declaredReadSet() const { return {"humidity.water", "humidity.temperature", "humidity.vegetation", "humidity.current", "humidity.climate"}; }
+std::vector<std::string> HumiditySubsystem::declaredWriteSet() const { return {"humidity.current"}; }
 
 void HumiditySubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
     (void)writeSession;
@@ -212,12 +234,12 @@ void HumiditySubsystem::initialize(const StateStore&, StateStore::WriteSession& 
 void HumiditySubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
     (void)profile;
     
-    const auto h_water = stateStore.getFieldHandle("surface_water_w");
-    const auto h_temp = stateStore.getFieldHandle("temperature_T");
-    const auto h_veg = stateStore.getFieldHandle("vegetation_v");
-    const auto h_hum = stateStore.getFieldHandle("humidity_q");
-    const auto h_cli = stateStore.getFieldHandle("climate_index_c");
-    const auto w_hum = writeSession.getFieldHandle("humidity_q");
+    const auto h_water = resolveReadHandle(stateStore, "humidity.water", name());
+    const auto h_temp = resolveReadHandle(stateStore, "humidity.temperature", name());
+    const auto h_veg = resolveReadHandle(stateStore, "humidity.vegetation", name());
+    const auto h_hum = resolveReadHandle(stateStore, "humidity.current", name());
+    const auto h_cli = resolveReadHandle(stateStore, "humidity.climate", name());
+    const auto w_hum = resolveWriteHandle(stateStore, writeSession, "humidity.current", name());
     
     const GridSpec& grid = stateStore.grid();
     const float* h_water_ptr = stateStore.scalarFieldRawPtr(h_water);
@@ -254,8 +276,8 @@ void HumiditySubsystem::step(const StateStore& stateStore, StateStore::WriteSess
 }
 
 std::string WindSubsystem::name() const { return "wind"; }
-std::vector<std::string> WindSubsystem::declaredReadSet() const { return {"temperature_T", "terrain_elevation_h", "humidity_q"}; }
-std::vector<std::string> WindSubsystem::declaredWriteSet() const { return {"wind_u", "wind_v"}; }
+std::vector<std::string> WindSubsystem::declaredReadSet() const { return {"wind.temperature", "wind.elevation", "wind.humidity"}; }
+std::vector<std::string> WindSubsystem::declaredWriteSet() const { return {"wind.vector.axis_x", "wind.vector.axis_y"}; }
 
 void WindSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile&) {
     (void)writeSession;
@@ -264,11 +286,11 @@ void WindSubsystem::initialize(const StateStore&, StateStore::WriteSession& writ
 void WindSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
     (void)profile;
     
-    const auto h_temp = stateStore.getFieldHandle("temperature_T");
-    const auto h_terrain = stateStore.getFieldHandle("terrain_elevation_h");
-    const auto h_hum = stateStore.getFieldHandle("humidity_q");
-    const auto w_wind = writeSession.getFieldHandle("wind_u");
-    const auto w_wind_v = writeSession.getFieldHandle("wind_v");
+    const auto h_temp = resolveReadHandle(stateStore, "wind.temperature", name());
+    const auto h_terrain = resolveReadHandle(stateStore, "wind.elevation", name());
+    const auto h_hum = resolveReadHandle(stateStore, "wind.humidity", name());
+    const auto w_wind = resolveWriteHandle(stateStore, writeSession, "wind.vector.axis_x", name());
+    const auto w_wind_v = resolveWriteHandle(stateStore, writeSession, "wind.vector.axis_y", name());
     
     const GridSpec& grid = stateStore.grid();
     const float* h_temp_ptr = stateStore.scalarFieldRawPtr(h_temp);
@@ -310,8 +332,8 @@ void WindSubsystem::step(const StateStore& stateStore, StateStore::WriteSession&
 }
 
 std::string ClimateSubsystem::name() const { return "climate"; }
-std::vector<std::string> ClimateSubsystem::declaredReadSet() const { return {"temperature_T", "humidity_q", "wind_u", "climate_index_c", "surface_water_w"}; }
-std::vector<std::string> ClimateSubsystem::declaredWriteSet() const { return {"climate_index_c"}; }
+std::vector<std::string> ClimateSubsystem::declaredReadSet() const { return {"climate.temperature", "climate.humidity", "climate.transport.axis_x", "climate.current", "climate.water"}; }
+std::vector<std::string> ClimateSubsystem::declaredWriteSet() const { return {"climate.current"}; }
 
 void ClimateSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile&) {
     (void)writeSession;
@@ -320,12 +342,12 @@ void ClimateSubsystem::initialize(const StateStore&, StateStore::WriteSession& w
 void ClimateSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
     (void)profile;
 
-    const auto h_temp = stateStore.getFieldHandle("temperature_T");
-    const auto h_hum = stateStore.getFieldHandle("humidity_q");
-    const auto h_wind = stateStore.getFieldHandle("wind_u");
-    const auto h_cli = stateStore.getFieldHandle("climate_index_c");
-    const auto h_water = stateStore.getFieldHandle("surface_water_w");
-    const auto w_cli = writeSession.getFieldHandle("climate_index_c");
+    const auto h_temp = resolveReadHandle(stateStore, "climate.temperature", name());
+    const auto h_hum = resolveReadHandle(stateStore, "climate.humidity", name());
+    const auto h_wind = resolveReadHandle(stateStore, "climate.transport.axis_x", name());
+    const auto h_cli = resolveReadHandle(stateStore, "climate.current", name());
+    const auto h_water = resolveReadHandle(stateStore, "climate.water", name());
+    const auto w_cli = resolveWriteHandle(stateStore, writeSession, "climate.current", name());
     
     const GridSpec& grid = stateStore.grid();
     const float* h_temp_ptr = stateStore.scalarFieldRawPtr(h_temp);
@@ -363,8 +385,8 @@ void ClimateSubsystem::step(const StateStore& stateStore, StateStore::WriteSessi
 }
 
 std::string SoilSubsystem::name() const { return "soil"; }
-std::vector<std::string> SoilSubsystem::declaredReadSet() const { return {"surface_water_w", "temperature_T", "fertility_phi", "climate_index_c"}; }
-std::vector<std::string> SoilSubsystem::declaredWriteSet() const { return {"fertility_phi"}; }
+std::vector<std::string> SoilSubsystem::declaredReadSet() const { return {"soil.water", "soil.temperature", "soil.fertility", "soil.climate"}; }
+std::vector<std::string> SoilSubsystem::declaredWriteSet() const { return {"soil.fertility"}; }
 
 void SoilSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
     (void)writeSession;
@@ -374,11 +396,11 @@ void SoilSubsystem::initialize(const StateStore&, StateStore::WriteSession& writ
 void SoilSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
     (void)profile;
 
-    const auto h_water = stateStore.getFieldHandle("surface_water_w");
-    const auto h_temp = stateStore.getFieldHandle("temperature_T");
-    const auto h_fert = stateStore.getFieldHandle("fertility_phi");
-    const auto h_cli = stateStore.getFieldHandle("climate_index_c");
-    const auto w_fert = writeSession.getFieldHandle("fertility_phi");
+    const auto h_water = resolveReadHandle(stateStore, "soil.water", name());
+    const auto h_temp = resolveReadHandle(stateStore, "soil.temperature", name());
+    const auto h_fert = resolveReadHandle(stateStore, "soil.fertility", name());
+    const auto h_cli = resolveReadHandle(stateStore, "soil.climate", name());
+    const auto w_fert = resolveWriteHandle(stateStore, writeSession, "soil.fertility", name());
     
     const GridSpec& grid = stateStore.grid();
     const float* h_water_ptr = stateStore.scalarFieldRawPtr(h_water);
@@ -410,8 +432,8 @@ void SoilSubsystem::step(const StateStore& stateStore, StateStore::WriteSession&
 }
 
 std::string VegetationSubsystem::name() const { return "vegetation"; }
-std::vector<std::string> VegetationSubsystem::declaredReadSet() const { return {"fertility_phi", "humidity_q", "temperature_T", "resource_stock_r", "vegetation_v", "surface_water_w"}; }
-std::vector<std::string> VegetationSubsystem::declaredWriteSet() const { return {"vegetation_v"}; }
+std::vector<std::string> VegetationSubsystem::declaredReadSet() const { return {"vegetation.fertility", "vegetation.humidity", "vegetation.temperature", "vegetation.resources", "vegetation.current", "vegetation.water"}; }
+std::vector<std::string> VegetationSubsystem::declaredWriteSet() const { return {"vegetation.current"}; }
 
 void VegetationSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile&) {
     (void)writeSession;
@@ -420,13 +442,13 @@ void VegetationSubsystem::initialize(const StateStore&, StateStore::WriteSession
 void VegetationSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
     (void)profile;
 
-    const auto h_fert = stateStore.getFieldHandle("fertility_phi");
-    const auto h_hum = stateStore.getFieldHandle("humidity_q");
-    const auto h_temp = stateStore.getFieldHandle("temperature_T");
-    const auto h_res = stateStore.getFieldHandle("resource_stock_r");
-    const auto h_veg = stateStore.getFieldHandle("vegetation_v");
-    const auto h_water = stateStore.getFieldHandle("surface_water_w");
-    const auto w_veg = writeSession.getFieldHandle("vegetation_v");
+    const auto h_fert = resolveReadHandle(stateStore, "vegetation.fertility", name());
+    const auto h_hum = resolveReadHandle(stateStore, "vegetation.humidity", name());
+    const auto h_temp = resolveReadHandle(stateStore, "vegetation.temperature", name());
+    const auto h_res = resolveReadHandle(stateStore, "vegetation.resources", name());
+    const auto h_veg = resolveReadHandle(stateStore, "vegetation.current", name());
+    const auto h_water = resolveReadHandle(stateStore, "vegetation.water", name());
+    const auto w_veg = resolveWriteHandle(stateStore, writeSession, "vegetation.current", name());
     
     const GridSpec& grid = stateStore.grid();
     const float* h_fert_ptr = stateStore.scalarFieldRawPtr(h_fert);
@@ -463,8 +485,8 @@ void VegetationSubsystem::step(const StateStore& stateStore, StateStore::WriteSe
 }
 
 std::string ResourcesSubsystem::name() const { return "resources"; }
-std::vector<std::string> ResourcesSubsystem::declaredReadSet() const { return {"fertility_phi", "vegetation_v", "climate_index_c", "resource_stock_r", "surface_water_w"}; }
-std::vector<std::string> ResourcesSubsystem::declaredWriteSet() const { return {"resource_stock_r"}; }
+std::vector<std::string> ResourcesSubsystem::declaredReadSet() const { return {"resources.fertility", "resources.vegetation", "resources.climate", "resources.current", "resources.water"}; }
+std::vector<std::string> ResourcesSubsystem::declaredWriteSet() const { return {"resources.current"}; }
 
 void ResourcesSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile& profile) {
     (void)writeSession;
@@ -475,12 +497,12 @@ void ResourcesSubsystem::step(const StateStore& stateStore, StateStore::WriteSes
     (void)profile;
     double totalResources = 0.0;
     
-    const auto h_fert = stateStore.getFieldHandle("fertility_phi");
-    const auto h_veg = stateStore.getFieldHandle("vegetation_v");
-    const auto h_cli = stateStore.getFieldHandle("climate_index_c");
-    const auto h_res = stateStore.getFieldHandle("resource_stock_r");
-    const auto h_water = stateStore.getFieldHandle("surface_water_w");
-    const auto w_res = writeSession.getFieldHandle("resource_stock_r");
+    const auto h_fert = resolveReadHandle(stateStore, "resources.fertility", name());
+    const auto h_veg = resolveReadHandle(stateStore, "resources.vegetation", name());
+    const auto h_cli = resolveReadHandle(stateStore, "resources.climate", name());
+    const auto h_res = resolveReadHandle(stateStore, "resources.current", name());
+    const auto h_water = resolveReadHandle(stateStore, "resources.water", name());
+    const auto w_res = resolveWriteHandle(stateStore, writeSession, "resources.current", name());
     
     const GridSpec& grid = stateStore.grid();
     const float* h_fert_ptr = stateStore.scalarFieldRawPtr(h_fert);
@@ -520,13 +542,16 @@ void ResourcesSubsystem::step(const StateStore& stateStore, StateStore::WriteSes
 }
 
 std::string EventSubsystem::name() const { return "events"; }
-std::vector<std::string> EventSubsystem::declaredReadSet() const { return {"event_signal_e", "temperature_T", "humidity_q"}; }
-std::vector<std::string> EventSubsystem::declaredWriteSet() const { return {"event_signal_e", "event_water_delta", "event_temperature_delta"}; }
+std::vector<std::string> EventSubsystem::declaredReadSet() const { return {"events.signal", "events.temperature", "events.humidity"}; }
+std::vector<std::string> EventSubsystem::declaredWriteSet() const { return {"events.signal", "events.water_delta", "events.temperature_delta"}; }
 
-void EventSubsystem::initialize(const StateStore&, StateStore::WriteSession& writeSession, const ModelProfile&) {
-    writeSession.fillScalar("event_signal_e", 0.0f);
-    writeSession.fillScalar("event_water_delta", 0.0f);
-    writeSession.fillScalar("event_temperature_delta", 0.0f);
+void EventSubsystem::initialize(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile&) {
+    const auto signal = FieldResolver::resolveRequiredField(stateStore, "events.signal", name());
+    const auto waterDelta = FieldResolver::resolveRequiredField(stateStore, "events.water_delta", name());
+    const auto temperatureDelta = FieldResolver::resolveRequiredField(stateStore, "events.temperature_delta", name());
+    writeSession.fillScalar(signal, 0.0f);
+    writeSession.fillScalar(waterDelta, 0.0f);
+    writeSession.fillScalar(temperatureDelta, 0.0f);
 }
 
 void EventSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
@@ -536,13 +561,13 @@ void EventSubsystem::step(const StateStore& stateStore, StateStore::WriteSession
     const float exogenousScale = 0.06f;
     const float coolingScale = -0.30f;
     
-    const auto h_event = stateStore.getFieldHandle("event_signal_e");
-    const auto h_temp = stateStore.getFieldHandle("temperature_T");
-    const auto h_hum = stateStore.getFieldHandle("humidity_q");
-    
-    const auto w_event = writeSession.getFieldHandle("event_signal_e");
-    const auto w_water = writeSession.getFieldHandle("event_water_delta");
-    const auto w_temp = writeSession.getFieldHandle("event_temperature_delta");
+    const auto h_event = resolveReadHandle(stateStore, "events.signal", name());
+    const auto h_temp = resolveReadHandle(stateStore, "events.temperature", name());
+    const auto h_hum = resolveReadHandle(stateStore, "events.humidity", name());
+
+    const auto w_event = resolveWriteHandle(stateStore, writeSession, "events.signal", name());
+    const auto w_water = resolveWriteHandle(stateStore, writeSession, "events.water_delta", name());
+    const auto w_temp = resolveWriteHandle(stateStore, writeSession, "events.temperature_delta", name());
 
     const GridSpec& grid = stateStore.grid();
     const float* h_event_ptr = stateStore.scalarFieldRawPtr(h_event);

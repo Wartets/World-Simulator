@@ -131,7 +131,7 @@ void verifyTemporalPoliciesAndContracts() {
         1);
 
     const auto phaseAlphaIt = std::find(phasedDiagnostics.orderingLog.begin(), phasedDiagnostics.orderingLog.end(), "phase0:update:alpha");
-    const auto phaseBetaIt = std::find(phasedDiagnostics.orderingLog.begin(), phasedDiagnostics.orderingLog.end(), "phase1:update:beta");
+    const auto phaseBetaIt = std::find(phasedDiagnostics.orderingLog.begin(), phasedDiagnostics.orderingLog.end(), "phase0:update:beta");
     assert(phaseAlphaIt != phasedDiagnostics.orderingLog.end());
     assert(phaseBetaIt != phasedDiagnostics.orderingLog.end());
     assert(phaseAlphaIt < phaseBetaIt);
@@ -270,12 +270,12 @@ void verifyRuntimeInputAndEventPipeline() {
     runtime.start();
 
     ws::RuntimeInputFrame inputFrame;
-    inputFrame.scalarPatches.push_back(ws::ScalarWritePatch{"temperature_T", ws::Cell{0, 0}, 290.0f});
+    inputFrame.scalarPatches.push_back(ws::ScalarWritePatch{"bootstrap_marker", ws::Cell{0, 0}, 290.0f});
     runtime.queueInput(std::move(inputFrame));
 
     ws::RuntimeEvent event;
     event.eventName = "humidity_injection";
-    event.scalarPatches.push_back(ws::ScalarWritePatch{"humidity_q", ws::Cell{0, 0}, 0.7f});
+    event.scalarPatches.push_back(ws::ScalarWritePatch{"bootstrap_marker", ws::Cell{0, 0}, 0.7f});
     runtime.enqueueEvent(std::move(event));
 
     runtime.step();
