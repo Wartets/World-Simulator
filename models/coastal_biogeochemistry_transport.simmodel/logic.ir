@@ -1,0 +1,173 @@
+// Coastal Biogeochemistry and Transport Model
+// Coupled estuarine transport + ecosystem process model.
+
+@interaction(advance_time)
+func advance_time() {
+    %time = GlobalLoad("time")
+    %dt = GlobalLoad("dt")
+    Store("time", Add(%time, %dt))
+}
+
+@interaction(compute_flow_and_mixing)
+func compute_flow_and_mixing() {
+    %u_tide = GlobalLoad("tidal_velocity_scale")
+    %q_river = GlobalLoad("river_discharge")
+    %depth = Max(Load("bathymetry_depth", 0, 0), 0.5)
+    %shore = Load("shore_distance_factor", 0, 0)
+    %grass = Load("seagrass_fraction", 0, 0)
+
+    %river_component = Mul(0.00035, Div(%q_river, %depth))
+    %speed_raw = Add(Mul(%u_tide, Add(0.4, Mul(0.6, %shore))), %river_component)
+    %speed = Max(0.0, Sub(%speed_raw, Mul(0.25, %grass)))
+
+    %mixing = Max(0.0, Add(0.03, Mul(0.24, %speed)))
+
+    Store("current_speed", %speed)
+    Store("vertical_mixing", %mixing)
+}
+
+@interaction(transport_tracers)
+func transport_tracers() {
+    %dt = GlobalLoad("dt")
+    %k_h = GlobalLoad("horiz_diffusivity")
+    %mix = Load("vertical_mixing", 0, 0)
+    %u = Load("current_speed", 0, 0)
+
+    // Salinity with boundary relaxation and lateral diffusion
+    %s = Load("salinity", 0, 0)
+    %lap_s = Laplacian("salinity")
+    %s_ocean = GlobalLoad("ocean_salinity")
+    %s_river = GlobalLoad("river_salinity")
+    %shore = Load("shore_distance_factor", 0, 0)
+    %s_bc = Add(Mul(%shore, %s_ocean), Mul(Sub(1.0, %shore), %s_river))
+    %s_tendency = Add(Mul(%k_h, %lap_s), Mul(0.0006, Sub(%s_bc, %s)))
+    %s_next = Add(%s, Mul(%dt, %s_tendency))
+
+    // Temperature diffusion + reference relaxation
+    %t = Load("temperature", 0, 0)
+    %lap_t = Laplacian("temperature")
+    %t_ref = GlobalLoad("background_temperature")
+    %t_tendency = Add(Mul(Add(%k_h, Mul(0.3, %mix)), %lap_t), Mul(0.00018, Sub(%t_ref, %t)))
+    %t_next = Add(%t, Mul(%dt, %t_tendency))
+
+    // Generic transport update for biogeochemical tracers
+    %n = Load("nitrate", 0, 0)
+    %p = Load("phytoplankton", 0, 0)
+    %d = Load("detritus", 0, 0)
+    %o2 = Load("oxygen", 0, 0)
+    %ss = Load("suspended_sediment", 0, 0)
+
+    %lap_n = Laplacian("nitrate")
+    %lap_p = Laplacian("phytoplankton")
+    %lap_d = Laplacian("detritus")
+    %lap_o2 = Laplacian("oxygen")
+    %lap_ss = Laplacian("suspended_sediment")
+
+    %tr_coeff = Add(%k_h, Mul(0.2, %mix))
+
+    %n_next = Add(%n, Mul(%dt, Mul(%tr_coeff, %lap_n)))
+    %p_next = Add(%p, Mul(%dt, Mul(%tr_coeff, %lap_p)))
+    %d_next = Add(%d, Mul(%dt, Mul(%tr_coeff, %lap_d)))
+    %o2_next = Add(%o2, Mul(%dt, Mul(%tr_coeff, %lap_o2)))
+    %ss_next = Add(%ss, Mul(%dt, Mul(%tr_coeff, %lap_ss)))
+
+    Store("salinity", %s_next)
+    Store("temperature", %t_next)
+    Store("nitrate", %n_next)
+    Store("phytoplankton", %p_next)
+    Store("detritus", %d_next)
+    Store("oxygen", %o2_next)
+    Store("suspended_sediment", %ss_next)
+}
+
+@interaction(biogeochemical_reactions)
+func biogeochemical_reactions() {
+    %dt = GlobalLoad("dt")
+    %mu_max = GlobalLoad("max_phyto_growth")
+    %k_n = GlobalLoad("nutrient_half_sat")
+    %light = GlobalLoad("light_surface")
+
+    %n = Load("nitrate", 0, 0)
+    %p = Load("phytoplankton", 0, 0)
+    %d = Load("detritus", 0, 0)
+    %o2 = Load("oxygen", 0, 0)
+    %temp = Load("temperature", 0, 0)
+
+    %temp_factor = Clamp(Add(0.1, Mul(0.006, Sub(%temp, 273.15))), 0.05, 2.0)
+    %light_factor = Clamp(Div(%light, Add(%light, 120.0)), 0.0, 1.0)
+    %nutrient_lim = Div(%n, Add(%n, Max(%k_n, 0.000000001)))
+
+    %growth_rate = Mul(%mu_max, Mul(%temp_factor, Mul(%light_factor, %nutrient_lim)))
+    %growth = Mul(%growth_rate, %p)
+
+    %mortality = Mul(0.000004, %p)
+    %remin = Mul(0.0000025, %d)
+
+    %n_tendency = Sub(Mul(0.8, %remin), Mul(0.9, %growth))
+    %p_tendency = Sub(%growth, %mortality)
+    %d_tendency = Sub(Mul(0.7, %mortality), %remin)
+    %o2_tendency = Sub(Mul(1.3, %growth), Add(Mul(0.9, %remin), Mul(0.4, %mortality)))
+
+    Store("nitrate", Add(%n, Mul(%dt, %n_tendency)))
+    Store("phytoplankton", Add(%p, Mul(%dt, %p_tendency)))
+    Store("detritus", Add(%d, Mul(%dt, %d_tendency)))
+    Store("oxygen", Add(%o2, Mul(%dt, %o2_tendency)))
+}
+
+@interaction(sediment_settle_resuspend)
+func sediment_settle_resuspend() {
+    %dt = GlobalLoad("dt")
+    %ss = Load("suspended_sediment", 0, 0)
+    %u = Load("current_speed", 0, 0)
+    %depth = Max(Load("bathymetry_depth", 0, 0), 0.5)
+    %ws = GlobalLoad("settling_velocity")
+    %r_coeff = GlobalLoad("resuspension_coeff")
+
+    %settling = Mul(%ss, Div(%ws, %depth))
+    %resuspend = Mul(%r_coeff, Mul(%u, %u))
+
+    %ss_tendency = Sub(%resuspend, %settling)
+    %ss_next = Add(%ss, Mul(%dt, %ss_tendency))
+
+    %detritus = Load("detritus", 0, 0)
+    %detritus_next = Add(%detritus, Mul(%dt, Mul(0.5, %settling)))
+
+    Store("suspended_sediment", %ss_next)
+    Store("detritus", %detritus_next)
+}
+
+@interaction(update_oxygen_deficit)
+func update_oxygen_deficit() {
+    %dt = GlobalLoad("dt")
+    %o2 = Load("oxygen", 0, 0)
+    %temp = Load("temperature", 0, 0)
+
+    %o2_sat_ref = GlobalLoad("oxygen_saturation_ref")
+    %reaer = GlobalLoad("oxygen_reaeration")
+
+    %temp_correction = Clamp(Sub(1.2, Mul(0.0025, Sub(%temp, 273.15))), 0.5, 1.4)
+    %o2_sat = Mul(%o2_sat_ref, %temp_correction)
+    %deficit = Max(0.0, Sub(%o2_sat, %o2))
+
+    %reaer_gain = Mul(%reaer, %deficit)
+    %o2_next = Add(%o2, Mul(%dt, %reaer_gain))
+
+    Store("oxygen", %o2_next)
+    Store("oxygen_deficit", %deficit)
+}
+
+@interaction(clamp_state_ranges)
+func clamp_state_ranges() {
+    Store("salinity", Max(0.0, Load("salinity", 0, 0)))
+    Store("temperature", Clamp(Load("temperature", 0, 0), 268.0, 313.0))
+    Store("nitrate", Max(0.0, Load("nitrate", 0, 0)))
+    Store("phytoplankton", Max(0.0, Load("phytoplankton", 0, 0)))
+    Store("detritus", Max(0.0, Load("detritus", 0, 0)))
+    Store("oxygen", Max(0.0, Load("oxygen", 0, 0)))
+    Store("suspended_sediment", Max(0.0, Load("suspended_sediment", 0, 0)))
+    Store("current_speed", Max(0.0, Load("current_speed", 0, 0)))
+    Store("vertical_mixing", Max(0.0, Load("vertical_mixing", 0, 0)))
+    Store("oxygen_deficit", Max(0.0, Load("oxygen_deficit", 0, 0)))
+    Store("seagrass_fraction", Clamp(Load("seagrass_fraction", 0, 0), 0.0, 1.0))
+    Store("shore_distance_factor", Clamp(Load("shore_distance_factor", 0, 0), 0.0, 1.0))
+}

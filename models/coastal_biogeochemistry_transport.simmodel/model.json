@@ -1,0 +1,150 @@
+{
+  "__comment_intro__": "Coastal Biogeochemistry and Transport. Multiphysics estuary model coupling advection-diffusion, ecosystem productivity, and oxygen stress dynamics.",
+  "id": "coastal_biogeochemistry_transport",
+  "version": "1.0.0",
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "open",
+      "y": "reflective"
+    }
+  },
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "explicit_euler",
+    "diffusion_scheme": "central_difference"
+  },
+  "domains": {
+    "fraction_unit": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" },
+    "non_negative": { "kind": "interval", "min": 0.0, "max": 1000000000.0, "type": "f32" },
+    "temperature_ocean": { "kind": "interval", "min": 268.0, "max": 313.0, "type": "f32" }
+  },
+  "variables": [
+    { "id": "time", "role": "state", "support": "global", "type": "f32", "units": "s", "description": "Simulation clock." },
+    { "id": "dt", "role": "parameter", "support": "global", "type": "f32", "units": "s", "initial_value": 120.0, "description": "Model time step." },
+    { "id": "river_discharge", "role": "forcing", "support": "global", "type": "f32", "units": "m^3/s", "initial_value": 1800.0, "description": "River inflow forcing." },
+    { "id": "tidal_velocity_scale", "role": "forcing", "support": "global", "type": "f32", "units": "m/s", "initial_value": 0.85, "description": "Characteristic tidal current speed." },
+    { "id": "ocean_salinity", "role": "forcing", "support": "global", "type": "f32", "units": "kg/m^3", "initial_value": 35.0, "description": "Oceanic salinity boundary concentration." },
+    { "id": "river_salinity", "role": "forcing", "support": "global", "type": "f32", "units": "kg/m^3", "initial_value": 0.2, "description": "Freshwater salinity boundary concentration." },
+    { "id": "background_temperature", "role": "forcing", "support": "global", "type": "f32", "units": "K", "initial_value": 288.0, "description": "Large-scale marine air/sea temperature reference." },
+    { "id": "light_surface", "role": "forcing", "support": "global", "type": "f32", "units": "kg/s^3", "initial_value": 220.0, "description": "Surface photosynthetically active radiation proxy." },
+
+    { "id": "horiz_diffusivity", "role": "parameter", "support": "global", "type": "f32", "units": "m^2/s", "initial_value": 0.65, "description": "Lateral tracer diffusivity." },
+    { "id": "settling_velocity", "role": "parameter", "support": "global", "type": "f32", "units": "m/s", "initial_value": 0.00018, "description": "Suspended sediment settling speed." },
+    { "id": "resuspension_coeff", "role": "parameter", "support": "global", "type": "f32", "units": "kg/(m^2*s)", "initial_value": 0.00006, "description": "Bottom resuspension intensity under shear." },
+    { "id": "max_phyto_growth", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 0.000014, "description": "Maximum phytoplankton specific growth rate." },
+    { "id": "nutrient_half_sat", "role": "parameter", "support": "global", "type": "f32", "units": "kg/m^3", "initial_value": 0.000015, "description": "Half-saturation for nutrient uptake." },
+    { "id": "oxygen_reaeration", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 0.000012, "description": "Air-sea oxygen reaeration rate." },
+    { "id": "oxygen_saturation_ref", "role": "parameter", "support": "global", "type": "f32", "units": "kg/m^3", "initial_value": 0.0105, "description": "Reference oxygen saturation concentration." },
+
+    { "id": "salinity", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Local salinity concentration." },
+    { "id": "temperature", "role": "state", "support": "cell", "type": "f32", "units": "K", "domain": "temperature_ocean", "description": "Local water temperature." },
+    { "id": "nitrate", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Dissolved inorganic nitrogen." },
+    { "id": "phytoplankton", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Phytoplankton biomass concentration." },
+    { "id": "detritus", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Particulate detrital pool." },
+    { "id": "oxygen", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Dissolved oxygen concentration." },
+    { "id": "suspended_sediment", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Suspended particulate concentration." },
+
+    { "id": "bathymetry_depth", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "non_negative", "description": "Local depth." },
+    { "id": "seagrass_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Benthic vegetation cover." },
+    { "id": "shore_distance_factor", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Relative distance from shore influences mixing and nutrient loading." },
+
+    { "id": "current_speed", "role": "derived", "support": "cell", "type": "f32", "units": "m/s", "domain": "non_negative", "description": "Derived flow speed estimate." },
+    { "id": "vertical_mixing", "role": "derived", "support": "cell", "type": "f32", "units": "m^2/s", "domain": "non_negative", "description": "Derived turbulent mixing intensity." },
+    { "id": "oxygen_deficit", "role": "derived", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Difference between saturation and actual oxygen." }
+  ],
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Advance simulation time.",
+      "interactions": [
+        {
+          "id": "advance_time",
+          "reads": ["time", "dt"],
+          "writes": ["time"],
+          "target_type": "scalar",
+          "formula": "time = time + dt"
+        }
+      ]
+    },
+    {
+      "id": "hydrodynamics",
+      "description": "Estimate current and mixing fields from forcing and local geometry.",
+      "interactions": [
+        {
+          "id": "compute_flow_and_mixing",
+          "reads": ["tidal_velocity_scale", "river_discharge", "bathymetry_depth", "shore_distance_factor", "seagrass_fraction"],
+          "writes": ["current_speed", "vertical_mixing"],
+          "target_type": "grid",
+          "formula": "current speed from tide+river and depth; mixing reduced by seagrass"
+        }
+      ]
+    },
+    {
+      "id": "transport",
+      "description": "Advect-diffuse salinity, temperature, nutrients, oxygen, and biomass.",
+      "interactions": [
+        {
+          "id": "transport_tracers",
+          "reads": ["salinity", "temperature", "nitrate", "phytoplankton", "detritus", "oxygen", "suspended_sediment", "current_speed", "vertical_mixing", "horiz_diffusivity", "river_salinity", "ocean_salinity", "background_temperature", "dt"],
+          "writes": ["salinity", "temperature", "nitrate", "phytoplankton", "detritus", "oxygen", "suspended_sediment"],
+          "target_type": "grid",
+          "formula": "advection-diffusion with boundary relaxation"
+        }
+      ]
+    },
+    {
+      "id": "ecosystem",
+      "description": "Run nutrient uptake, primary production, respiration, and detrital recycling.",
+      "interactions": [
+        {
+          "id": "biogeochemical_reactions",
+          "reads": ["nitrate", "phytoplankton", "detritus", "oxygen", "temperature", "light_surface", "max_phyto_growth", "nutrient_half_sat", "dt"],
+          "writes": ["nitrate", "phytoplankton", "detritus", "oxygen"],
+          "target_type": "grid",
+          "formula": "Monod uptake + mortality + remineralization"
+        }
+      ]
+    },
+    {
+      "id": "sediment_exchange",
+      "description": "Settling and resuspension closure based on local shear and depth.",
+      "interactions": [
+        {
+          "id": "sediment_settle_resuspend",
+          "reads": ["suspended_sediment", "current_speed", "bathymetry_depth", "settling_velocity", "resuspension_coeff", "dt"],
+          "writes": ["suspended_sediment", "detritus"],
+          "target_type": "grid",
+          "formula": "settling to detritus and current-driven resuspension"
+        }
+      ]
+    },
+    {
+      "id": "oxygen_stress",
+      "description": "Reaeration and hypoxia diagnostics.",
+      "interactions": [
+        {
+          "id": "update_oxygen_deficit",
+          "reads": ["oxygen", "temperature", "oxygen_saturation_ref", "oxygen_reaeration", "dt"],
+          "writes": ["oxygen", "oxygen_deficit"],
+          "target_type": "grid",
+          "formula": "oxygen relaxation toward saturation"
+        }
+      ]
+    },
+    {
+      "id": "constraints",
+      "description": "Maintain positivity and physical ranges.",
+      "interactions": [
+        {
+          "id": "clamp_state_ranges",
+          "reads": ["salinity", "temperature", "nitrate", "phytoplankton", "detritus", "oxygen", "suspended_sediment", "current_speed", "vertical_mixing", "oxygen_deficit", "seagrass_fraction", "shore_distance_factor"],
+          "writes": ["salinity", "temperature", "nitrate", "phytoplankton", "detritus", "oxygen", "suspended_sediment", "current_speed", "vertical_mixing", "oxygen_deficit", "seagrass_fraction", "shore_distance_factor"],
+          "target_type": "grid",
+          "formula": "Clamp all constrained variables"
+        }
+      ]
+    }
+  ]
+}

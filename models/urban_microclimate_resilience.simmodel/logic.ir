@@ -1,0 +1,137 @@
+// Urban Microclimate Resilience Model
+// Coupled urban energy balance and hydrology model.
+
+@interaction(advance_time)
+func advance_time() {
+    %time = GlobalLoad("time")
+    %dt = GlobalLoad("dt")
+    %next_time = Add(%time, %dt)
+    Store("time", %next_time)
+}
+
+@interaction(compute_radiation_and_anthro)
+func compute_radiation_and_anthro() {
+    %sw = GlobalLoad("solar_shortwave")
+    %lw_down = GlobalLoad("longwave_down")
+    %albedo = Load("surface_albedo", 0, 0)
+    %emissivity = Load("emissivity_surface", 0, 0)
+    %sigma = GlobalLoad("stefan_boltzmann")
+    %ts = Load("surface_temperature", 0, 0)
+
+    %one_minus_albedo = Sub(1.0, %albedo)
+    %sw_absorbed = Mul(%one_minus_albedo, %sw)
+
+    %ts2 = Mul(%ts, %ts)
+    %ts4 = Mul(%ts2, %ts2)
+    %lw_up = Mul(Mul(%emissivity, %sigma), %ts4)
+
+    %net_rad = Sub(Add(%sw_absorbed, %lw_down), %lw_up)
+
+    %anthro_base = GlobalLoad("anthropogenic_heat_base")
+    %impervious = Load("impervious_fraction", 0, 0)
+    %anthro = Add(%anthro_base, Mul(24.0, %impervious))
+
+    Store("net_radiation", %net_rad)
+    Store("anthropogenic_heat", %anthro)
+}
+
+@interaction(compute_turbulent_fluxes)
+func compute_turbulent_fluxes() {
+    %ts = Load("surface_temperature", 0, 0)
+    %tc = Load("canopy_temperature", 0, 0)
+    %ta = GlobalLoad("air_temperature_ref")
+    %wind = GlobalLoad("wind_speed")
+    %soil = Load("soil_moisture", 0, 0)
+    %veg = Load("vegetation_fraction", 0, 0)
+    %evap_eff = GlobalLoad("evaporation_efficiency")
+
+    %thermal_gradient = Sub(%ts, Add(Mul(0.65, %tc), Mul(0.35, %ta)))
+    %sensible = Mul(Mul(6.0, %wind), %thermal_gradient)
+
+    %latent_capacity = Mul(%evap_eff, Mul(%soil, %veg))
+    %latent = Mul(90.0, Mul(%wind, %latent_capacity))
+
+    Store("sensible_flux", %sensible)
+    Store("latent_flux", %latent)
+}
+
+@interaction(partition_runoff_and_infiltration)
+func partition_runoff_and_infiltration() {
+    %rain = GlobalLoad("rain_rate")
+    %impervious = Load("impervious_fraction", 0, 0)
+    %soil = Load("soil_moisture", 0, 0)
+    %tau = GlobalLoad("runoff_timescale")
+    %dt = GlobalLoad("dt")
+    %latent = Load("latent_flux", 0, 0)
+
+    %saturation = Clamp(%soil, 0.0, 1.0)
+    %runoff_factor = Clamp(Add(%impervious, Mul(0.7, %saturation)), 0.0, 1.0)
+    %runoff_inst = Mul(%rain, %runoff_factor)
+
+    %one_minus_runoff = Sub(1.0, %runoff_factor)
+    %infiltration = Mul(%rain, %one_minus_runoff)
+
+    %evap_mass = Mul(0.00000025, %latent)
+    %soil_tendency = Sub(infiltration, %evap_mass)
+    %soil_next = Clamp(Add(%soil, Mul(%soil_tendency, %dt)), 0.0, 1.0)
+
+    %tau_safe = Max(%tau, 1.0)
+    %runoff_relax = Mul(%runoff_inst, Div(%dt, %tau_safe))
+
+    Store("runoff_flux", Max(0.0, %runoff_relax))
+    Store("soil_moisture", %soil_next)
+}
+
+@interaction(update_thermal_state)
+func update_thermal_state() {
+    %ts = Load("surface_temperature", 0, 0)
+    %tc = Load("canopy_temperature", 0, 0)
+    %storage = Load("storage_heat", 0, 0)
+
+    %net = Load("net_radiation", 0, 0)
+    %sens = Load("sensible_flux", 0, 0)
+    %latent = Load("latent_flux", 0, 0)
+    %anthro = Load("anthropogenic_heat", 0, 0)
+    %runoff = Load("runoff_flux", 0, 0)
+
+    %kappa = GlobalLoad("thermal_diffusivity_surface")
+    %dt = GlobalLoad("dt")
+
+    %lap_ts = Laplacian("surface_temperature")
+    %diffusion_term = Mul(%kappa, %lap_ts)
+
+    %energy_balance = Add(Sub(Add(%net, %anthro), Add(%sens, %latent)), Mul(2500.0, %runoff))
+    %surface_tendency = Add(Mul(0.00045, %energy_balance), %diffusion_term)
+
+    %canopy_relax = Mul(0.00015, Sub(%ts, %tc))
+    %canopy_tendency = Add(canopy_relax, Mul(0.00003, Sub(GlobalLoad("air_temperature_ref"), %tc)))
+
+    %storage_tendency = Sub(Mul(0.40, %energy_balance), Mul(0.003, %storage))
+
+    %ts_next = Add(%ts, Mul(%surface_tendency, %dt))
+    %tc_next = Add(%tc, Mul(%canopy_tendency, %dt))
+    %storage_next = Add(%storage, Mul(%storage_tendency, %dt))
+
+    Store("surface_temperature", %ts_next)
+    Store("canopy_temperature", %tc_next)
+    Store("storage_heat", Max(0.0, %storage_next))
+}
+
+@interaction(clamp_state_ranges)
+func clamp_state_ranges() {
+    %ts = Load("surface_temperature", 0, 0)
+    %tc = Load("canopy_temperature", 0, 0)
+    %soil = Load("soil_moisture", 0, 0)
+    %stor = Load("storage_heat", 0, 0)
+    %alb = Load("surface_albedo", 0, 0)
+    %imp = Load("impervious_fraction", 0, 0)
+    %veg = Load("vegetation_fraction", 0, 0)
+
+    Store("surface_temperature", Clamp(%ts, 230.0, 360.0))
+    Store("canopy_temperature", Clamp(%tc, 230.0, 360.0))
+    Store("soil_moisture", Clamp(%soil, 0.0, 1.0))
+    Store("storage_heat", Max(0.0, %stor))
+    Store("surface_albedo", Clamp(%alb, 0.0, 1.0))
+    Store("impervious_fraction", Clamp(%imp, 0.0, 1.0))
+    Store("vegetation_fraction", Clamp(%veg, 0.0, 1.0))
+}

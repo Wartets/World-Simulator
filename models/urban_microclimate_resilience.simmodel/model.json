@@ -1,0 +1,132 @@
+{
+  "__comment_intro__": "Urban Microclimate Resilience. Coupled thermo-hydrologic city-scale simulation in strict SI-compatible units.",
+  "id": "urban_microclimate_resilience",
+  "version": "1.0.0",
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "reflective",
+      "y": "reflective"
+    }
+  },
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "explicit_euler",
+    "diffusion_scheme": "central_difference"
+  },
+  "domains": {
+    "temperature_physical": { "kind": "interval", "min": 230.0, "max": 360.0, "type": "f32" },
+    "fraction_unit": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" },
+    "non_negative": { "kind": "interval", "min": 0.0, "max": 1000000000.0, "type": "f32" }
+  },
+  "variables": [
+    { "id": "time", "role": "state", "support": "global", "type": "f32", "units": "s", "description": "Simulation time." },
+    { "id": "dt", "role": "parameter", "support": "global", "type": "f32", "units": "s", "initial_value": 60.0, "description": "Time step." },
+    { "id": "stefan_boltzmann", "role": "parameter", "support": "global", "type": "f32", "units": "kg/(s^3*K^4)", "initial_value": 0.0000000567, "description": "Stefan-Boltzmann constant in SI base form." },
+    { "id": "air_temperature_ref", "role": "forcing", "support": "global", "type": "f32", "units": "K", "initial_value": 297.0, "description": "Reference near-surface air temperature." },
+    { "id": "solar_shortwave", "role": "forcing", "support": "global", "type": "f32", "units": "kg/s^3", "initial_value": 640.0, "description": "Incoming shortwave flux per m^2 in SI base units." },
+    { "id": "longwave_down", "role": "forcing", "support": "global", "type": "f32", "units": "kg/s^3", "initial_value": 360.0, "description": "Downward longwave flux." },
+    { "id": "wind_speed", "role": "forcing", "support": "global", "type": "f32", "units": "m/s", "initial_value": 3.8, "description": "Background wind speed." },
+    { "id": "rain_rate", "role": "forcing", "support": "global", "type": "f32", "units": "kg/(m^2*s)", "initial_value": 0.00002, "description": "Rainfall mass flux." },
+    { "id": "anthropogenic_heat_base", "role": "parameter", "support": "global", "type": "f32", "units": "kg/s^3", "initial_value": 32.0, "description": "Baseline anthropogenic heat release." },
+    { "id": "thermal_diffusivity_surface", "role": "parameter", "support": "global", "type": "f32", "units": "m^2/s", "initial_value": 0.00007, "description": "Lateral temperature smoothing coefficient." },
+    { "id": "runoff_timescale", "role": "parameter", "support": "global", "type": "f32", "units": "s", "initial_value": 900.0, "description": "Hydrologic discharge timescale." },
+    { "id": "evaporation_efficiency", "role": "parameter", "support": "global", "type": "f32", "units": "1", "initial_value": 0.62, "description": "Converts available energy and moisture into latent evaporation." },
+
+    { "id": "surface_temperature", "role": "state", "support": "cell", "type": "f32", "units": "K", "domain": "temperature_physical", "description": "Urban surface skin temperature." },
+    { "id": "canopy_temperature", "role": "state", "support": "cell", "type": "f32", "units": "K", "domain": "temperature_physical", "description": "Street canyon / canopy-layer temperature." },
+    { "id": "soil_moisture", "role": "state", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Root-zone moisture content fraction." },
+    { "id": "storage_heat", "role": "state", "support": "cell", "type": "f32", "units": "kg/s^2", "domain": "non_negative", "description": "Effective areal heat storage state." },
+    { "id": "surface_albedo", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Reflectance of shortwave radiation." },
+    { "id": "emissivity_surface", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Longwave emissivity of surface material." },
+    { "id": "impervious_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Built-up impervious share in each cell." },
+    { "id": "vegetation_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Vegetated share in each cell." },
+
+    { "id": "net_radiation", "role": "derived", "support": "cell", "type": "f32", "units": "kg/s^3", "description": "Net all-wave radiative flux." },
+    { "id": "sensible_flux", "role": "derived", "support": "cell", "type": "f32", "units": "kg/s^3", "description": "Sensible turbulent heat flux." },
+    { "id": "latent_flux", "role": "derived", "support": "cell", "type": "f32", "units": "kg/s^3", "description": "Latent heat flux proxy." },
+    { "id": "runoff_flux", "role": "derived", "support": "cell", "type": "f32", "units": "kg/(m^2*s)", "description": "Effective runoff outflux." },
+    { "id": "anthropogenic_heat", "role": "derived", "support": "cell", "type": "f32", "units": "kg/s^3", "description": "Local anthropogenic heat release." }
+  ],
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Updates global simulation time.",
+      "interactions": [
+        {
+          "id": "advance_time",
+          "reads": ["time", "dt"],
+          "writes": ["time"],
+          "target_type": "scalar",
+          "formula": "time = time + dt"
+        }
+      ]
+    },
+    {
+      "id": "radiative_balance",
+      "description": "Computes radiative forcing and anthropogenic heat source terms.",
+      "interactions": [
+        {
+          "id": "compute_radiation_and_anthro",
+          "reads": ["solar_shortwave", "longwave_down", "surface_albedo", "emissivity_surface", "surface_temperature", "stefan_boltzmann", "anthropogenic_heat_base", "impervious_fraction"],
+          "writes": ["net_radiation", "anthropogenic_heat"],
+          "target_type": "grid",
+          "formula": "net_radiation = (1-albedo)*solar + longwave_down - emissivity*sigma*T^4"
+        }
+      ]
+    },
+    {
+      "id": "turbulent_exchange",
+      "description": "Computes sensible and latent exchange with canopy air.",
+      "interactions": [
+        {
+          "id": "compute_turbulent_fluxes",
+          "reads": ["surface_temperature", "canopy_temperature", "air_temperature_ref", "wind_speed", "soil_moisture", "vegetation_fraction", "evaporation_efficiency"],
+          "writes": ["sensible_flux", "latent_flux"],
+          "target_type": "grid",
+          "formula": "sensible ~ wind*(Tsurface-Tcanopy), latent ~ evap_eff*moisture*vegetation"
+        }
+      ]
+    },
+    {
+      "id": "hydrology",
+      "description": "Partitions rain into infiltration and runoff and updates soil moisture.",
+      "interactions": [
+        {
+          "id": "partition_runoff_and_infiltration",
+          "reads": ["rain_rate", "impervious_fraction", "soil_moisture", "runoff_timescale", "dt", "latent_flux"],
+          "writes": ["runoff_flux", "soil_moisture"],
+          "target_type": "grid",
+          "formula": "runoff depends on imperviousness and saturation; soil moisture rises with infiltration and decreases with evaporation"
+        }
+      ]
+    },
+    {
+      "id": "thermal_dynamics",
+      "description": "Advances temperatures and storage with forcing, losses, and lateral diffusion.",
+      "interactions": [
+        {
+          "id": "update_thermal_state",
+          "reads": ["surface_temperature", "canopy_temperature", "storage_heat", "net_radiation", "sensible_flux", "latent_flux", "anthropogenic_heat", "runoff_flux", "thermal_diffusivity_surface", "dt"],
+          "writes": ["surface_temperature", "canopy_temperature", "storage_heat"],
+          "target_type": "grid",
+          "formula": "temperature tendency uses net energy balance + diffusion"
+        }
+      ]
+    },
+    {
+      "id": "constraints",
+      "description": "Maintains variable validity and physical ranges.",
+      "interactions": [
+        {
+          "id": "clamp_state_ranges",
+          "reads": ["surface_temperature", "canopy_temperature", "soil_moisture", "storage_heat", "surface_albedo", "impervious_fraction", "vegetation_fraction"],
+          "writes": ["surface_temperature", "canopy_temperature", "soil_moisture", "storage_heat", "surface_albedo", "impervious_fraction", "vegetation_fraction"],
+          "target_type": "grid",
+          "formula": "Clamp to declared domains"
+        }
+      ]
+    }
+  ]
+}
