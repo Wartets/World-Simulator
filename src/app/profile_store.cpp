@@ -56,6 +56,7 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "height=" << config.grid.height << '\n';
     output << "tier=" << toString(config.tier) << '\n';
     output << "temporal=" << temporalPolicyToString(config.temporalPolicy) << '\n';
+    output << "gen.type=" << initialConditionTypeToString(config.initialConditions.type) << '\n';
     output << "gen.terrain_base_frequency=" << config.initialConditions.terrain.terrainBaseFrequency << '\n';
     output << "gen.terrain_detail_frequency=" << config.initialConditions.terrain.terrainDetailFrequency << '\n';
     output << "gen.terrain_warp_strength=" << config.initialConditions.terrain.terrainWarpStrength << '\n';
@@ -75,6 +76,27 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "gen.archipelago_jitter=" << config.initialConditions.terrain.archipelagoJitter << '\n';
     output << "gen.erosion_strength=" << config.initialConditions.terrain.erosionStrength << '\n';
     output << "gen.shelf_depth=" << config.initialConditions.terrain.shelfDepth << '\n';
+    output << "gen.conway.target_variable=" << config.initialConditions.conway.targetVariable << '\n';
+    output << "gen.conway.alive_probability=" << config.initialConditions.conway.aliveProbability << '\n';
+    output << "gen.conway.alive_value=" << config.initialConditions.conway.aliveValue << '\n';
+    output << "gen.conway.dead_value=" << config.initialConditions.conway.deadValue << '\n';
+    output << "gen.conway.smoothing_passes=" << config.initialConditions.conway.smoothingPasses << '\n';
+    output << "gen.gray_scott.target_variable_a=" << config.initialConditions.grayScott.targetVariableA << '\n';
+    output << "gen.gray_scott.target_variable_b=" << config.initialConditions.grayScott.targetVariableB << '\n';
+    output << "gen.gray_scott.background_a=" << config.initialConditions.grayScott.backgroundA << '\n';
+    output << "gen.gray_scott.background_b=" << config.initialConditions.grayScott.backgroundB << '\n';
+    output << "gen.gray_scott.spot_value_a=" << config.initialConditions.grayScott.spotValueA << '\n';
+    output << "gen.gray_scott.spot_value_b=" << config.initialConditions.grayScott.spotValueB << '\n';
+    output << "gen.gray_scott.spot_count=" << config.initialConditions.grayScott.spotCount << '\n';
+    output << "gen.gray_scott.spot_radius=" << config.initialConditions.grayScott.spotRadius << '\n';
+    output << "gen.gray_scott.spot_jitter=" << config.initialConditions.grayScott.spotJitter << '\n';
+    output << "gen.waves.target_variable=" << config.initialConditions.waves.targetVariable << '\n';
+    output << "gen.waves.baseline=" << config.initialConditions.waves.baseline << '\n';
+    output << "gen.waves.drop_amplitude=" << config.initialConditions.waves.dropAmplitude << '\n';
+    output << "gen.waves.drop_radius=" << config.initialConditions.waves.dropRadius << '\n';
+    output << "gen.waves.drop_count=" << config.initialConditions.waves.dropCount << '\n';
+    output << "gen.waves.drop_jitter=" << config.initialConditions.waves.dropJitter << '\n';
+    output << "gen.waves.ring_frequency=" << config.initialConditions.waves.ringFrequency << '\n';
 }
 
 LaunchConfig ProfileStore::load(const std::string& profileName) const {
@@ -139,6 +161,34 @@ LaunchConfig ProfileStore::load(const std::string& profileName) const {
         }
     };
 
+    auto assignOptionalString = [&](const char* key, std::string& target) {
+        const auto it = kv.find(key);
+        if (it != kv.end()) {
+            target = it->second;
+        }
+    };
+
+    auto assignOptionalInt = [&](const char* key, int& target) {
+        const auto it = kv.find(key);
+        if (it == kv.end()) {
+            return;
+        }
+        const auto parsed = parseU32(it->second);
+        if (parsed.has_value()) {
+            target = static_cast<int>(*parsed);
+        }
+    };
+
+    {
+        const auto it = kv.find("gen.type");
+        if (it != kv.end()) {
+            const auto parsed = parseInitialConditionType(it->second);
+            if (parsed.has_value()) {
+                config.initialConditions.type = *parsed;
+            }
+        }
+    }
+
     assignOptionalFloat("gen.terrain_base_frequency", config.initialConditions.terrain.terrainBaseFrequency);
     assignOptionalFloat("gen.terrain_detail_frequency", config.initialConditions.terrain.terrainDetailFrequency);
     assignOptionalFloat("gen.terrain_warp_strength", config.initialConditions.terrain.terrainWarpStrength);
@@ -166,6 +216,30 @@ LaunchConfig ProfileStore::load(const std::string& profileName) const {
     assignOptionalFloat("gen.archipelago_jitter", config.initialConditions.terrain.archipelagoJitter);
     assignOptionalFloat("gen.erosion_strength", config.initialConditions.terrain.erosionStrength);
     assignOptionalFloat("gen.shelf_depth", config.initialConditions.terrain.shelfDepth);
+
+    assignOptionalString("gen.conway.target_variable", config.initialConditions.conway.targetVariable);
+    assignOptionalFloat("gen.conway.alive_probability", config.initialConditions.conway.aliveProbability);
+    assignOptionalFloat("gen.conway.alive_value", config.initialConditions.conway.aliveValue);
+    assignOptionalFloat("gen.conway.dead_value", config.initialConditions.conway.deadValue);
+    assignOptionalInt("gen.conway.smoothing_passes", config.initialConditions.conway.smoothingPasses);
+
+    assignOptionalString("gen.gray_scott.target_variable_a", config.initialConditions.grayScott.targetVariableA);
+    assignOptionalString("gen.gray_scott.target_variable_b", config.initialConditions.grayScott.targetVariableB);
+    assignOptionalFloat("gen.gray_scott.background_a", config.initialConditions.grayScott.backgroundA);
+    assignOptionalFloat("gen.gray_scott.background_b", config.initialConditions.grayScott.backgroundB);
+    assignOptionalFloat("gen.gray_scott.spot_value_a", config.initialConditions.grayScott.spotValueA);
+    assignOptionalFloat("gen.gray_scott.spot_value_b", config.initialConditions.grayScott.spotValueB);
+    assignOptionalInt("gen.gray_scott.spot_count", config.initialConditions.grayScott.spotCount);
+    assignOptionalFloat("gen.gray_scott.spot_radius", config.initialConditions.grayScott.spotRadius);
+    assignOptionalFloat("gen.gray_scott.spot_jitter", config.initialConditions.grayScott.spotJitter);
+
+    assignOptionalString("gen.waves.target_variable", config.initialConditions.waves.targetVariable);
+    assignOptionalFloat("gen.waves.baseline", config.initialConditions.waves.baseline);
+    assignOptionalFloat("gen.waves.drop_amplitude", config.initialConditions.waves.dropAmplitude);
+    assignOptionalFloat("gen.waves.drop_radius", config.initialConditions.waves.dropRadius);
+    assignOptionalInt("gen.waves.drop_count", config.initialConditions.waves.dropCount);
+    assignOptionalFloat("gen.waves.drop_jitter", config.initialConditions.waves.dropJitter);
+    assignOptionalFloat("gen.waves.ring_frequency", config.initialConditions.waves.ringFrequency);
 
     return config;
 }

@@ -102,6 +102,7 @@ private:
             << "  set grid <width> <height>            Configure grid (requires restart)\n"
             << "  set tier <A|B|C>                     Configure model tier (requires restart)\n"
             << "  set temporal <uniform|phased|multirate>  Configure temporal policy\n"
+            << "  set init <terrain|conway|gray_scott|waves|blank>  Configure initialization mode\n"
             << "  preset                               List available built-in presets\n"
             << "  preset <name>                        Apply built-in preset (requires restart)\n"
             << "  profile list                         List saved runtime profiles\n"
@@ -720,6 +721,7 @@ private:
                           << ", grid=" << preset.config.grid.width << 'x' << preset.config.grid.height
                           << ", tier=" << toString(preset.config.tier)
                           << ", temporal=" << temporalPolicyToString(preset.config.temporalPolicy)
+                          << ", init=" << initialConditionTypeToString(preset.config.initialConditions.type)
                           << ") : " << preset.description
                           << "\n";
             }
@@ -737,6 +739,7 @@ private:
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
+                  << " init=" << initialConditionTypeToString(launchConfig_.initialConditions.type)
                   << " (use restart)\n";
     }
 
@@ -781,6 +784,7 @@ private:
                       << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                       << " tier=" << toString(launchConfig_.tier)
                       << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
+                      << " init=" << initialConditionTypeToString(launchConfig_.initialConditions.type)
                       << " (use restart)\n";
             return;
         }
@@ -794,7 +798,7 @@ private:
         field = toLower(field);
 
         if (field.empty()) {
-            throw std::invalid_argument("usage: set <seed|grid|tier|temporal> ...");
+            throw std::invalid_argument("usage: set <seed|grid|tier|temporal|init> ...");
         }
 
         if (field == "seed") {
@@ -845,6 +849,20 @@ private:
             }
             launchConfig_.temporalPolicy = *policy;
             std::cout << "temporal policy updated to " << temporalPolicyToString(launchConfig_.temporalPolicy)
+                      << " (use restart)\n";
+            return;
+        }
+
+        if (field == "init") {
+            std::string token;
+            input >> token;
+            const auto initType = parseInitialConditionType(token);
+            if (!initType.has_value()) {
+                throw std::invalid_argument("set init requires terrain, conway, gray_scott, waves, or blank");
+            }
+            launchConfig_.initialConditions.type = *initType;
+            std::cout << "initial condition mode updated to "
+                      << initialConditionTypeToString(launchConfig_.initialConditions.type)
                       << " (use restart)\n";
             return;
         }
@@ -966,6 +984,7 @@ private:
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
+                  << " init=" << initialConditionTypeToString(launchConfig_.initialConditions.type)
                   << "\n";
     }
 

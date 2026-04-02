@@ -19,8 +19,8 @@ struct StoredWorldRecord {
     std::uint32_t gridWidth = 0;
     std::uint32_t gridHeight = 0;
     std::uint64_t seed = 0;
-    std::string tier;
     std::string temporalPolicy;
+    std::string initialConditionMode;
     std::uintmax_t profileBytes = 0;
     std::uintmax_t checkpointBytes = 0;
     std::filesystem::file_time_type profileLastWrite{};
@@ -40,6 +40,8 @@ public:
 
     [[nodiscard]] std::vector<StoredWorldRecord> list(std::string& message) const;
     [[nodiscard]] std::string suggestNextWorldName() const;
+    [[nodiscard]] std::string suggestWorldNameFromHint(const std::string& hint) const;
+    [[nodiscard]] std::string normalizeNameForUi(std::string worldName) const;
 
     bool erase(const std::string& worldName, std::string& message) const;
     bool rename(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) const;

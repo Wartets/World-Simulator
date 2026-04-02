@@ -1979,16 +1979,42 @@ void drawGridSetupSection() {
 
 // World generation section (used by System tab & New World Wizard)
 void drawWorldGenerationSection() {
-    const char* genTypes[] = { "Procedural Terrain", "Uniform Value", "Random Field", "Pattern Spots", "Radial Drop" };
+    const auto& modelCellVars = sessionUi_.selectedModelCellStateVariables;
+    auto drawVariableBindingSelector = [&](const char* comboLabel, const char* manualLabel, char* buffer, const std::size_t size, const char* hint) {
+        if (!modelCellVars.empty()) {
+            const char* preview = buffer[0] != '\0' ? buffer : "<select variable>";
+            if (ImGui::BeginCombo(comboLabel, preview)) {
+                for (const auto& variable : modelCellVars) {
+                    const bool selected = (variable == buffer);
+                    if (ImGui::Selectable(variable.c_str(), selected)) {
+                        std::snprintf(buffer, size, "%s", variable.c_str());
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("%s", hint);
+            }
+
+            inputTextWithHint(manualLabel, buffer, size,
+                "Optional manual override. Keep matching selected model variable IDs.");
+        } else {
+            inputTextWithHint(manualLabel, buffer, size,
+                "No model cell-state variables detected; enter a valid variable ID manually.");
+        }
+    };
+
+    const char* genTypes[] = {
+        "Geographic Terrain",
+        "Conway's Life (Random)",
+        "Gray-Scott (Spots)",
+        "Waves (Drop)",
+        "Blank Grid"};
     ImGui::Combo("Generation Mode", &panel_.initialConditionTypeIndex, genTypes, IM_ARRAYSIZE(genTypes));
     ImGui::Separator();
-
-    if (panel_.initialConditionTypeIndex != 0) {
-        ImGui::InputText("Target Variable", panel_.genTargetVariable, IM_ARRAYSIZE(panel_.genTargetVariable));
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            ImGui::SetTooltip("The exact name of the simulation variable to write into (e.g. vegetation_v, surface_water_w).");
-        ImGui::Separator();
-    }
 
     if (panel_.initialConditionTypeIndex == 0) {
         ImGui::TextUnformatted("Terrain Spectrum");
@@ -2057,23 +2083,70 @@ void drawWorldGenerationSection() {
         sliderFloatWithHint("Shelf depth",        &panel_.shelfDepth,         0.0f,   0.8f, "%.2f",
             "Depth of the continental shelf zone around islands.\n"
             "Higher = wider shallow-water shelf gradient around coasts.");
-    } else if (panel_.initialConditionTypeIndex == 1) { // Uniform
-        sliderFloatWithHint("Uniform Value", &panel_.genUniformValue, -10.0f, 10.0f, "%.3f",
-            "The constant value to set everywhere.");
-    } else if (panel_.initialConditionTypeIndex == 2) { // Random Field
-        sliderFloatWithHint("Alive Probability", &panel_.genRandomAliveProbability, 0.0f, 1.0f, "%.3f",
-            "Chance to roll the max value instead of min. Use ~0.5 for Conway life noise.");
-        sliderFloatWithHint("Min Value", &panel_.genRandomMin, -10.0f, 10.0f, "%.3f", "The floor value.");
-        sliderFloatWithHint("Max Value", &panel_.genRandomMax, -10.0f, 10.0f, "%.3f", "The peak value.");
-    } else if (panel_.initialConditionTypeIndex == 3) { // Pattern Spots
-        sliderFloatWithHint("Background Value", &panel_.genSpotBackground, -1.0f, 1.0f, "%.3f", "Value outside spots.");
-        sliderFloatWithHint("Spot Value", &panel_.genSpotValue, -1.0f, 1.0f, "%.3f", "Value inside spots.");
-        if (NumericSliderPairInt("Spot Count", &panel_.genSpotCount, 1, 50, "%d", 110.0f)) {}
-        sliderFloatWithHint("Spot Radius", &panel_.genSpotRadius, 0.1f, 50.0f, "%.1f", "Radius of each spot.");
-    } else if (panel_.initialConditionTypeIndex == 4) { // Radial Drop
-        sliderFloatWithHint("Background Value", &panel_.genRadialBackground, -1.0f, 1.0f, "%.3f", "Value outside drop.");
-        sliderFloatWithHint("Drop Value", &panel_.genRadialDropValue, -1.0f, 1.0f, "%.3f", "Value at center peak.");
-        sliderFloatWithHint("Drop Radius", &panel_.genRadialDropRadius, 0.1f, 100.0f, "%.1f", "Radius of the droplet.");
+    } else if (panel_.initialConditionTypeIndex == 1) { // Conway
+        drawVariableBindingSelector(
+            "Target variable##conway_target_combo",
+            "Target variable##conway_target_input",
+            panel_.conwayTargetVariable,
+            IM_ARRAYSIZE(panel_.conwayTargetVariable),
+            "Choose a cell-state variable from the selected model to receive Conway initialization.");
+        sliderFloatWithHint("Alive probability", &panel_.conwayAliveProbability, 0.0f, 1.0f, "%.3f",
+            "Probability that a cell starts alive (deterministic per seed). ");
+        sliderFloatWithHint("Alive value", &panel_.conwayAliveValue, -10.0f, 10.0f, "%.3f",
+            "Numeric value written for alive cells.");
+        sliderFloatWithHint("Dead value", &panel_.conwayDeadValue, -10.0f, 10.0f, "%.3f",
+            "Numeric value written for dead cells.");
+        NumericSliderPairInt("Smoothing passes", &panel_.conwaySmoothingPasses, 0, 6, "%d", 110.0f);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip("Applies deterministic majority smoothing after random seeding.\n"
+                              "0 = no smoothing, higher = larger coherent clusters.");
+        }
+    } else if (panel_.initialConditionTypeIndex == 2) { // Gray-Scott
+        drawVariableBindingSelector(
+            "Chemical A variable##gray_a_combo",
+            "Chemical A variable##gray_a_input",
+            panel_.grayScottTargetVariableA,
+            IM_ARRAYSIZE(panel_.grayScottTargetVariableA),
+            "Primary Gray-Scott field target (U-like). Prefer a cell state scalar concentration field.");
+        drawVariableBindingSelector(
+            "Chemical B variable##gray_b_combo",
+            "Chemical B variable##gray_b_input",
+            panel_.grayScottTargetVariableB,
+            IM_ARRAYSIZE(panel_.grayScottTargetVariableB),
+            "Secondary Gray-Scott field target (V-like). Should usually differ from Chemical A.");
+        sliderFloatWithHint("Background A", &panel_.grayScottBackgroundA, -10.0f, 10.0f, "%.3f",
+            "Baseline concentration for chemical A.");
+        sliderFloatWithHint("Background B", &panel_.grayScottBackgroundB, -10.0f, 10.0f, "%.3f",
+            "Baseline concentration for chemical B.");
+        sliderFloatWithHint("Spot A", &panel_.grayScottSpotValueA, -10.0f, 10.0f, "%.3f",
+            "Chemical A value inside seeded spots.");
+        sliderFloatWithHint("Spot B", &panel_.grayScottSpotValueB, -10.0f, 10.0f, "%.3f",
+            "Chemical B value inside seeded spots.");
+        if (NumericSliderPairInt("Spot count", &panel_.grayScottSpotCount, 1, 50, "%d", 110.0f)) {}
+        sliderFloatWithHint("Spot radius", &panel_.grayScottSpotRadius, 0.1f, 100.0f, "%.1f",
+            "Radius of each seeded activator spot.");
+        sliderFloatWithHint("Spot jitter", &panel_.grayScottSpotJitter, 0.0f, 1.0f, "%.2f",
+            "Radius variability per spot for less uniform pattern seeds.");
+    } else if (panel_.initialConditionTypeIndex == 3) { // Waves
+        drawVariableBindingSelector(
+            "Wave variable##waves_combo",
+            "Wave variable##waves_input",
+            panel_.wavesTargetVariable,
+            IM_ARRAYSIZE(panel_.wavesTargetVariable),
+            "Choose a cell-state variable to receive wave/drop seeding.");
+        sliderFloatWithHint("Baseline", &panel_.waveBaseline, -10.0f, 10.0f, "%.3f",
+            "Background value before drop is applied.");
+        sliderFloatWithHint("Drop amplitude", &panel_.waveDropAmplitude, -10.0f, 10.0f, "%.3f",
+            "Center splash amplitude added on top of baseline.");
+        sliderFloatWithHint("Drop radius", &panel_.waveDropRadius, 0.1f, 200.0f, "%.1f",
+            "Radius of the initial splash profile.");
+        NumericSliderPairInt("Drop count", &panel_.waveDropCount, 1, 16, "%d", 110.0f);
+        sliderFloatWithHint("Drop jitter", &panel_.waveDropJitter, 0.0f, 1.0f, "%.2f",
+            "Spread of secondary drops around center for multi-source wave starts.");
+        sliderFloatWithHint("Ring frequency", &panel_.waveRingFrequency, 0.5f, 4.0f, "%.2f",
+            "Oscillation count inside each drop radius. Higher = more ripple rings.");
+    } else if (panel_.initialConditionTypeIndex == 4) { // Blank
+        ImGui::TextDisabled("Blank mode initializes canonical fields to zero.");
     }
 }
 
@@ -2137,20 +2210,29 @@ void syncPanelFromConfig() {
     panel_.erosionStrength        = c.initialConditions.terrain.erosionStrength;
     panel_.shelfDepth             = c.initialConditions.terrain.shelfDepth;
 
-    // We can't trivially sync the strings/targetVariable back perfectly if they differ, 
-    // but we can try syncing the first one we find or just leave the UI to set them.
-    // For simplicity, we sync the parameters assuming the target variable stays whatever it is.
-    panel_.genUniformValue = c.initialConditions.uniform.value;
-    panel_.genRandomMin = c.initialConditions.random.minValue;
-    panel_.genRandomMax = c.initialConditions.random.maxValue;
-    panel_.genRandomAliveProbability = c.initialConditions.random.aliveProbability;
-    panel_.genSpotBackground = c.initialConditions.spots.backgroundValue;
-    panel_.genSpotValue = c.initialConditions.spots.spotValue;
-    panel_.genSpotCount = c.initialConditions.spots.spotCount;
-    panel_.genSpotRadius = c.initialConditions.spots.spotRadius;
-    panel_.genRadialBackground = c.initialConditions.radialDrop.backgroundValue;
-    panel_.genRadialDropValue = c.initialConditions.radialDrop.dropValue;
-    panel_.genRadialDropRadius = c.initialConditions.radialDrop.dropRadius;
+    std::snprintf(panel_.conwayTargetVariable, sizeof(panel_.conwayTargetVariable), "%s", c.initialConditions.conway.targetVariable.c_str());
+    panel_.conwayAliveProbability = c.initialConditions.conway.aliveProbability;
+    panel_.conwayAliveValue = c.initialConditions.conway.aliveValue;
+    panel_.conwayDeadValue = c.initialConditions.conway.deadValue;
+    panel_.conwaySmoothingPasses = c.initialConditions.conway.smoothingPasses;
+
+    std::snprintf(panel_.grayScottTargetVariableA, sizeof(panel_.grayScottTargetVariableA), "%s", c.initialConditions.grayScott.targetVariableA.c_str());
+    std::snprintf(panel_.grayScottTargetVariableB, sizeof(panel_.grayScottTargetVariableB), "%s", c.initialConditions.grayScott.targetVariableB.c_str());
+    panel_.grayScottBackgroundA = c.initialConditions.grayScott.backgroundA;
+    panel_.grayScottBackgroundB = c.initialConditions.grayScott.backgroundB;
+    panel_.grayScottSpotValueA = c.initialConditions.grayScott.spotValueA;
+    panel_.grayScottSpotValueB = c.initialConditions.grayScott.spotValueB;
+    panel_.grayScottSpotCount = c.initialConditions.grayScott.spotCount;
+    panel_.grayScottSpotRadius = c.initialConditions.grayScott.spotRadius;
+    panel_.grayScottSpotJitter = c.initialConditions.grayScott.spotJitter;
+
+    std::snprintf(panel_.wavesTargetVariable, sizeof(panel_.wavesTargetVariable), "%s", c.initialConditions.waves.targetVariable.c_str());
+    panel_.waveBaseline = c.initialConditions.waves.baseline;
+    panel_.waveDropAmplitude = c.initialConditions.waves.dropAmplitude;
+    panel_.waveDropRadius = c.initialConditions.waves.dropRadius;
+    panel_.waveDropCount = c.initialConditions.waves.dropCount;
+    panel_.waveDropJitter = c.initialConditions.waves.dropJitter;
+    panel_.waveRingFrequency = c.initialConditions.waves.ringFrequency;
 }
 
 void applyConfigFromPanel() {
@@ -2186,26 +2268,29 @@ void applyConfigFromPanel() {
     cfg.initialConditions.terrain.erosionStrength        = panel_.erosionStrength;
     cfg.initialConditions.terrain.shelfDepth             = panel_.shelfDepth;
 
-    std::string targetVar(panel_.genTargetVariable);
-    
-    cfg.initialConditions.uniform.targetVariable = targetVar;
-    cfg.initialConditions.uniform.value = panel_.genUniformValue;
+    cfg.initialConditions.conway.targetVariable = panel_.conwayTargetVariable;
+    cfg.initialConditions.conway.aliveProbability = panel_.conwayAliveProbability;
+    cfg.initialConditions.conway.aliveValue = panel_.conwayAliveValue;
+    cfg.initialConditions.conway.deadValue = panel_.conwayDeadValue;
+    cfg.initialConditions.conway.smoothingPasses = panel_.conwaySmoothingPasses;
 
-    cfg.initialConditions.random.targetVariable = targetVar;
-    cfg.initialConditions.random.minValue = panel_.genRandomMin;
-    cfg.initialConditions.random.maxValue = panel_.genRandomMax;
-    cfg.initialConditions.random.aliveProbability = panel_.genRandomAliveProbability;
+    cfg.initialConditions.grayScott.targetVariableA = panel_.grayScottTargetVariableA;
+    cfg.initialConditions.grayScott.targetVariableB = panel_.grayScottTargetVariableB;
+    cfg.initialConditions.grayScott.backgroundA = panel_.grayScottBackgroundA;
+    cfg.initialConditions.grayScott.backgroundB = panel_.grayScottBackgroundB;
+    cfg.initialConditions.grayScott.spotValueA = panel_.grayScottSpotValueA;
+    cfg.initialConditions.grayScott.spotValueB = panel_.grayScottSpotValueB;
+    cfg.initialConditions.grayScott.spotCount = panel_.grayScottSpotCount;
+    cfg.initialConditions.grayScott.spotRadius = panel_.grayScottSpotRadius;
+    cfg.initialConditions.grayScott.spotJitter = panel_.grayScottSpotJitter;
 
-    cfg.initialConditions.spots.targetVariable = targetVar;
-    cfg.initialConditions.spots.backgroundValue = panel_.genSpotBackground;
-    cfg.initialConditions.spots.spotValue = panel_.genSpotValue;
-    cfg.initialConditions.spots.spotCount = panel_.genSpotCount;
-    cfg.initialConditions.spots.spotRadius = panel_.genSpotRadius;
-
-    cfg.initialConditions.radialDrop.targetVariable = targetVar;
-    cfg.initialConditions.radialDrop.backgroundValue = panel_.genRadialBackground;
-    cfg.initialConditions.radialDrop.dropValue = panel_.genRadialDropValue;
-    cfg.initialConditions.radialDrop.dropRadius = panel_.genRadialDropRadius;
+    cfg.initialConditions.waves.targetVariable = panel_.wavesTargetVariable;
+    cfg.initialConditions.waves.baseline = panel_.waveBaseline;
+    cfg.initialConditions.waves.dropAmplitude = panel_.waveDropAmplitude;
+    cfg.initialConditions.waves.dropRadius = panel_.waveDropRadius;
+    cfg.initialConditions.waves.dropCount = panel_.waveDropCount;
+    cfg.initialConditions.waves.dropJitter = panel_.waveDropJitter;
+    cfg.initialConditions.waves.ringFrequency = panel_.waveRingFrequency;
 
     runtime_.setConfig(cfg);
 

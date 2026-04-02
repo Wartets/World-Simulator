@@ -558,100 +558,50 @@ void ModelSelector::render(ImVec2 available_size) {
             if (show_column_compatibility) ImGui::TableSetupColumn("Compatibility", 0, 0.0f, ColCompatibility);
             if (show_column_identity_hash) ImGui::TableSetupColumn("Identity Hash", 0, 0.0f, ColIdentityHash);
             if (show_column_last_modified) ImGui::TableSetupColumn("Last Modified", 0, 0.0f, ColLastModified);
-            ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
-            ImGui::TableNextColumn();
-            ImGui::TableHeader("Name");
-            if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                renderColumnMenu();
-                ImGui::EndPopup();
-            }
-            if (show_column_id) {
+
+            auto renderHeaderWithColumnMenu = [&](const char* label) {
                 ImGui::TableNextColumn();
-                ImGui::TableHeader("ID");
+                ImGui::TableHeader(label);
                 if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
                     renderColumnMenu();
                     ImGui::EndPopup();
                 }
+            };
+
+            ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+            renderHeaderWithColumnMenu("Name");
+            if (show_column_id) {
+                renderHeaderWithColumnMenu("ID");
             }
             if (show_column_version) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Version");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Version");
             }
             if (show_column_format_version) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Format");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Format");
             }
             if (show_column_minimum_engine_version) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Min Engine");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Min Engine");
             }
             if (show_column_author) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Author");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Author");
             }
             if (show_column_creation_date) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Created");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Created");
             }
             if (show_column_tags) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Tags");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Tags");
             }
             if (show_column_description) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Description");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Description");
             }
             if (show_column_compatibility) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Compatibility");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Compatibility");
             }
             if (show_column_identity_hash) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Identity Hash");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Identity Hash");
             }
             if (show_column_last_modified) {
-                ImGui::TableNextColumn();
-                ImGui::TableHeader("Last Modified");
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
-                }
+                renderHeaderWithColumnMenu("Last Modified");
             }
 
             if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {

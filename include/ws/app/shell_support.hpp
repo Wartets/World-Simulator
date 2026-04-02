@@ -36,6 +36,8 @@ struct FieldSummary {
 [[nodiscard]] std::string trim(std::string value);
 [[nodiscard]] std::string temporalPolicyToString(TemporalPolicy policy);
 [[nodiscard]] std::optional<TemporalPolicy> parseTemporalPolicy(const std::string& token);
+[[nodiscard]] std::string initialConditionTypeToString(InitialConditionType type);
+[[nodiscard]] std::optional<InitialConditionType> parseInitialConditionType(const std::string& token);
 [[nodiscard]] std::optional<ModelTier> parseTier(const std::string& token);
 [[nodiscard]] std::optional<std::uint64_t> parseU64(const std::string& token);
 [[nodiscard]] std::optional<std::uint32_t> parseU32(const std::string& token);

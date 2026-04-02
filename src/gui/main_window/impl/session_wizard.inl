@@ -32,21 +32,92 @@
         ImGui::BeginChild("SessionRoot", ImVec2(rootW, rootH), true);
 
         ImGui::BeginChild("SessionHeader", ImVec2(-1.0f, 88.0f), false);
-        SectionHeader("World Simulator", "Select a world or create a new one.");
-        ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x - 132.0f));
-        if (SecondaryButton("Refresh list", ImVec2(128.0f, 32.0f))) {
+        SectionHeader("World Workspace", "Open, inspect, and manage saved worlds.");
+        const float headerBtnW = 170.0f;
+        const float headerGap = 8.0f;
+        ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x - (headerBtnW * 2.0f + headerGap)));
+        if (SecondaryButton("Back to models", ImVec2(headerBtnW, 32.0f))) {
+            appState_ = AppState::ModelSelector;
+            modelSelector_.open();
+        }
+        DelayedTooltip("Return to the model selection screen.");
+        ImGui::SameLine(0.0f, headerGap);
+        if (SecondaryButton("Refresh list", ImVec2(headerBtnW, 32.0f))) {
             sessionUi_.needsRefresh = true;
         }
         DelayedTooltip("Refreshes the world list from stored profiles and checkpoints.");
         ImGui::EndChild();
 
+        if (sessionUi_.selectedModelName[0] != '\0') {
+            ImGui::BeginChild("SessionModelContext", ImVec2(-1.0f, 84.0f), true);
+            ImGui::Text("Selected model: %s", sessionUi_.selectedModelName);
+            ImGui::TextDisabled("Author: %s    Version: %s", sessionUi_.selectedModelAuthor, sessionUi_.selectedModelVersion);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+            ImGui::TextDisabled("%s", sessionUi_.selectedModelDescription);
+            ImGui::PopTextWrapPos();
+            ImGui::EndChild();
+        }
+
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        const float actionBarH = 92.0f;
+        const float actionBarH = 138.0f;
         const float contentH = std::max(220.0f, ImGui::GetContentRegionAvail().y - actionBarH - kS3);
         const bool narrowLayout = rootW < 1100.0f;
+
+        std::vector<int> filteredWorldIndices;
+        filteredWorldIndices.reserve(sessionUi_.worlds.size());
+        const std::string query = app::toLower(std::string(sessionUi_.worldSearch));
+        for (int i = 0; i < static_cast<int>(sessionUi_.worlds.size()); ++i) {
+            const auto& world = sessionUi_.worlds[static_cast<std::size_t>(i)];
+            if (sessionUi_.filterCheckpointOnly && !world.hasCheckpoint) {
+                continue;
+            }
+            if (sessionUi_.filterProfileOnly && !world.hasProfile) {
+                continue;
+            }
+            if (!query.empty()) {
+                const std::string worldName = app::toLower(world.worldName);
+                const std::string mode = app::toLower(world.initialConditionMode);
+                if (worldName.find(query) == std::string::npos && mode.find(query) == std::string::npos) {
+                    continue;
+                }
+            }
+            filteredWorldIndices.push_back(i);
+        }
+
+        auto sortByMode = [&](int lhs, int rhs) {
+            const auto& a = sessionUi_.worlds[static_cast<std::size_t>(lhs)];
+            const auto& b = sessionUi_.worlds[static_cast<std::size_t>(rhs)];
+            if (sessionUi_.sortMode == 0) {
+                return app::toLower(a.worldName) < app::toLower(b.worldName);
+            }
+            if (sessionUi_.sortMode == 2) {
+                const std::uint64_t areaA = static_cast<std::uint64_t>(a.gridWidth) * static_cast<std::uint64_t>(a.gridHeight);
+                const std::uint64_t areaB = static_cast<std::uint64_t>(b.gridWidth) * static_cast<std::uint64_t>(b.gridHeight);
+                if (areaA != areaB) {
+                    return areaA > areaB;
+                }
+                return app::toLower(a.worldName) < app::toLower(b.worldName);
+            }
+            if (sessionUi_.sortMode == 3) {
+                const std::uintmax_t bytesA = a.profileBytes + a.checkpointBytes;
+                const std::uintmax_t bytesB = b.profileBytes + b.checkpointBytes;
+                if (bytesA != bytesB) {
+                    return bytesA > bytesB;
+                }
+                return app::toLower(a.worldName) < app::toLower(b.worldName);
+            }
+
+            const auto timeA = a.hasCheckpointTimestamp ? a.checkpointLastWrite : a.profileLastWrite;
+            const auto timeB = b.hasCheckpointTimestamp ? b.checkpointLastWrite : b.profileLastWrite;
+            if (timeA != timeB) {
+                return timeA > timeB;
+            }
+            return app::toLower(a.worldName) < app::toLower(b.worldName);
+        };
+        std::sort(filteredWorldIndices.begin(), filteredWorldIndices.end(), sortByMode);
 
         ImGui::BeginChild("SessionContent", ImVec2(-1.0f, contentH), false);
         if (!narrowLayout) {
@@ -54,21 +125,34 @@
             ImGui::SetColumnWidth(0, rootW * 0.38f);
         }
 
-        SectionHeader("Saved worlds", "Choose a world to inspect or open.");
+        SectionHeader("Saved worlds", "Search, filter, and select a world.");
+        ImGui::InputTextWithHint("##world_search", "Search by name or mode", sessionUi_.worldSearch, IM_ARRAYSIZE(sessionUi_.worldSearch));
+        ImGui::SameLine();
+        static constexpr const char* kSortModes[] = {"Name", "Recent", "Grid size", "Storage size"};
+        ImGui::SetNextItemWidth(130.0f);
+        ImGui::Combo("##world_sort", &sessionUi_.sortMode, kSortModes, static_cast<int>(std::size(kSortModes)));
+        ImGui::SameLine();
+        ImGui::Checkbox("Checkpoint", &sessionUi_.filterCheckpointOnly);
+        ImGui::SameLine();
+        ImGui::Checkbox("Profile", &sessionUi_.filterProfileOnly);
+        DelayedTooltip("Filter worlds requiring checkpoint/profile presence.");
         ImGui::Spacing();
         ImGui::BeginChild("WorldList", ImVec2(-1.0f, narrowLayout ? 210.0f : -1.0f), true);
-        if (sessionUi_.worlds.empty()) {
+        if (filteredWorldIndices.empty()) {
             EmptyStateCard("No saved worlds found.", "Create a new world to generate your first simulation.");
         } else {
-            for (int i = 0; i < static_cast<int>(sessionUi_.worlds.size()); ++i) {
-                const auto& world = sessionUi_.worlds[static_cast<std::size_t>(i)];
-                const bool selected = (sessionUi_.selectedWorldIndex == i);
+            for (int i = 0; i < static_cast<int>(filteredWorldIndices.size()); ++i) {
+                const int worldIndex = filteredWorldIndices[static_cast<std::size_t>(i)];
+                const auto& world = sessionUi_.worlds[static_cast<std::size_t>(worldIndex)];
+                const bool selected = (sessionUi_.selectedWorldIndex == worldIndex);
                 if (ImGui::Selectable(world.worldName.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0.0f, 30.0f))) {
-                    sessionUi_.selectedWorldIndex = i;
+                    sessionUi_.selectedWorldIndex = worldIndex;
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         openSelectedWorld();
                     }
                 }
+                ImGui::SameLine();
+                ImGui::TextDisabled("  %s%s", world.initialConditionMode.empty() ? "n/a" : world.initialConditionMode.c_str(), world.hasCheckpoint ? "  [cp]" : "");
             }
         }
         ImGui::EndChild();
@@ -79,16 +163,20 @@
             ImGui::Spacing();
         }
 
-        SectionHeader("World details", "Review world metadata before opening.");
+        SectionHeader("World details", "Review metadata, storage, and checkpoint status.");
         ImGui::Spacing();
         ImGui::BeginChild("WorldDetails", ImVec2(-1.0f, -1.0f), true);
         if (sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
             const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+            const std::uint64_t gridCells = static_cast<std::uint64_t>(world.gridWidth) * static_cast<std::uint64_t>(world.gridHeight);
+            const std::uintmax_t totalBytes = world.profileBytes + world.checkpointBytes;
             ImGui::Text("Name: %s", world.worldName.c_str());
             ImGui::Text("Grid: %ux%u", world.gridWidth, world.gridHeight);
+            ImGui::Text("Cells: %llu", static_cast<unsigned long long>(gridCells));
             ImGui::Text("Seed: %llu", static_cast<unsigned long long>(world.seed));
-            ImGui::Text("Tier: %s", world.tier.empty() ? "n/a" : world.tier.c_str());
             ImGui::Text("Temporal: %s", world.temporalPolicy.empty() ? "n/a" : world.temporalPolicy.c_str());
+            ImGui::Text("Initialization: %s", world.initialConditionMode.empty() ? "n/a" : world.initialConditionMode.c_str());
+            ImGui::Text("Data footprint: %s", session_manager::formatBytes(totalBytes).c_str());
             ImGui::Text("Profile: %s", world.profilePath.string().c_str());
             ImGui::Text("Profile size: %s", session_manager::formatBytes(world.profileBytes).c_str());
             ImGui::Text("Profile updated: %s", session_manager::formatFileTime(world.profileLastWrite, world.hasProfileTimestamp).c_str());
@@ -101,6 +189,14 @@
             } else {
                 LabeledHint("This world will open from profile defaults because no checkpoint is available.");
             }
+
+            const int qualityScore =
+                (world.hasProfile ? 40 : 0) +
+                (world.hasCheckpoint ? 40 : 0) +
+                (world.gridWidth > 0 && world.gridHeight > 0 ? 20 : 0);
+            ImGui::Spacing();
+            ImGui::ProgressBar(static_cast<float>(qualityScore) / 100.0f, ImVec2(-1.0f, 0.0f));
+            ImGui::TextDisabled("Integrity score: %d/100", qualityScore);
         } else {
             EmptyStateCard("No world selected.", "Select a world from the list to enable the Open world action.");
         }
@@ -118,22 +214,13 @@
         const bool canOpen = sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size());
         ImGui::BeginChild("SessionActions", ImVec2(-1.0f, actionBarH), false);
         const float w = ImGui::GetContentRegionAvail().x;
-        const float btnW = std::max(160.0f, (w - (2.0f * kS2)) / 3.0f);
+        const float btnW = std::max(132.0f, (w - (5.0f * kS2)) / 6.0f);
 
         if (!canOpen) {
             ImGui::BeginDisabled();
         }
         if (PrimaryButton("Open world", ImVec2(btnW, 42.0f))) {
             openSelectedWorld();
-        }
-        // Debug: log button state
-        static bool lastFrameHovered = false;
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            if (!lastFrameHovered) {
-                lastFrameHovered = true;
-            }
-        } else {
-            lastFrameHovered = false;
         }
         DelayedTooltip("Loads the selected world without restarting the application.");
         if (!canOpen) {
@@ -142,14 +229,66 @@
 
         ImGui::SameLine();
         if (SecondaryButton("Create world", ImVec2(btnW, 42.0f))) {
-            const std::string suggestedName = runtime_.suggestNextWorldName();
+            const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'
+                ? std::string(sessionUi_.selectedModelName)
+                : std::string("world");
+            const std::string suggestedName = runtime_.suggestWorldNameFromHint(baseHint);
             std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
             syncPanelFromConfig();
             panel_.useManualSeed = false;
             panel_.seed = generateRandomSeed();
             appState_ = AppState::NewWorldWizard;
         }
-        DelayedTooltip("Opens the creation wizard to define generation parameters.");
+        DelayedTooltip("Open world creation with smart default naming based on the selected model.");
+
+        ImGui::SameLine();
+        if (!canOpen) {
+            ImGui::BeginDisabled();
+        }
+        if (SecondaryButton("Duplicate", ImVec2(btnW, 42.0f))) {
+            sessionUi_.pendingDuplicateWorldIndex = sessionUi_.selectedWorldIndex;
+            if (canOpen) {
+                const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+                const std::string suggested = runtime_.suggestWorldNameFromHint(selected.worldName + "_copy");
+                std::snprintf(sessionUi_.pendingDuplicateName, sizeof(sessionUi_.pendingDuplicateName), "%s", suggested.c_str());
+            }
+            ImGui::OpenPopup("Duplicate World");
+        }
+        if (!canOpen) {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::SameLine();
+        if (!canOpen) {
+            ImGui::BeginDisabled();
+        }
+        if (SecondaryButton("Rename", ImVec2(btnW, 42.0f))) {
+            sessionUi_.pendingRenameWorldIndex = sessionUi_.selectedWorldIndex;
+            if (canOpen) {
+                const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+                std::snprintf(sessionUi_.pendingRenameName, sizeof(sessionUi_.pendingRenameName), "%s", selected.worldName.c_str());
+            }
+            ImGui::OpenPopup("Rename World");
+        }
+        if (!canOpen) {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::SameLine();
+        if (!canOpen) {
+            ImGui::BeginDisabled();
+        }
+        if (SecondaryButton("Export", ImVec2(btnW, 42.0f))) {
+            sessionUi_.pendingExportWorldIndex = sessionUi_.selectedWorldIndex;
+            if (canOpen) {
+                const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+                std::snprintf(sessionUi_.pendingExportPath, sizeof(sessionUi_.pendingExportPath), "exports/%s.wsexp", selected.worldName.c_str());
+            }
+            ImGui::OpenPopup("Export World");
+        }
+        if (!canOpen) {
+            ImGui::EndDisabled();
+        }
 
         ImGui::SameLine();
         if (!canOpen) {
@@ -162,6 +301,105 @@
         DelayedTooltip("Deletes profile/checkpoint/display settings for the selected world.");
         if (!canOpen) {
             ImGui::EndDisabled();
+        }
+
+        if (ImGui::BeginPopupModal("Duplicate World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("New world name", sessionUi_.pendingDuplicateName, IM_ARRAYSIZE(sessionUi_.pendingDuplicateName));
+            if (PrimaryButton("Duplicate", ImVec2(140.0f, 28.0f))) {
+                if (sessionUi_.pendingDuplicateWorldIndex >= 0 && sessionUi_.pendingDuplicateWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                    const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingDuplicateWorldIndex)];
+                    std::string message;
+                    const std::string requestedName = sessionUi_.pendingDuplicateName;
+                    const std::string normalizedName = runtime_.normalizeWorldNameForUi(requestedName);
+                    if (normalizedName.empty()) {
+                        message = "world_duplicate_failed error=invalid_name";
+                    } else {
+                        if (requestedName != normalizedName) {
+                            std::snprintf(sessionUi_.pendingDuplicateName, sizeof(sessionUi_.pendingDuplicateName), "%s", normalizedName.c_str());
+                        }
+                        runtime_.duplicateWorld(world.worldName, normalizedName, message);
+                    }
+                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    appendLog(message);
+                    sessionUi_.needsRefresh = true;
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Rename World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("World name", sessionUi_.pendingRenameName, IM_ARRAYSIZE(sessionUi_.pendingRenameName));
+            if (PrimaryButton("Rename", ImVec2(140.0f, 28.0f))) {
+                if (sessionUi_.pendingRenameWorldIndex >= 0 && sessionUi_.pendingRenameWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                    const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingRenameWorldIndex)];
+                    std::string message;
+                    const std::string requestedName = sessionUi_.pendingRenameName;
+                    const std::string normalizedName = runtime_.normalizeWorldNameForUi(requestedName);
+                    if (normalizedName.empty()) {
+                        message = "world_rename_failed error=invalid_name";
+                    } else {
+                        if (requestedName != normalizedName) {
+                            std::snprintf(sessionUi_.pendingRenameName, sizeof(sessionUi_.pendingRenameName), "%s", normalizedName.c_str());
+                        }
+                        runtime_.renameWorld(world.worldName, normalizedName, message);
+                    }
+                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    appendLog(message);
+                    sessionUi_.needsRefresh = true;
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Export World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("Export path", sessionUi_.pendingExportPath, IM_ARRAYSIZE(sessionUi_.pendingExportPath));
+            if (PrimaryButton("Export", ImVec2(140.0f, 28.0f))) {
+                if (sessionUi_.pendingExportWorldIndex >= 0 && sessionUi_.pendingExportWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                    const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingExportWorldIndex)];
+                    std::string message;
+                    runtime_.exportWorld(world.worldName, std::filesystem::path(sessionUi_.pendingExportPath), message);
+                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    appendLog(message);
+                }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine(0.0f, 0.0f);
+        if (SecondaryButton("Import", ImVec2(btnW, 42.0f))) {
+            ImGui::OpenPopup("Import World");
+        }
+        if (ImGui::BeginPopupModal("Import World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("Import file", sessionUi_.pendingImportPath, IM_ARRAYSIZE(sessionUi_.pendingImportPath));
+            if (PrimaryButton("Import", ImVec2(140.0f, 28.0f))) {
+                std::string importedName;
+                std::string message;
+                runtime_.importWorld(std::filesystem::path(sessionUi_.pendingImportPath), importedName, message);
+                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                appendLog(message);
+                sessionUi_.needsRefresh = true;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         if (ImGui::BeginPopupModal("Delete World Confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -225,6 +463,16 @@
         SectionHeader("Create New World", "Configure generation parameters before simulation start.");
         ImGui::EndChild();
 
+        if (sessionUi_.selectedModelName[0] != '\0') {
+            ImGui::BeginChild("WizardModelContext", ImVec2(-1.0f, 84.0f), true);
+            ImGui::Text("Model context: %s", sessionUi_.selectedModelName);
+            ImGui::TextDisabled("Author: %s    Version: %s", sessionUi_.selectedModelAuthor, sessionUi_.selectedModelVersion);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+            ImGui::TextDisabled("%s", sessionUi_.selectedModelDescription);
+            ImGui::PopTextWrapPos();
+            ImGui::EndChild();
+        }
+
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -243,13 +491,58 @@
         ImGui::Spacing();
         ImGui::BeginChild("WizardForm", ImVec2(-1.0f, narrowLayout ? 320.0f : -1.0f), true);
         inputTextWithHint("World Name", sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "Name for this world. Letters, numbers, '_' and '-' are recommended.");
-        LabeledHint("World names are auto-suggested and must be unique in storage.");
+        LabeledHint("Smart naming uses model context and avoids collisions automatically.");
         ImGui::Spacing();
         drawGridSetupSection();
         ImGui::Spacing();
-        drawTierSelector();
-        ImGui::Spacing();
         drawWorldGenerationSection();
+
+        initialization::InitializationRequest bindingRequest;
+        bindingRequest.type = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+        bindingRequest.conwayTargetOverride = std::string(panel_.conwayTargetVariable);
+        bindingRequest.grayTargetAOverride = std::string(panel_.grayScottTargetVariableA);
+        bindingRequest.grayTargetBOverride = std::string(panel_.grayScottTargetVariableB);
+        bindingRequest.wavesTargetOverride = std::string(panel_.wavesTargetVariable);
+        sessionUi_.generationBindingPlan = initialization::buildBindingPlan(sessionUi_.selectedModelCatalog, bindingRequest);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        SectionHeader("Initialization binding preview", "Validate model-variable bindings before world creation.");
+        if (sessionUi_.selectedModelCellStateVariables.empty()) {
+            LabeledHint("Model variable scan unavailable. Manual variable IDs are required.");
+        } else {
+            ImGui::TextDisabled(
+                "Detected model cell-state variables: %d",
+                static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()));
+        }
+        if (!sessionUi_.generationBindingPlan.decisions.empty()) {
+            for (const auto& decision : sessionUi_.generationBindingPlan.decisions) {
+                ImGui::BulletText(
+                    "%s -> %s  (confidence %.2f)",
+                    decision.bindingKey.c_str(),
+                    decision.variableId.empty() ? "<unresolved>" : decision.variableId.c_str(),
+                    decision.confidence);
+                ImGui::TextDisabled("    %s", decision.rationale.c_str());
+            }
+        }
+
+        if (!sessionUi_.generationBindingPlan.hasBlockingIssues()) {
+            ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Binding status: ready");
+        } else {
+            ImGui::TextColored(
+                ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                "Binding status: unresolved (%d)",
+                static_cast<int>(sessionUi_.generationBindingPlan.issues.size()));
+            for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
+                ImGui::BulletText("%s: %s", issue.code.c_str(), issue.message.c_str());
+            }
+        }
+
+        checkboxWithHint(
+            "Expert override unresolved bindings",
+            &sessionUi_.allowUnresolvedGenerationBindings,
+            "Allows world creation even when bindings are unresolved. Use only for custom advanced workflows.");
         ImGui::EndChild();
 
         if (!narrowLayout) {
@@ -405,10 +698,39 @@
             if (!panel_.useManualSeed) {
                 panel_.seed = generateRandomSeed();
             }
+
+            initialization::InitializationRequest verifyRequest;
+            verifyRequest.type = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+            verifyRequest.conwayTargetOverride = std::string(panel_.conwayTargetVariable);
+            verifyRequest.grayTargetAOverride = std::string(panel_.grayScottTargetVariableA);
+            verifyRequest.grayTargetBOverride = std::string(panel_.grayScottTargetVariableB);
+            verifyRequest.wavesTargetOverride = std::string(panel_.wavesTargetVariable);
+            sessionUi_.generationBindingPlan = initialization::buildBindingPlan(sessionUi_.selectedModelCatalog, verifyRequest);
+
+            if (sessionUi_.generationBindingPlan.hasBlockingIssues() && !sessionUi_.allowUnresolvedGenerationBindings) {
+                std::ostringstream status;
+                status << "world_create_blocked unresolved_bindings=";
+                for (std::size_t i = 0; i < sessionUi_.generationBindingPlan.issues.size(); ++i) {
+                    if (i > 0) {
+                        status << ',';
+                    }
+                    status << sessionUi_.generationBindingPlan.issues[i].code;
+                }
+                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", status.str().c_str());
+                appendLog(status.str());
+                return;
+            }
+
             applyConfigFromPanel();
-            std::string worldName = sessionUi_.pendingWorldName;
+            std::string worldName = runtime_.normalizeWorldNameForUi(sessionUi_.pendingWorldName);
             if (worldName.empty()) {
-                worldName = runtime_.suggestNextWorldName();
+                const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'
+                    ? std::string(sessionUi_.selectedModelName)
+                    : std::string("world");
+                worldName = runtime_.suggestWorldNameFromHint(baseHint);
+            }
+            if (worldName != sessionUi_.pendingWorldName) {
+                std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", worldName.c_str());
             }
 
             std::string message;
@@ -427,18 +749,20 @@
         DelayedTooltip("Applies generation settings, creates the world, and enters simulation view.");
 
         ImGui::SameLine();
-        if (SecondaryButton("Back to model selector", ImVec2(btnW, 44.0f))) {
-            appState_ = AppState::ModelSelector;
-            modelSelector_.open();
+        if (SecondaryButton("Back to world selection", ImVec2(btnW, 44.0f))) {
+            appState_ = AppState::SessionManager;
         }
-        DelayedTooltip("Returns to the model selection page without creating a new world.");
+        DelayedTooltip("Return to world selection without creating a world.");
 
         ImGui::SameLine();
         if (SecondaryButton("Reset parameters", ImVec2(btnW, 44.0f))) {
             syncPanelFromConfig();
             panel_.useManualSeed = false;
             panel_.seed = generateRandomSeed();
-            std::string suggestedName = runtime_.suggestNextWorldName();
+            const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'
+                ? std::string(sessionUi_.selectedModelName)
+                : std::string("world");
+            std::string suggestedName = runtime_.suggestWorldNameFromHint(baseHint);
             std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
         }
         DelayedTooltip("Restores parameters from the current runtime configuration.");

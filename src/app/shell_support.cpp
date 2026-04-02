@@ -51,6 +51,37 @@ std::optional<TemporalPolicy> parseTemporalPolicy(const std::string& token) {
     return std::nullopt;
 }
 
+std::string initialConditionTypeToString(const InitialConditionType type) {
+    switch (type) {
+        case InitialConditionType::Terrain: return "terrain";
+        case InitialConditionType::Conway: return "conway";
+        case InitialConditionType::GrayScott: return "gray_scott";
+        case InitialConditionType::Waves: return "waves";
+        case InitialConditionType::Blank: return "blank";
+    }
+    return "terrain";
+}
+
+std::optional<InitialConditionType> parseInitialConditionType(const std::string& token) {
+    const std::string normalized = toLower(token);
+    if (normalized == "terrain" || normalized == "geographic") {
+        return InitialConditionType::Terrain;
+    }
+    if (normalized == "conway" || normalized == "life" || normalized == "game_of_life") {
+        return InitialConditionType::Conway;
+    }
+    if (normalized == "gray_scott" || normalized == "grayscott" || normalized == "gray-scott") {
+        return InitialConditionType::GrayScott;
+    }
+    if (normalized == "waves" || normalized == "wave") {
+        return InitialConditionType::Waves;
+    }
+    if (normalized == "blank" || normalized == "zero") {
+        return InitialConditionType::Blank;
+    }
+    return std::nullopt;
+}
+
 std::optional<ModelTier> parseTier(const std::string& token) {
     const std::string normalized = toLower(token);
     if (normalized == "a") {
@@ -127,7 +158,48 @@ const std::vector<LaunchPreset>& allPresets() {
     static const std::vector<LaunchPreset> presets = {
         {"baseline", LaunchConfig{42, GridSpec{128, 128}, ModelTier::A, TemporalPolicy::UniformA}, "Balanced default deterministic setup (square high-context grid)"},
         {"phased_b", LaunchConfig{777, GridSpec{160, 160}, ModelTier::B, TemporalPolicy::PhasedB}, "Intermediate coupling with phased policy"},
-        {"dense_c", LaunchConfig{2026, GridSpec{192, 192}, ModelTier::C, TemporalPolicy::MultiRateC}, "Advanced coupling stress-oriented profile"}
+        {"dense_c", LaunchConfig{2026, GridSpec{192, 192}, ModelTier::C, TemporalPolicy::MultiRateC}, "Advanced coupling stress-oriented profile"},
+        {"conway", [] {
+            LaunchConfig cfg{31415, GridSpec{128, 128}, ModelTier::A, TemporalPolicy::UniformA};
+            cfg.initialConditions.type = InitialConditionType::Conway;
+            cfg.initialConditions.conway.targetVariable = "vegetation_v";
+            cfg.initialConditions.conway.aliveProbability = 0.35f;
+            cfg.initialConditions.conway.aliveValue = 1.0f;
+            cfg.initialConditions.conway.deadValue = 0.0f;
+            cfg.initialConditions.conway.smoothingPasses = 2;
+            return cfg;
+        }(), "Conway-style random binary seeding on vegetation_v with smoothing"},
+        {"gray_scott", [] {
+            LaunchConfig cfg{27182, GridSpec{192, 192}, ModelTier::A, TemporalPolicy::UniformA};
+            cfg.initialConditions.type = InitialConditionType::GrayScott;
+            cfg.initialConditions.grayScott.targetVariableA = "resource_stock_r";
+            cfg.initialConditions.grayScott.targetVariableB = "vegetation_v";
+            cfg.initialConditions.grayScott.backgroundA = 1.0f;
+            cfg.initialConditions.grayScott.backgroundB = 0.0f;
+            cfg.initialConditions.grayScott.spotValueA = 0.0f;
+            cfg.initialConditions.grayScott.spotValueB = 1.0f;
+            cfg.initialConditions.grayScott.spotCount = 6;
+            cfg.initialConditions.grayScott.spotRadius = 12.0f;
+            cfg.initialConditions.grayScott.spotJitter = 0.45f;
+            return cfg;
+        }(), "Gray-Scott style dual-field spot initialization with jitter"},
+        {"waves", [] {
+            LaunchConfig cfg{16180, GridSpec{192, 192}, ModelTier::A, TemporalPolicy::UniformA};
+            cfg.initialConditions.type = InitialConditionType::Waves;
+            cfg.initialConditions.waves.targetVariable = "surface_water_w";
+            cfg.initialConditions.waves.baseline = 0.0f;
+            cfg.initialConditions.waves.dropAmplitude = 1.0f;
+            cfg.initialConditions.waves.dropRadius = 14.0f;
+            cfg.initialConditions.waves.dropCount = 4;
+            cfg.initialConditions.waves.dropJitter = 0.45f;
+            cfg.initialConditions.waves.ringFrequency = 1.8f;
+            return cfg;
+        }(), "Multi-drop wave initialization centered on surface_water_w"},
+        {"blank", [] {
+            LaunchConfig cfg{1234, GridSpec{128, 128}, ModelTier::A, TemporalPolicy::UniformA};
+            cfg.initialConditions.type = InitialConditionType::Blank;
+            return cfg;
+        }(), "Zero-initialized canonical fields"}
     };
     return presets;
 }

@@ -4,6 +4,7 @@
 #include "ws/app/shell_support.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -66,6 +67,10 @@ std::string WorldStore::normalizeWorldName(std::string worldName) {
         }
     }
     return worldName;
+}
+
+std::string WorldStore::normalizeNameForUi(std::string worldName) const {
+    return normalizeWorldName(std::move(worldName));
 }
 
 bool WorldStore::isDefaultWorldName(const std::string& name, int& outIndex) {
@@ -141,8 +146,15 @@ std::vector<StoredWorldRecord> WorldStore::list(std::string& message) const {
                     record.gridWidth = launch.grid.width;
                     record.gridHeight = launch.grid.height;
                     record.seed = launch.seed;
-                    record.tier = toString(launch.tier);
                     record.temporalPolicy = temporalPolicyToString(launch.temporalPolicy);
+                    switch (launch.initialConditions.type) {
+                        case InitialConditionType::Terrain: record.initialConditionMode = "terrain"; break;
+                        case InitialConditionType::Conway: record.initialConditionMode = "conway"; break;
+                        case InitialConditionType::GrayScott: record.initialConditionMode = "gray_scott"; break;
+                        case InitialConditionType::Waves: record.initialConditionMode = "waves"; break;
+                        case InitialConditionType::Blank: record.initialConditionMode = "blank"; break;
+                        default: record.initialConditionMode = "unknown"; break;
+                    }
                 } catch (...) {
                     // keep list operation resilient
                 }
@@ -199,6 +211,57 @@ std::string WorldStore::suggestNextWorldName() const {
     }
 
     return "world_99999";
+}
+
+std::string WorldStore::suggestWorldNameFromHint(const std::string& hint) const {
+    std::string base = normalizeWorldName(hint);
+    if (base.empty()) {
+        return suggestNextWorldName();
+    }
+
+    while (!base.empty() && base.back() == '_') {
+        base.pop_back();
+    }
+    if (base.empty()) {
+        return suggestNextWorldName();
+    }
+
+    std::string lower = base;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    if (lower == "world" || lower == "new_world") {
+        return suggestNextWorldName();
+    }
+
+    auto trimNumericSuffix = [](std::string value) {
+        while (!value.empty() && std::isdigit(static_cast<unsigned char>(value.back())) != 0) {
+            value.pop_back();
+        }
+        while (!value.empty() && (value.back() == '_' || value.back() == '-')) {
+            value.pop_back();
+        }
+        return value;
+    };
+
+    base = trimNumericSuffix(base);
+    if (base.empty()) {
+        return suggestNextWorldName();
+    }
+
+    if (!worldExists(base)) {
+        return base;
+    }
+
+    for (int i = 2; i < 100000; ++i) {
+        const std::string candidate = base + "_" + std::to_string(i);
+        if (!worldExists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return suggestNextWorldName();
 }
 
 bool WorldStore::copyFileIfExists(const std::filesystem::path& source, const std::filesystem::path& target, std::string& message) const {

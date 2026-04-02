@@ -283,6 +283,41 @@ public:
             modelSelector_.close();
             modelEditor_.close();
             sessionUi_.needsRefresh = true;
+            std::snprintf(sessionUi_.selectedModelName, sizeof(sessionUi_.selectedModelName), "%s", model.name.c_str());
+            std::snprintf(
+                sessionUi_.selectedModelDescription,
+                sizeof(sessionUi_.selectedModelDescription),
+                "%s",
+                model.description.empty() ? "No description available." : model.description.c_str());
+            std::snprintf(
+                sessionUi_.selectedModelAuthor,
+                sizeof(sessionUi_.selectedModelAuthor),
+                "%s",
+                model.author.empty() ? "Unknown" : model.author.c_str());
+            std::snprintf(
+                sessionUi_.selectedModelVersion,
+                sizeof(sessionUi_.selectedModelVersion),
+                "%s",
+                model.version.empty() ? "unknown" : model.version.c_str());
+            std::snprintf(
+                sessionUi_.selectedModelPath,
+                sizeof(sessionUi_.selectedModelPath),
+                "%s",
+                model.path.c_str());
+
+            sessionUi_.selectedModelCatalog = initialization::ModelVariableCatalog{};
+            sessionUi_.selectedModelCellStateVariables.clear();
+            {
+                std::string catalogMessage;
+                if (initialization::loadModelVariableCatalog(model.path, sessionUi_.selectedModelCatalog, catalogMessage)) {
+                    sessionUi_.selectedModelCellStateVariables = sessionUi_.selectedModelCatalog.cellStateVariableIds();
+                } else {
+                    appendLog(catalogMessage);
+                }
+            }
+
+            sessionUi_.generationBindingPlan = initialization::InitializationBindingPlan{};
+            sessionUi_.allowUnresolvedGenerationBindings = false;
             std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "model_selected=%s", model.name.c_str());
             appState_ = AppState::SessionManager;
         };

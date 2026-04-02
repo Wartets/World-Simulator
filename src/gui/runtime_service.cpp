@@ -151,8 +151,8 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
         info.gridWidth = record.gridWidth;
         info.gridHeight = record.gridHeight;
         info.seed = record.seed;
-        info.tier = record.tier;
         info.temporalPolicy = record.temporalPolicy;
+        info.initialConditionMode = record.initialConditionMode;
         info.profileBytes = record.profileBytes;
         info.checkpointBytes = record.checkpointBytes;
         info.profileLastWrite = record.profileLastWrite;
@@ -170,6 +170,16 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
 std::string RuntimeService::suggestNextWorldName() const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     return worldStore_.suggestNextWorldName();
+}
+
+std::string RuntimeService::suggestWorldNameFromHint(const std::string& hint) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return worldStore_.suggestWorldNameFromHint(hint);
+}
+
+std::string RuntimeService::normalizeWorldNameForUi(const std::string& worldName) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return worldStore_.normalizeNameForUi(worldName);
 }
 
 bool RuntimeService::createWorld(const std::string& worldName, const app::LaunchConfig& config, std::string& message) {

@@ -21,13 +21,13 @@ namespace ws {
 
 enum class InitialConditionType : std::uint8_t {
     Terrain = 0,
-    Uniform = 1,
-    Random = 2,
-    Spots = 3,
-    RadialDrop = 4
+    Conway = 1,
+    GrayScott = 2,
+    Waves = 3,
+    Blank = 4
 };
 
-struct TerrainGenerationParams {
+struct TerrainParams {
     float terrainBaseFrequency = 2.2f;
     float terrainDetailFrequency = 7.5f;
     float terrainWarpStrength = 0.55f;
@@ -49,41 +49,42 @@ struct TerrainGenerationParams {
     float shelfDepth = 0.20f;
 };
 
-struct UniformGenerationParams {
+struct ConwayParams {
     std::string targetVariable = "vegetation_v";
-    float value = 0.0f;
-};
-
-struct RandomGenerationParams {
-    std::string targetVariable = "vegetation_v";
-    float minValue = 0.0f;
-    float maxValue = 1.0f;
     float aliveProbability = 0.5f;
+    float aliveValue = 1.0f;
+    float deadValue = 0.0f;
+    int smoothingPasses = 0;
 };
 
-struct SpotsGenerationParams {
-    std::string targetVariable = "vegetation_v";
-    float backgroundValue = 0.0f;
-    float spotValue = 1.0f;
+struct GrayScottParams {
+    std::string targetVariableA = "resource_stock_r";
+    std::string targetVariableB = "vegetation_v";
+    float backgroundA = 1.0f;
+    float backgroundB = 0.0f;
+    float spotValueA = 0.0f;
+    float spotValueB = 1.0f;
     int spotCount = 4;
     float spotRadius = 15.0f;
-    float spotJitter = 0.5f;
+    float spotJitter = 0.35f;
 };
 
-struct RadialDropGenerationParams {
+struct WaveParams {
     std::string targetVariable = "surface_water_w";
-    float backgroundValue = 0.0f;
-    float dropValue = 1.0f;
+    float baseline = 0.0f;
+    float dropAmplitude = 1.0f;
     float dropRadius = 5.0f;
+    int dropCount = 1;
+    float dropJitter = 0.35f;
+    float ringFrequency = 1.0f;
 };
 
 struct InitialConditionConfig {
     InitialConditionType type = InitialConditionType::Terrain;
-    TerrainGenerationParams terrain;
-    UniformGenerationParams uniform;
-    RandomGenerationParams random;
-    SpotsGenerationParams spots;
-    RadialDropGenerationParams radialDrop;
+    TerrainParams terrain;
+    ConwayParams conway;
+    GrayScottParams grayScott;
+    WaveParams waves;
 };
 
 struct RuntimeConfig {
