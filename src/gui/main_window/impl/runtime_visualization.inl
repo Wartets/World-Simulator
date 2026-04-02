@@ -889,10 +889,10 @@ void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, 
         if (tagIt != fieldDisplayTags_.end()) {
             for (const auto& tag : tagIt->second) {
                 const std::string tagLower = toLowerCopy(tag);
-                if (windUIdx < 0 && (tagLower == "vector_x" || tagLower == "wind_u" || tagLower == "wind_x")) {
+                if (windUIdx < 0 && (tagLower == "vector_x" || tagLower == "axis_x" || tagLower == "flow_x" || tagLower == "transport_x")) {
                     windUIdx = i;
                 }
-                if (windVIdx < 0 && (tagLower == "vector_y" || tagLower == "wind_v" || tagLower == "wind_y")) {
+                if (windVIdx < 0 && (tagLower == "vector_y" || tagLower == "axis_y" || tagLower == "flow_y" || tagLower == "transport_y")) {
                     windVIdx = i;
                 }
             }

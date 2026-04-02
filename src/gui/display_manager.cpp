@@ -272,11 +272,11 @@ DisplayBuffer buildDisplayBufferFromSnapshot(
     const int windUIdx = findFieldIndexByTag(
         fields,
         fieldDisplayTags,
-        {"vector_x", "wind_u", "wind"});
+        {"vector_x", "axis_x", "flow_x", "transport_x", "flow"});
     const int windVIdx = findFieldIndexByTag(
         fields,
         fieldDisplayTags,
-        {"vector_y", "wind_v", "wind"});
+        {"vector_y", "axis_y", "flow_y", "transport_y", "flow"});
 
     const std::vector<float> terrain = (terrainIdx >= 0)
         ? mergedFieldValues(fields[static_cast<std::size_t>(terrainIdx)], includeSparseOverlay)

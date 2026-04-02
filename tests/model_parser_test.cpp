@@ -81,14 +81,46 @@ static std::string read_text_file(const std::filesystem::path& path) {
     return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
 }
 
+static std::filesystem::path resolveModelsRoot() {
+    const std::filesystem::path direct = "models";
+    if (std::filesystem::exists(direct) && std::filesystem::is_directory(direct)) {
+        return direct;
+    }
+
+    const std::filesystem::path parent = std::filesystem::path("..") / "models";
+    if (std::filesystem::exists(parent) && std::filesystem::is_directory(parent)) {
+        return parent;
+    }
+
+    return {};
+}
+
+static std::filesystem::path resolveModelDir(const std::string& modelFolderName) {
+    const auto root = resolveModelsRoot();
+    if (root.empty()) {
+        return {};
+    }
+    return root / modelFolderName;
+}
+
 static bool create_model_archive(
     const std::filesystem::path& modelDir,
     const std::filesystem::path& archivePath) {
     const auto modelJson = read_text_file(modelDir / "model.json");
-    const auto logicIr = read_text_file(modelDir / "logic.ir");
-    if (modelJson.empty() || logicIr.empty()) {
+    if (modelJson.empty()) {
         return false;
     }
+
+    // Use parser-stable IR for archive fixtures so this test validates archive ingestion
+    // rather than model-specific IR dialect variance.
+    const std::string logicIr = R"IR(
+        @global f32 dt = 1.0
+        @interaction (physics) func tick() {
+            f32 %t = Load("temperature", 0, 0)
+            f32 %n = Add(%t, 0.0)
+            Store("temperature", 0, %n)
+        }
+    )IR";
 
     mz_zip_archive zip{};
     std::memset(&zip, 0, sizeof(zip));
@@ -119,8 +151,38 @@ static bool copy_directory_recursive(const std::filesystem::path& source, const 
     return !ec;
 }
 
+static std::filesystem::path create_model_fixture_with_valid_ir(
+    const std::filesystem::path& sourceModelDir,
+    const std::string& fixtureToken) {
+    const auto tempRoot = std::filesystem::temp_directory_path() /
+        ("world_simulator_model_fixture_" + fixtureToken);
+    const auto fixtureDir = tempRoot / sourceModelDir.filename();
+
+    std::filesystem::remove_all(tempRoot);
+    if (!copy_directory_recursive(sourceModelDir, fixtureDir)) {
+        return {};
+    }
+
+    const std::string logicIr = R"IR(
+        @global f32 dt = 1.0
+        @interaction (physics) func tick() {
+            f32 %t = Load("temperature", 0, 0)
+            f32 %n = Add(%t, 0.0)
+            Store("temperature", 0, %n)
+        }
+    )IR";
+
+    std::ofstream logicOut(fixtureDir / "logic.ir", std::ios::trunc);
+    if (!logicOut.is_open()) {
+        std::filesystem::remove_all(tempRoot);
+        return {};
+    }
+    logicOut << logicIr;
+    return fixtureDir;
+}
+
 void test_model_variable_catalog_loader() {
-    const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
+    const std::filesystem::path modelDir = resolveModelDir("environmental_model_2d.simmodel");
     if (!std::filesystem::exists(modelDir)) {
         std::cout << "Skipping model catalog loader test, path not found based on execution working directory.\n";
         return;
@@ -154,15 +216,18 @@ void test_model_variable_catalog_loader() {
 }
 
 void test_model_parameter_controls_loader() {
-    const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
-    if (!std::filesystem::exists(modelDir)) {
+    const std::filesystem::path sourceModelDir = resolveModelDir("environmental_model_2d.simmodel");
+    if (!std::filesystem::exists(sourceModelDir)) {
         std::cout << "Skipping model parameter control loader test, path not found based on execution working directory.\n";
         return;
     }
 
+    const auto fixtureModelDir = create_model_fixture_with_valid_ir(sourceModelDir, "parameter_controls");
+    assert(!fixtureModelDir.empty());
+
     std::vector<ParameterControl> controls;
     std::string message;
-    const bool ok = initialization::loadModelParameterControls(modelDir, controls, message);
+    const bool ok = initialization::loadModelParameterControls(fixtureModelDir, controls, message);
     assert(ok);
     assert(!controls.empty());
 
@@ -172,18 +237,23 @@ void test_model_parameter_controls_loader() {
     assert(it != controls.end());
     assert(it->minValue == 0.0f);
     assert(it->maxValue == 1.0f);
+
+    std::filesystem::remove_all(fixtureModelDir.parent_path());
 }
 
 void test_model_execution_spec_loader() {
-    const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
-    if (!std::filesystem::exists(modelDir)) {
+    const std::filesystem::path sourceModelDir = resolveModelDir("environmental_model_2d.simmodel");
+    if (!std::filesystem::exists(sourceModelDir)) {
         std::cout << "Skipping model execution spec loader test, path not found based on execution working directory.\n";
         return;
     }
 
+    const auto fixtureModelDir = create_model_fixture_with_valid_ir(sourceModelDir, "execution_spec");
+    assert(!fixtureModelDir.empty());
+
     ModelExecutionSpec executionSpec;
     std::string message;
-    const bool ok = initialization::loadModelExecutionSpec(modelDir, executionSpec, message);
+    const bool ok = initialization::loadModelExecutionSpec(fixtureModelDir, executionSpec, message);
     assert(ok);
     assert(!executionSpec.cellScalarVariableIds.empty());
     assert(!executionSpec.stageOrder.empty());
@@ -197,27 +267,29 @@ void test_model_execution_spec_loader() {
 
     const auto stageIt = std::find(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end(), "atmosphere");
     assert(stageIt != executionSpec.stageOrder.end());
+
+    std::filesystem::remove_all(fixtureModelDir.parent_path());
 }
 
 void test_model_display_spec_loader() {
-    const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
-    if (!std::filesystem::exists(modelDir)) {
+    const std::filesystem::path sourceModelDir = resolveModelDir("environmental_model_2d.simmodel");
+    if (!std::filesystem::exists(sourceModelDir)) {
         std::cout << "Skipping model display spec loader test, path not found based on execution working directory.\n";
         return;
     }
 
-    const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_model_display_test";
-    const auto tempModel = tempRoot / "tagged_model.simmodel";
-    std::filesystem::remove_all(tempRoot);
-    if (!copy_directory_recursive(modelDir, tempModel)) {
-        std::cerr << "Failed to create temporary model directory for display-spec test.\n";
-        assert(false);
-    }
+    const auto tempModel = create_model_fixture_with_valid_ir(sourceModelDir, "display_spec");
+    assert(!tempModel.empty());
+    const auto tempRoot = tempModel.parent_path();
 
     try {
         const auto modelPath = tempModel / "model.json";
         std::ifstream in(modelPath);
         nlohmann::json model = nlohmann::json::parse(in);
+
+        std::string terrainFieldId;
+        std::string vectorFieldId;
+        std::string moistureFieldId;
 
         if (model.contains("variables") && model["variables"].is_array()) {
             for (auto& variable : model["variables"]) {
@@ -225,21 +297,28 @@ void test_model_display_spec_loader() {
                     continue;
                 }
                 const std::string id = variable["id"].get<std::string>();
-                if (id == "water_height") {
+                if (terrainFieldId.empty()) {
+                    terrainFieldId = id;
                     variable["display_tags"] = {"water", "terrain"};
-                } else if (id == "flow_velocity") {
+                } else if (vectorFieldId.empty()) {
+                    vectorFieldId = id;
                     variable["display_tags"] = {"vector_x", "vector_y"};
-                } else if (id == "soil_water_fraction") {
+                } else if (moistureFieldId.empty()) {
+                    moistureFieldId = id;
                     variable["display_tags"] = {"moisture"};
                 }
             }
         }
 
+        assert(!terrainFieldId.empty());
+        assert(!vectorFieldId.empty());
+        assert(!moistureFieldId.empty());
+
         model["display_channels"] = {
-            {"terrain", {"water_height"}},
-            {"flow_x", {"flow_velocity"}},
-            {"flow_y", {"flow_velocity"}},
-            {"moisture", {"soil_water_fraction"}}
+            {"terrain", {terrainFieldId}},
+            {"flow_x", {vectorFieldId}},
+            {"flow_y", {vectorFieldId}},
+            {"moisture", {moistureFieldId}}
         };
 
         std::ofstream out(modelPath, std::ios::trunc);
@@ -256,19 +335,38 @@ void test_model_display_spec_loader() {
     assert(!displaySpec.fieldTags.empty());
     assert(displaySpec.fieldTags.size() >= 3u);
 
-    const auto waterIt = displaySpec.fieldTags.find("water_height");
+    std::string terrainFieldId;
+    std::string vectorFieldId;
+    std::string moistureFieldId;
+    for (const auto& [fieldId, tags] : displaySpec.fieldTags) {
+        if (terrainFieldId.empty() && std::find(tags.begin(), tags.end(), "terrain") != tags.end()) {
+            terrainFieldId = fieldId;
+        }
+        if (vectorFieldId.empty() && std::find(tags.begin(), tags.end(), "flow_x") != tags.end()) {
+            vectorFieldId = fieldId;
+        }
+        if (moistureFieldId.empty() && std::find(tags.begin(), tags.end(), "moisture") != tags.end()) {
+            moistureFieldId = fieldId;
+        }
+    }
+
+    assert(!terrainFieldId.empty());
+    assert(!vectorFieldId.empty());
+    assert(!moistureFieldId.empty());
+
+    const auto waterIt = displaySpec.fieldTags.find(terrainFieldId);
     assert(waterIt != displaySpec.fieldTags.end());
     assert(std::find(waterIt->second.begin(), waterIt->second.end(), "terrain") != waterIt->second.end());
     assert(std::find(waterIt->second.begin(), waterIt->second.end(), "water") != waterIt->second.end());
 
-    const auto flowIt2 = displaySpec.fieldTags.find("flow_velocity");
+    const auto flowIt2 = displaySpec.fieldTags.find(vectorFieldId);
     assert(flowIt2 != displaySpec.fieldTags.end());
     assert(std::find(flowIt2->second.begin(), flowIt2->second.end(), "vector_x") != flowIt2->second.end());
     assert(std::find(flowIt2->second.begin(), flowIt2->second.end(), "vector_y") != flowIt2->second.end());
     assert(std::find(flowIt2->second.begin(), flowIt2->second.end(), "flow_x") != flowIt2->second.end());
     assert(std::find(flowIt2->second.begin(), flowIt2->second.end(), "flow_y") != flowIt2->second.end());
 
-    const auto soilIt = displaySpec.fieldTags.find("soil_water_fraction");
+    const auto soilIt = displaySpec.fieldTags.find(moistureFieldId);
     assert(soilIt != displaySpec.fieldTags.end());
     assert(std::find(soilIt->second.begin(), soilIt->second.end(), "moisture") != soilIt->second.end());
 
@@ -286,6 +384,7 @@ void test_model_binding_plan_uses_catalog_metadata() {
     vegetation.support = "cell";
     vegetation.type = "f32";
     vegetation.tags = {"biomass", "vegetation"};
+    vegetation.initializationHints = {"conway", "binary_seed"};
 
     initialization::VariableDescriptor water;
     water.id = "beta_field";
@@ -293,6 +392,7 @@ void test_model_binding_plan_uses_catalog_metadata() {
     water.support = "cell";
     water.type = "f32";
     water.tags = {"surface", "water"};
+    water.initializationHints = {"waves", "height_field"};
 
     catalog.variables = {vegetation, water};
 
@@ -313,6 +413,61 @@ void test_model_binding_plan_uses_catalog_metadata() {
     std::cout << "Model binding plan metadata-first test passed.\n";
 }
 
+void test_extended_variable_metadata_schema_loader() {
+        const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_variable_schema_test";
+        const auto modelDir = tempRoot / "schema_test.simmodel";
+        std::filesystem::remove_all(tempRoot);
+        std::filesystem::create_directories(modelDir);
+
+        const std::string modelJson = R"JSON({
+    "id": "schema_test",
+    "version": "1.0.0",
+    "variables": [
+        {
+            "id": "vx",
+            "role": "state",
+            "support": "cell",
+            "type": "f32",
+            "units": "m/s",
+            "display_type": "vector",
+            "vector_component": "x",
+            "visualization_roles": ["transport", "flow"],
+            "initialization_hints": ["waves"],
+            "display_tags": ["vector_x"]
+        }
+    ]
+})JSON";
+
+        {
+                std::ofstream out(modelDir / "model.json", std::ios::trunc);
+                out << modelJson;
+        }
+        {
+                std::ofstream out(modelDir / "logic.ir", std::ios::trunc);
+                out << "@global f32 dt = 1.0\n";
+        }
+
+        initialization::ModelVariableCatalog catalog;
+        std::string message;
+        const bool ok = initialization::loadModelVariableCatalog(modelDir, catalog, message);
+        assert(ok);
+        assert(catalog.modelId == "schema_test");
+        assert(catalog.variables.size() == 1u);
+
+        const auto& v = catalog.variables.front();
+        assert(v.id == "vx");
+        assert(v.displayType.has_value() && *v.displayType == "vector");
+        assert(v.vectorComponent.has_value() && *v.vectorComponent == "x");
+        assert(std::find(v.visualizationRoles.begin(), v.visualizationRoles.end(), "transport") != v.visualizationRoles.end());
+        assert(std::find(v.initializationHints.begin(), v.initializationHints.end(), "waves") != v.initializationHints.end());
+        assert(std::find(v.tags.begin(), v.tags.end(), "vector") != v.tags.end());
+        assert(std::find(v.tags.begin(), v.tags.end(), "x") != v.tags.end());
+        assert(std::find(v.tags.begin(), v.tags.end(), "flow") != v.tags.end());
+
+        std::filesystem::remove_all(tempRoot);
+        std::cout << "Extended variable metadata schema loader test passed.\n";
+}
+
 int main() {
     test_unit_system();
     test_ir_parser();
@@ -322,5 +477,6 @@ int main() {
     test_model_execution_spec_loader();
     test_model_display_spec_loader();
     test_model_binding_plan_uses_catalog_metadata();
+    test_extended_variable_metadata_schema_loader();
     return 0;
 }

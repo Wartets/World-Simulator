@@ -47,6 +47,17 @@ void normalizeStringVector(std::vector<std::string>& values) {
     values.erase(std::unique(values.begin(), values.end()), values.end());
 }
 
+void appendNormalizedStrings(const json& source, std::vector<std::string>& destination) {
+    if (!source.is_array()) {
+        return;
+    }
+    for (const auto& value : source) {
+        if (value.is_string()) {
+            destination.push_back(value.get<std::string>());
+        }
+    }
+}
+
 bool populateCatalogFromModelJson(
     const std::filesystem::path& modelPath,
     const std::string& modelJson,
@@ -88,6 +99,37 @@ bool populateCatalogFromModelJson(
             if (variable.contains("display_channel") && variable["display_channel"].is_string()) {
                 descriptor.tags.push_back(variable["display_channel"].get<std::string>());
             }
+
+            if (variable.contains("display_type") && variable["display_type"].is_string()) {
+                descriptor.displayType = toLowerCopy(variable["display_type"].get<std::string>());
+            }
+            if (variable.contains("vector_component") && variable["vector_component"].is_string()) {
+                descriptor.vectorComponent = toLowerCopy(variable["vector_component"].get<std::string>());
+            }
+
+            if (variable.contains("visualization_roles")) {
+                appendNormalizedStrings(variable["visualization_roles"], descriptor.visualizationRoles);
+            }
+            if (variable.contains("initialization_hints")) {
+                appendNormalizedStrings(variable["initialization_hints"], descriptor.initializationHints);
+            }
+            if (variable.contains("initialization_modes")) {
+                appendNormalizedStrings(variable["initialization_modes"], descriptor.initializationHints);
+            }
+
+            normalizeStringVector(descriptor.visualizationRoles);
+            normalizeStringVector(descriptor.initializationHints);
+
+            if (descriptor.displayType.has_value() && !descriptor.displayType->empty()) {
+                descriptor.tags.push_back(*descriptor.displayType);
+            }
+            if (descriptor.vectorComponent.has_value() && !descriptor.vectorComponent->empty()) {
+                descriptor.tags.push_back(*descriptor.vectorComponent);
+            }
+            descriptor.tags.insert(
+                descriptor.tags.end(),
+                descriptor.visualizationRoles.begin(),
+                descriptor.visualizationRoles.end());
             normalizeStringVector(descriptor.tags);
 
             const auto minBound = readDomainBound(variable, "min");
@@ -223,11 +265,77 @@ std::optional<std::string> pickBestCandidate(
     return scored.front().second;
 }
 
+bool variableHasAnyInitializationHint(
+    const VariableDescriptor& variable,
+    const std::vector<std::string>& requiredHints) {
+    if (requiredHints.empty()) {
+        return true;
+    }
+    if (variable.initializationHints.empty()) {
+        return false;
+    }
+
+    for (const auto& required : requiredHints) {
+        const std::string requiredLower = toLowerCopy(required);
+        if (requiredLower.empty()) {
+            continue;
+        }
+        for (const auto& variableHint : variable.initializationHints) {
+            if (toLowerCopy(variableHint) == requiredLower) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::optional<std::string> pickBestCandidateByInitializationHints(
+    const ModelVariableCatalog& catalog,
+    const std::vector<std::string>& initializationHints,
+    const std::vector<std::string>& semanticHints,
+    const float minimumScore,
+    const std::optional<std::string>& exclude = std::nullopt) {
+    std::vector<std::pair<float, std::string>> scored;
+    scored.reserve(catalog.variables.size());
+
+    for (const auto& variable : catalog.variables) {
+        if (variable.support != "cell") {
+            continue;
+        }
+        if (exclude.has_value() && variable.id == *exclude) {
+            continue;
+        }
+        if (!variableHasAnyInitializationHint(variable, initializationHints)) {
+            continue;
+        }
+        scored.emplace_back(scoreCandidate(variable, semanticHints), variable.id);
+    }
+
+    if (scored.empty()) {
+        return std::nullopt;
+    }
+
+    std::sort(scored.begin(), scored.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.first != rhs.first) {
+            return lhs.first > rhs.first;
+        }
+        return lhs.second < rhs.second;
+    });
+
+    if (scored.front().first < minimumScore) {
+        return std::nullopt;
+    }
+
+    return scored.front().second;
+}
+
 void addDecisionFromOverrideOrResolver(
     InitializationBindingPlan& plan,
     const ModelVariableCatalog& catalog,
     const std::string& key,
     const std::optional<std::string>& overrideValue,
+    const bool requireMetadataHints,
+    const std::vector<std::string>& initializationHints,
     const std::vector<std::string>& semanticHints,
     const std::optional<std::string>& exclude = std::nullopt) {
     BindingDecision decision;
@@ -263,23 +371,40 @@ void addDecisionFromOverrideOrResolver(
     }
 
     const float minimumScore = 0.75f;
-    const auto picked = pickBestCandidate(
-        catalog,
-        semanticHints,
-        minimumScore,
-        exclude);
+    std::optional<std::string> picked;
+    if (requireMetadataHints) {
+        picked = pickBestCandidateByInitializationHints(
+            catalog,
+            initializationHints,
+            semanticHints,
+            minimumScore,
+            exclude);
+    } else {
+        picked = pickBestCandidate(
+            catalog,
+            semanticHints,
+            minimumScore,
+            exclude);
+    }
+
     if (picked.has_value()) {
         decision.variableId = *picked;
         decision.resolved = true;
         decision.confidence = 0.85f;
-        decision.rationale = "auto_resolved_from_catalog_metadata";
+        decision.rationale = requireMetadataHints
+            ? "auto_resolved_from_initialization_hints"
+            : "auto_resolved_from_catalog_metadata";
     } else {
         decision.resolved = false;
         decision.confidence = 0.0f;
-        decision.rationale = "no_candidate_available";
+        decision.rationale = requireMetadataHints
+            ? "initialization_hint_resolution_failed"
+            : "no_candidate_available";
         plan.issues.push_back(BindingIssue{
             "binding.missing_candidate",
-            "No candidate variable available for binding '" + key + "'.",
+            requireMetadataHints
+                ? "No metadata-hinted candidate available for binding '" + key + "'."
+                : "No candidate variable available for binding '" + key + "'.",
             true});
     }
 
@@ -832,6 +957,22 @@ bool loadModelDisplaySpec(
                 if (variable.contains("display_channel") && variable["display_channel"].is_string()) {
                     fieldTags[fieldId].push_back(variable["display_channel"].get<std::string>());
                 }
+
+                if (variable.contains("display_type") && variable["display_type"].is_string()) {
+                    fieldTags[fieldId].push_back(variable["display_type"].get<std::string>());
+                }
+
+                if (variable.contains("vector_component") && variable["vector_component"].is_string()) {
+                    fieldTags[fieldId].push_back(variable["vector_component"].get<std::string>());
+                }
+
+                if (variable.contains("visualization_roles") && variable["visualization_roles"].is_array()) {
+                    for (const auto& roleValue : variable["visualization_roles"]) {
+                        if (roleValue.is_string()) {
+                            fieldTags[fieldId].push_back(roleValue.get<std::string>());
+                        }
+                    }
+                }
             }
         }
 
@@ -862,6 +1003,8 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "conway.target_variable",
                 request.conwayTargetOverride,
+                request.requireMetadataHints,
+                {"conway", "conway_target", "binary_seed", "alive_seed"},
                 {"alive", "binary", "state", "vegetation", "biomass"});
             break;
 
@@ -871,6 +1014,8 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "gray_scott.target_variable_a",
                 request.grayTargetAOverride,
+                request.requireMetadataHints,
+                {"gray_scott", "gray_scott_a", "reaction_a", "u_component"},
                 {"gray_scott_u", "reactant_u", "resource", "concentration"});
 
             std::optional<std::string> exclude;
@@ -883,6 +1028,8 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "gray_scott.target_variable_b",
                 request.grayTargetBOverride,
+                request.requireMetadataHints,
+                {"gray_scott", "gray_scott_b", "reaction_b", "v_component"},
                 {"gray_scott_v", "reactant_v", "biomass", "vegetation", "concentration"},
                 exclude);
 
@@ -904,6 +1051,8 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "waves.target_variable",
                 request.wavesTargetOverride,
+                request.requireMetadataHints,
+                {"waves", "waves_target", "surface_waves", "height_field"},
                 {"water", "height", "surface", "wave", "elevation"});
             break;
 

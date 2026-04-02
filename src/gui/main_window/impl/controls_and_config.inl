@@ -1029,7 +1029,7 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
             "Relative Elevation - depth-banded elevation relative to water level.\n"
             "Surface Water - water depth visualization.\n"
             "Moisture Map - blended humidity and surface wetness.\n"
-            "Wind Field - automatic wind_u/wind_v background and arrows.");
+            "Wind Field - automatic vector-tagged axis field background and arrows.");
 
     // Color map
     const bool windFieldMode = (vp.displayType == DisplayType::WindField);
@@ -1190,12 +1190,12 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             ImGui::SetTooltip("Sample one arrow every N cells. Higher = fewer, larger arrows.");
         NumericSliderPair("Arrow scale##wind", &vp.vectorScale, 0.02f, 3.0f, "%.2f", 70.0f);
-        ImGui::TextDisabled("Uses wind_u for east/west and wind_v for north/south automatically.");
+        ImGui::TextDisabled("Uses metadata-tagged vector X/Y fields automatically.");
         ImGui::Unindent();
     } else {
         checkboxWithHint("Vector field overlay", &vp.showVectorField,
             "Draw arrows from two scalar fields to indicate direction/magnitude.\n"
-            "Useful for wind_u, gradients, etc.");
+            "Useful for any vector-tagged transport/flow axes or gradients.");
         if (vp.showVectorField) {
             ImGui::Indent();
             ImGui::SetNextItemWidth(-1.0f);

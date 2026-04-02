@@ -17,6 +17,10 @@ struct VariableDescriptor {
     std::string type;
     std::string units;
     std::vector<std::string> tags;
+    std::optional<std::string> displayType;
+    std::optional<std::string> vectorComponent;
+    std::vector<std::string> visualizationRoles;
+    std::vector<std::string> initializationHints;
     bool hasDomainMin = false;
     bool hasDomainMax = false;
     float domainMin = 0.0f;
@@ -34,6 +38,7 @@ struct ModelVariableCatalog {
 
 struct InitializationRequest {
     InitialConditionType type = InitialConditionType::Terrain;
+    bool requireMetadataHints = true;
     std::optional<std::string> conwayTargetOverride;
     std::optional<std::string> grayTargetAOverride;
     std::optional<std::string> grayTargetBOverride;

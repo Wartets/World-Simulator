@@ -19,14 +19,14 @@ void verifyInitialConditionRoundTrip() {
 
     config.initialConditions.type = ws::InitialConditionType::GrayScott;
     config.initialConditions.terrain.terrainBaseFrequency = 3.4f;
-    config.initialConditions.conway.targetVariable = "cell_state";
+    config.initialConditions.conway.targetVariable = "initialization.conway.target";
     config.initialConditions.conway.aliveProbability = 0.37f;
     config.initialConditions.conway.aliveValue = 2.0f;
     config.initialConditions.conway.deadValue = -1.0f;
     config.initialConditions.conway.smoothingPasses = 3;
 
-    config.initialConditions.grayScott.targetVariableA = "chem_a";
-    config.initialConditions.grayScott.targetVariableB = "chem_b";
+    config.initialConditions.grayScott.targetVariableA = "initialization.gray_scott.target_a";
+    config.initialConditions.grayScott.targetVariableB = "initialization.gray_scott.target_b";
     config.initialConditions.grayScott.backgroundA = 0.9f;
     config.initialConditions.grayScott.backgroundB = 0.1f;
     config.initialConditions.grayScott.spotValueA = 0.2f;
@@ -35,7 +35,7 @@ void verifyInitialConditionRoundTrip() {
     config.initialConditions.grayScott.spotRadius = 11.5f;
     config.initialConditions.grayScott.spotJitter = 0.42f;
 
-    config.initialConditions.waves.targetVariable = "wave_h";
+    config.initialConditions.waves.targetVariable = "initialization.waves.target";
     config.initialConditions.waves.baseline = 0.2f;
     config.initialConditions.waves.dropAmplitude = 1.3f;
     config.initialConditions.waves.dropRadius = 9.0f;
