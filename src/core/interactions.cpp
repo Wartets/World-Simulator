@@ -75,6 +75,43 @@ std::pair<ReproducibilityClass, double> classifyReproducibility(const std::map<s
     return {ReproducibilityClass::Exploratory, 5e-3};
 }
 
+OrderedSet normalizeConservedVariables(const std::vector<std::string>& conservedVariables) {
+    OrderedSet normalized;
+    for (const auto& variableName : conservedVariables) {
+        if (variableName.empty()) {
+            continue;
+        }
+        normalized.insert(variableName);
+    }
+    return normalized;
+}
+
+OrderedSet externalSourcesFromAssumptions(const std::set<std::string, std::less<>>& compatibilityAssumptions) {
+    OrderedSet externalSources;
+    constexpr std::string_view externalSourcePrefix = "external_source:";
+    constexpr std::string_view externalSourceAltPrefix = "external_source=";
+
+    for (const auto& assumption : compatibilityAssumptions) {
+        std::string_view view(assumption);
+        if (view.rfind(externalSourcePrefix, 0) == 0) {
+            const std::string variableName(view.substr(externalSourcePrefix.size()));
+            if (!variableName.empty()) {
+                externalSources.insert(variableName);
+            }
+            continue;
+        }
+
+        if (view.rfind(externalSourceAltPrefix, 0) == 0) {
+            const std::string variableName(view.substr(externalSourceAltPrefix.size()));
+            if (!variableName.empty()) {
+                externalSources.insert(variableName);
+            }
+        }
+    }
+
+    return externalSources;
+}
+
 } // namespace
 
 std::string AdmissionReport::diagnosticsText() const {
@@ -199,17 +236,6 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
         }
     }
 
-    const auto hydrologyTierIt = profile.subsystemTiers.find("hydrology");
-    const auto eventsTierIt = profile.subsystemTiers.find("events");
-    if (hydrologyTierIt != profile.subsystemTiers.end() && eventsTierIt != profile.subsystemTiers.end()) {
-        if (hydrologyTierIt->second == ModelTier::A && eventsTierIt->second == ModelTier::B) {
-            report.issues.push_back(AdmissionIssue{
-                AdmissionIssue::Severity::Error,
-                "KNOWN_INCOMPATIBLE_COMBINATION",
-                "Incompatible profile combination: events=B requires hydrology>=B"});
-        }
-    }
-
     std::map<std::string, OrderedSet, std::less<>> writersByVariable;
     std::map<std::string, OrderedSet, std::less<>> readersByVariable;
 
@@ -222,17 +248,27 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
         }
     }
 
-    const OrderedSet externalSourceVariables = {
-        "seed_probe",
-        "bootstrap_marker"
-    };
+    const OrderedSet externalSourceVariables = externalSourcesFromAssumptions(profile.compatibilityAssumptions);
+    const bool strictReadSources = profile.compatibilityAssumptions.contains("strict_read_sources");
 
     for (const auto& [variableName, readers] : readersByVariable) {
-        if (!writersByVariable.contains(variableName) && !externalSourceVariables.contains(variableName)) {
-            report.issues.push_back(AdmissionIssue{
-                AdmissionIssue::Severity::Error,
-                "READ_SOURCE_MISSING",
-                "No writer or external source for variable: " + variableName});
+        if (!writersByVariable.contains(variableName)) {
+            if (externalSourceVariables.contains(variableName)) {
+                report.issues.push_back(AdmissionIssue{
+                    AdmissionIssue::Severity::Info,
+                    "READ_SOURCE_EXTERNAL_DECLARED",
+                    "Variable is read from declared external source: " + variableName});
+            } else if (strictReadSources) {
+                report.issues.push_back(AdmissionIssue{
+                    AdmissionIssue::Severity::Error,
+                    "READ_SOURCE_MISSING",
+                    "No writer or external source for variable: " + variableName});
+            } else {
+                report.issues.push_back(AdmissionIssue{
+                    AdmissionIssue::Severity::Warning,
+                    "READ_SOURCE_EXTERNAL_ASSUMED",
+                    "Variable read without internal writer; treated as external source: " + variableName});
+            }
         }
 
         if (writersByVariable.contains(variableName)) {
@@ -267,21 +303,13 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
     }
 
     if (temporalPolicy == TemporalPolicy::MultiRateC) {
-        const OrderedSet strongCoupledSubsystems = {
-            "hydrology",
-            "temperature",
-            "humidity",
-            "wind",
-            "climate",
-            "soil",
-            "vegetation",
-            "resources",
-            "events"
-        };
-
         std::vector<std::string> activeStrongCoupled;
-        for (const auto& name : strongCoupledSubsystems) {
-            if (tierBySubsystem.contains(name) && tierBySubsystem.at(name) == ModelTier::C) {
+        activeStrongCoupled.reserve(tierBySubsystem.size());
+        for (const auto& [name, tier] : tierBySubsystem) {
+            if (name == "temporal") {
+                continue;
+            }
+            if (tier == ModelTier::C) {
                 activeStrongCoupled.push_back(name);
             }
         }
@@ -350,10 +378,7 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
                 "' mode='" + toString(conflict.mode) + "'"});
     }
 
-    const OrderedSet conservedVariables = {
-        "surface_water_w",
-        "resource_stock_r"
-    };
+    const OrderedSet conservedVariables = normalizeConservedVariables(profile.conservedVariables);
 
     for (const auto& variableName : conservedVariables) {
         const bool variableIsActive = writersByVariable.contains(variableName) || readersByVariable.contains(variableName);

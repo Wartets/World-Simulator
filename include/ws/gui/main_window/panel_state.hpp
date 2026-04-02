@@ -72,13 +72,13 @@ struct PanelState {
     float waveRingFrequency = 1.0f;
 
     char profileName[128] = "baseline";
-    char summaryVariable[128] = "temperature_T";
+    char summaryVariable[128] = "";
     char checkpointLabel[128] = "quick";
 
     char parameterPresetName[128] = "default_runtime";
     int selectedParameterIndex = 0;
     float parameterValue = 0.0f;
-    char manualPatchVariable[128] = "temperature_T";
+    char manualPatchVariable[128] = "";
     bool manualPatchGlobal = false;
     int manualPatchX = 0;
     int manualPatchY = 0;
@@ -86,7 +86,7 @@ struct PanelState {
     char manualPatchNote[160] = "";
 
     int perturbationTypeIndex = 0;
-    char perturbationVariable[128] = "event_temperature_delta";
+    char perturbationVariable[128] = "";
     float perturbationAmplitude = 0.05f;
     int perturbationStartStepOffset = 0;
     int perturbationDuration = 1;

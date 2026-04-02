@@ -44,7 +44,7 @@ void verifyTemporalAdmissionBlocksMismatch() {
     assert(threw);
 }
 
-void verifyKnownIncompatibleCombinationBlocked() {
+void verifyNoHardcodedHydrologyEventsGate() {
     ws::RuntimeConfig config;
     config.seed = 101;
     config.grid = ws::GridSpec{4, 4};
@@ -57,13 +57,9 @@ void verifyKnownIncompatibleCombinationBlocked() {
         runtime.registerSubsystem(subsystem);
     }
 
-    bool threw = false;
-    try {
-        runtime.start();
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    assert(threw);
+    runtime.start();
+    assert(runtime.admissionReport().admitted);
+    runtime.stop();
 }
 
 void verifyDeterministicAdmissionGraph() {
@@ -159,7 +155,7 @@ void verifyObservedDataFlowEnforcement() {
 
 int main() {
     verifyTemporalAdmissionBlocksMismatch();
-    verifyKnownIncompatibleCombinationBlocked();
+    verifyNoHardcodedHydrologyEventsGate();
     verifyDeterministicAdmissionGraph();
     verifyObservedDataFlowEnforcement();
     return 0;

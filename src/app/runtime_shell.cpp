@@ -8,6 +8,7 @@
 #include "ws/core/subsystems/subsystems.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <exception>
 #include <filesystem>
@@ -85,7 +86,7 @@ private:
             << "\n"
             << "State interaction:\n"
             << "  input <var> <x> <y> <value>          Queue scalar input patch\n"
-            << "  event <x> <y> <signal>               Queue event signal patch\n"
+            << "  event [var] <x> <y> <signal>         Queue event signal patch\n"
             << "  summary <variable>                   Show min/max/avg for one field\n"
             << "  fields                               List variables in current snapshot\n"
             << "  sample <variable> <x> <y>            Sample one cell value\n"
@@ -512,14 +513,23 @@ private:
     void executeEventCommand(std::istringstream& input) {
         requireRuntime("event");
 
-        std::string xToken;
-        std::string yToken;
-        std::string signalToken;
-        input >> xToken >> yToken >> signalToken;
-
-        if (xToken.empty() || yToken.empty() || signalToken.empty()) {
-            throw std::invalid_argument("usage: event <x> <y> <signal>");
+        std::vector<std::string> tokens;
+        std::string token;
+        while (input >> token) {
+            tokens.push_back(token);
         }
+
+        if (tokens.size() != 3 && tokens.size() != 4) {
+            throw std::invalid_argument("usage: event [var] <x> <y> <signal>");
+        }
+
+        const bool hasExplicitVariable = (tokens.size() == 4);
+        const std::string explicitVariable = hasExplicitVariable ? tokens[0] : std::string{};
+        const std::size_t coordinateOffset = hasExplicitVariable ? 1u : 0u;
+
+        const std::string xToken = tokens[coordinateOffset + 0u];
+        const std::string yToken = tokens[coordinateOffset + 1u];
+        const std::string signalToken = tokens[coordinateOffset + 2u];
 
         const auto x = parseU32(xToken);
         const auto y = parseU32(yToken);
@@ -529,12 +539,62 @@ private:
             throw std::invalid_argument("event arguments must be numeric");
         }
 
+        const std::string targetVariable = resolveEventSignalVariable(explicitVariable);
+
         RuntimeEvent event;
         event.eventName = "manual_event_signal";
-        event.scalarPatches.push_back(ScalarWritePatch{"event_signal_e", Cell{*x, *y}, *signal});
+        event.scalarPatches.push_back(ScalarWritePatch{targetVariable, Cell{*x, *y}, *signal});
         runtime_->enqueueEvent(std::move(event));
 
-        std::cout << "event_queued cell=(" << *x << ',' << *y << ") signal=" << *signal << "\n";
+        std::cout << "event_queued variable=" << targetVariable
+                  << " cell=(" << *x << ',' << *y << ") signal=" << *signal << "\n";
+    }
+
+    std::string resolveEventSignalVariable(const std::string& explicitVariable) const {
+        if (!explicitVariable.empty()) {
+            return explicitVariable;
+        }
+
+        const auto probeCheckpoint = runtime_->createCheckpoint("event_target_probe", false);
+        const auto& fields = probeCheckpoint.stateSnapshot.fields;
+        if (fields.empty()) {
+            throw std::runtime_error("no fields available to infer event target; provide explicit variable");
+        }
+
+        auto toLowerCopy = [](std::string value) {
+            std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            return value;
+        };
+
+        auto findByPredicate = [&](auto&& predicate) -> std::string {
+            for (const auto& field : fields) {
+                if (predicate(field.spec.name)) {
+                    return field.spec.name;
+                }
+            }
+            return {};
+        };
+
+        const auto strictEventSignal = findByPredicate([&](const std::string& name) {
+            const auto lower = toLowerCopy(name);
+            return lower.find("event") != std::string::npos &&
+                   (lower.find("signal") != std::string::npos || lower.find("delta") != std::string::npos);
+        });
+        if (!strictEventSignal.empty()) {
+            return strictEventSignal;
+        }
+
+        const auto genericEvent = findByPredicate([&](const std::string& name) {
+            const auto lower = toLowerCopy(name);
+            return lower.find("event") != std::string::npos;
+        });
+        if (!genericEvent.empty()) {
+            return genericEvent;
+        }
+
+        return fields.front().spec.name;
     }
 
     void executeTraceCommand(std::istringstream& input) const {

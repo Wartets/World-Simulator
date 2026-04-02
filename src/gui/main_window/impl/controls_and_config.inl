@@ -303,7 +303,8 @@ void drawParameterControlSection() {
     ImGui::TextDisabled("Manual cell/global edit");
 
     if (!viz_.fieldNames.empty()) {
-        if (ImGui::BeginCombo("Variable##manualPatch", panel_.manualPatchVariable)) {
+        const char* manualPatchPreview = panel_.manualPatchVariable[0] != '\0' ? panel_.manualPatchVariable : "<select variable>";
+        if (ImGui::BeginCombo("Variable##manualPatch", manualPatchPreview)) {
             for (const auto& fieldName : viz_.fieldNames) {
                 const bool selected = (fieldName == std::string(panel_.manualPatchVariable));
                 if (ImGui::Selectable(fieldName.c_str(), selected)) {
@@ -413,7 +414,8 @@ void drawPerturbationSection() {
     ImGui::Combo("Perturbation type", &panel_.perturbationTypeIndex, kPerturbationTypes, static_cast<int>(std::size(kPerturbationTypes)));
 
     if (!viz_.fieldNames.empty()) {
-        if (ImGui::BeginCombo("Target variable##perturb", panel_.perturbationVariable)) {
+        const char* perturbPreview = panel_.perturbationVariable[0] != '\0' ? panel_.perturbationVariable : "<select variable>";
+        if (ImGui::BeginCombo("Target variable##perturb", perturbPreview)) {
             for (const auto& fieldName : viz_.fieldNames) {
                 const bool selected = (fieldName == std::string(panel_.perturbationVariable));
                 if (ImGui::Selectable(fieldName.c_str(), selected)) {
@@ -1344,7 +1346,8 @@ void drawFieldSummarySection() {
     // Field selector
     if (!viz_.fieldNames.empty()) {
         ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::BeginCombo("##sumvar", panel_.summaryVariable)) {
+        const char* summaryPreview = panel_.summaryVariable[0] != '\0' ? panel_.summaryVariable : "<select variable>";
+        if (ImGui::BeginCombo("##sumvar", summaryPreview)) {
             for (const auto& fn : viz_.fieldNames) {
                 if (ImGui::Selectable(fn.c_str(),
                         fn == std::string(panel_.summaryVariable))) {
