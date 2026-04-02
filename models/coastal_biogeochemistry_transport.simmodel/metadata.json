@@ -10,5 +10,21 @@
     "nutrients",
     "oxygen",
     "sediment-transport"
-  ]
+  ],
+  "runtime_field_aliases": {
+    "hydrodynamics.salinity": "salinity",
+    "hydrodynamics.temperature": "temperature",
+    "biology.nutrient": "nitrate",
+    "biology.phytoplankton": "phytoplankton",
+    "biology.detritus": "detritus",
+    "biology.current": "phytoplankton",
+    "chemistry.oxygen": "oxygen",
+    "chemistry.current": "oxygen",
+    "sediment.suspended": "suspended_sediment",
+    "sediment.current": "suspended_sediment",
+    "coastal.salinity": "salinity",
+    "coastal.temperature": "temperature",
+    "coastal.nutrient": "nitrate",
+    "coastal.oxygen": "oxygen"
+  }
 }

@@ -4,5 +4,19 @@
   "description": "Reaction-diffusion system modeling predator-prey interactions across space. Implements Lotka-Volterra dynamics with spatial movement for ecological population dynamics.",
   "author": "Colin Bossu Réaubourg",
   "creation_date": "2026-04-02",
-  "tags": ["biology", "ecology", "reaction-diffusion", "predator-prey", "population-dynamics", "2d", "grid-simulation"]
+  "tags": ["biology", "ecology", "reaction-diffusion", "predator-prey", "population-dynamics", "2d", "grid-simulation"],
+  "runtime_field_aliases": {
+    "ecology.prey": "prey_density",
+    "ecology.predator": "predator_density",
+    "ecology.prey_density": "prey_density",
+    "ecology.predator_density": "predator_density",
+    "ecology.current_prey": "prey_density",
+    "ecology.current_predator": "predator_density",
+    "biology.prey": "prey_density",
+    "biology.predator": "predator_density",
+    "population.prey": "prey_density",
+    "population.predator": "predator_density",
+    "dynamics.prey": "prey_density",
+    "dynamics.predator": "predator_density"
+  }
 }

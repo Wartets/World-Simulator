@@ -4,5 +4,21 @@
   "description": "Stochastic cellular automaton modeling fire spread based on vegetation density, wind conditions, and moisture. Implements probabilistic ignition and spread dynamics.",
   "author": "Colin Bossu Réaubourg",
   "creation_date": "2026-04-02",
-  "tags": ["biology", "ecology", "cellular_automaton", "forest_fire", "stochastic", "2d", "grid-simulation"]
+  "tags": ["biology", "ecology", "cellular_automaton", "forest_fire", "stochastic", "2d", "grid-simulation"],
+  "runtime_field_aliases": {
+    "fire.vegetation": "vegetation",
+    "fire.fuel": "vegetation",
+    "fire.moisture": "moisture",
+    "fire.humidity": "moisture",
+    "fire.state": "fire_state",
+    "fire.current": "fire_state",
+    "fire.burning": "fire_state",
+    "ecology.vegetation": "vegetation",
+    "ecology.moisture": "moisture",
+    "ecology.fire_state": "fire_state",
+    "biology.vegetation": "vegetation",
+    "biology.moisture": "moisture",
+    "simulation.vegetation": "vegetation",
+    "simulation.fire_state": "fire_state"
+  }
 }

@@ -3,6 +3,13 @@
   "description": "Chemical reaction-diffusion simulation creating spatial Turing patterns (spots, stripes) from the interplay of two chemical substances, U and V.",
   "author": "Colin Bossu Reaubourg",
   "creation_date": "2026-04-01",
-  "tags": ["chemistry", "reaction-diffusion", "turing-patterns", "pde", "continuous"
-  ]
+  "tags": ["chemistry", "reaction-diffusion", "turing-patterns", "pde", "continuous"],
+  "runtime_field_aliases": {
+    "chemistry.concentration_a": "u_concentration",
+    "chemistry.concentration_b": "v_concentration",
+    "chemistry.current_a": "u_concentration",
+    "chemistry.current_b": "v_concentration",
+    "initialization.gray_scott.target_a": "u_concentration",
+    "initialization.gray_scott.target_b": "v_concentration"
+  }
 }

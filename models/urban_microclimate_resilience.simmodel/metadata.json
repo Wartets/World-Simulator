@@ -10,5 +10,26 @@
     "resilience",
     "coupled-system",
     "pde"
-  ]
+  ],
+  "runtime_field_aliases": {
+    "urban.temperature": "surface_temperature",
+    "urban.current": "surface_temperature",
+    "urban.canopy": "canopy_temperature",
+    "urban.moisture": "soil_moisture",
+    "urban.water": "soil_moisture",
+    "urban.heat_storage": "storage_heat",
+    "urban.radiation": "net_radiation",
+    "urban.sensible_heat": "sensible_flux",
+    "urban.latent_heat": "latent_flux",
+    "urban.runoff": "runoff_flux",
+    "climate.temperature": "surface_temperature",
+    "climate.current": "surface_temperature",
+    "hydrology.moisture": "soil_moisture",
+    "hydrology.water": "soil_moisture",
+    "hydrology.runoff": "runoff_flux",
+    "temperature.current": "surface_temperature",
+    "temperature.canopy": "canopy_temperature",
+    "moisture.current": "soil_moisture",
+    "moisture.urban": "soil_moisture"
+  }
 }

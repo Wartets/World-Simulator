@@ -4,5 +4,10 @@
   "description": "Cellular automaton model based on Conway's rules. Demonstrates how to handle boolean states and direct neighbor querying in the .simmodel architecture.",
   "author": "Colin Bossu Reaubourg",
   "creation_date": "2026-04-01",
-  "tags": ["cellular_automaton", "conway", "2d", "discrete", "boolean"]
+  "tags": ["cellular_automaton", "conway", "2d", "discrete", "boolean"],
+  "runtime_field_aliases": {
+    "automaton.state": "living",
+    "automaton.current": "living",
+    "initialization.conway.target": "living"
+  }
 }

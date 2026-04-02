@@ -4,5 +4,30 @@
   "description": "Simplified 3D fluid dynamics assuming hydrostatic pressure. Models water surface waves, tsunami propagation, and river hydraulics using depth-averaged equations.",
   "author": "Colin Bossu Réaubourg",
   "creation_date": "2026-04-02",
-  "tags": ["fluid_dynamics", "shallow_water", "hydrostatic", "waves", "tsunami", "2d", "hydrology"]
+  "tags": ["fluid_dynamics", "shallow_water", "hydrostatic", "waves", "tsunami", "2d", "hydrology"],
+  "runtime_field_aliases": {
+    "hydro.water_height": "water_height",
+    "hydro.depth": "water_height",
+    "hydro.surface_elevation": "surface_elevation",
+    "hydro.elevation": "surface_elevation",
+    "hydro.velocity_x": "velocity_x",
+    "hydro.velocity_y": "velocity_y",
+    "hydro.velocity_u": "velocity_x",
+    "hydro.velocity_v": "velocity_y",
+    "hydro.current": "velocity_x",
+    "hydro.bathymetry": "bathymetry",
+    "waves.water_height": "water_height",
+    "waves.surface_elevation": "surface_elevation",
+    "waves.velocity_x": "velocity_x",
+    "waves.velocity_y": "velocity_y",
+    "tsunami.water_height": "water_height",
+    "tsunami.surface_elevation": "surface_elevation",
+    "tsunami.velocity_x": "velocity_x",
+    "tsunami.velocity_y": "velocity_y",
+    "hydrology.water_height": "water_height",
+    "hydrology.surface_elevation": "surface_elevation",
+    "hydrology.velocity_x": "velocity_x",
+    "hydrology.velocity_y": "velocity_y",
+    "initialization.waves.target": "water_height"
+  }
 }
