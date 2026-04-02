@@ -68,9 +68,9 @@ std::filesystem::path ProfileStore::pathFor(const std::string& profileName, cons
         return scopedPath;
     }
 
-    const auto legacyPath = rootDirectory_ / (profileName + ".wsprofile");
-    if (std::filesystem::exists(legacyPath)) {
-        return legacyPath;
+    const auto fallbackPath = rootDirectory_ / (profileName + ".wsprofile");
+    if (std::filesystem::exists(fallbackPath)) {
+        return fallbackPath;
     }
 
     return scopedPath;

@@ -1279,7 +1279,7 @@ private:
         }
 
         auto compatibleSubsystems = selectCompatibleSubsystems(config.modelExecutionSpec);
-        if (!config.modelExecutionSpec.has_value() && currentModelKey() == "legacy") {
+        if (!config.modelExecutionSpec.has_value() && currentModelKey().empty()) {
             compatibleSubsystems.clear();
         }
 
@@ -1293,7 +1293,7 @@ private:
         const auto& snapshot = runtime_->snapshot();
         std::cout << "session_started"
                   << " run_identity_hash=" << snapshot.runSignature.identityHash()
-                  << " model_key=" << currentModelKey()
+              << " model_key=" << displayModelKey()
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
@@ -1327,20 +1327,21 @@ private:
             }
         }
 
-        if (modelKey.empty()) {
-            modelKey = "legacy";
-        }
-
         return {modelKey, worldName};
     }
 
     std::string currentModelKey() const {
-        return selectedModelKey_.empty() ? std::string{"legacy"} : selectedModelKey_;
+        return selectedModelKey_;
+    }
+
+    std::string displayModelKey() const {
+        const auto key = currentModelKey();
+        return key.empty() ? std::string{"default"} : key;
     }
 
     std::optional<std::filesystem::path> resolveSelectedModelPath() const {
         const std::string key = currentModelKey();
-        if (key.empty() || key == "legacy") {
+        if (key.empty()) {
             return std::nullopt;
         }
 
@@ -1367,7 +1368,7 @@ private:
     }
 
     LaunchConfig launchConfig_{};
-    std::string selectedModelKey_{"legacy"};
+    std::string selectedModelKey_{};
     std::unique_ptr<Runtime> runtime_;
     std::map<std::string, RuntimeCheckpoint, std::less<>> checkpoints_;
     std::vector<std::string> commandHistory_;

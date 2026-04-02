@@ -563,9 +563,9 @@ StepDiagnostics Scheduler::step(
     }
 
     // Only capture pre-step values when actually needed:
-    // - MultiRateC uses it for drift reference / damping / fallback restore
+    // - multi-rate execution uses it for drift reference / damping / fallback restore
     // - boundedIncrementEnabled uses it in the constraint pass
-    // Skipping this copy for UniformA/PhasedB without boundedIncrement cuts a full
+    // Skipping this copy for the single-pass and phased execution modes without boundedIncrement cuts a full
     // O(fields * cells) allocation and memcpy per step.
     const bool needsPreStepCapture =
         (temporalPolicy == TemporalPolicy::MultiRateC) ||
@@ -852,7 +852,7 @@ StepDiagnostics Scheduler::step(
     stateStore.clearAccessObserver();
 
     // Skip full constraint writes when no guardrails are active — the NaN scan below
-    // still runs as a safety net. This is the hot path for UniformA/PhasedB.
+    // still runs as a safety net. This is the hot path for the single-pass and phased execution modes.
     const bool needsConstraintPass = guardrailPolicy.clampEnabled ||
                                      guardrailPolicy.boundedIncrementEnabled;
 

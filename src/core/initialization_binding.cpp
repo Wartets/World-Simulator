@@ -479,17 +479,17 @@ bool loadModelVariableCatalog(
             return true;
         }
 
-        // Preserve the legacy loader behavior as a fallback for incomplete model packages.
+        // Preserve the package loader fallback for incomplete model packages.
         if (std::filesystem::is_directory(modelPath)) {
-            const auto legacyJsonPath = modelPath / "model.json";
-            if (std::filesystem::exists(legacyJsonPath)) {
-                std::ifstream in(legacyJsonPath);
+            const auto fallbackJsonPath = modelPath / "model.json";
+            if (std::filesystem::exists(fallbackJsonPath)) {
+                std::ifstream in(fallbackJsonPath);
                 if (!in) {
-                    message = "model_catalog_load_failed reason=file_open_failed path=" + legacyJsonPath.string();
+                    message = "model_catalog_load_failed reason=file_open_failed path=" + fallbackJsonPath.string();
                     return false;
                 }
                 const std::string modelJson((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-                return populateCatalogFromModelJson(legacyJsonPath, modelJson, outCatalog, message);
+                return populateCatalogFromModelJson(fallbackJsonPath, modelJson, outCatalog, message);
             }
         }
 

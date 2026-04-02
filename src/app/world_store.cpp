@@ -127,14 +127,14 @@ std::filesystem::path WorldStore::scopedCheckpointRoot(const std::string& modelK
     return normalized.empty() ? checkpointRoot_ : (checkpointRoot_ / normalized);
 }
 
-std::filesystem::path resolveWithLegacyFallback(
+std::filesystem::path resolveWithScopedFallback(
     const std::filesystem::path& scopedPath,
-    const std::filesystem::path& legacyPath) {
+    const std::filesystem::path& fallbackPath) {
     if (std::filesystem::exists(scopedPath)) {
         return scopedPath;
     }
-    if (std::filesystem::exists(legacyPath)) {
-        return legacyPath;
+    if (std::filesystem::exists(fallbackPath)) {
+        return fallbackPath;
     }
     return scopedPath;
 }
@@ -166,7 +166,7 @@ std::filesystem::path WorldStore::profilePathFor(const std::string& worldName, c
     if (normalized.empty()) {
         return {};
     }
-    return resolveWithLegacyFallback(
+    return resolveWithScopedFallback(
         worldProfileStore_.pathFor(normalized, modelKey),
         worldProfileStore_.pathFor(normalized));
 }
@@ -176,7 +176,7 @@ std::filesystem::path WorldStore::checkpointPathFor(const std::string& worldName
     if (normalized.empty()) {
         return {};
     }
-    return resolveWithLegacyFallback(
+    return resolveWithScopedFallback(
         scopedCheckpointRoot(modelKey) / (normalized + ".wscp"),
         checkpointRoot_ / (normalized + ".wscp"));
 }
@@ -186,7 +186,7 @@ std::filesystem::path WorldStore::displayPrefsPathFor(const std::string& worldNa
     if (normalized.empty()) {
         return {};
     }
-    return resolveWithLegacyFallback(
+    return resolveWithScopedFallback(
         scopedCheckpointRoot(modelKey) / (normalized + ".displayprefs"),
         checkpointRoot_ / (normalized + ".displayprefs"));
 }
@@ -212,7 +212,7 @@ std::vector<StoredWorldRecord> WorldStore::list(const std::string& modelKey, std
             StoredWorldRecord record;
             record.modelKey = normalizeScopeKey(modelKey);
             if (record.modelKey.empty()) {
-                record.modelKey = "legacy";
+                record.modelKey = "default";
             }
             record.worldName = worldName;
             record.profilePath = profilePathFor(worldName, modelKey);

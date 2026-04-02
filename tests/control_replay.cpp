@@ -65,6 +65,18 @@ std::optional<std::string> tryAliasTarget(
     return it->second;
 }
 
+std::optional<std::string> tryAnyAliasTarget(
+    const ws::ModelExecutionSpec& executionSpec,
+    const std::vector<std::string>& semanticKeys) {
+    for (const auto& semanticKey : semanticKeys) {
+        const auto alias = tryAliasTarget(executionSpec, semanticKey);
+        if (alias.has_value()) {
+            return alias;
+        }
+    }
+    return std::nullopt;
+}
+
 bool hasRequiredPhase4Aliases(const ws::ModelExecutionSpec& executionSpec) {
     std::set<std::string> requiredSemanticKeys;
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
@@ -121,7 +133,14 @@ ReplayFixture baselineFixture() {
 
         config.modelExecutionSpec = executionSpec;
         const std::string fallback = executionSpec.cellScalarVariableIds.front();
-        const std::string patchVariable = tryAliasTarget(executionSpec, "temperature.current").value_or(fallback);
+        const std::string patchVariable = tryAnyAliasTarget(
+            executionSpec,
+            {
+                "temperature.current",
+                "hydrology.water",
+                "resources.current",
+                "climate.current"
+            }).value_or(fallback);
         return ReplayFixture{config, patchVariable};
     }
 

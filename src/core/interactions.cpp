@@ -197,19 +197,19 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_POLICY_MISMATCH",
-                "Temporal tier A requires UniformA execution policy"});
+                "Temporal subsystem tier A requires UniformA execution policy"});
         }
         if (temporalTierIt->second == ModelTier::B && temporalPolicy != TemporalPolicy::PhasedB) {
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_POLICY_MISMATCH",
-                "Temporal tier B requires PhasedB execution policy"});
+                "Temporal subsystem tier B requires PhasedB execution policy"});
         }
         if (temporalTierIt->second == ModelTier::C && temporalPolicy != TemporalPolicy::MultiRateC) {
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_POLICY_MISMATCH",
-                "Temporal tier C requires MultiRateC execution policy"});
+                "Temporal subsystem tier C requires MultiRateC execution policy"});
         }
     }
 
@@ -226,13 +226,13 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_TIER_REQUIRED",
-                "Any C-tier subsystem selection requires temporal=C"});
+                "A C-tier subsystem selection requires the temporal subsystem to be tier C"});
         }
         if (temporalPolicy != TemporalPolicy::MultiRateC) {
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_POLICY_REQUIRED",
-                "Any C-tier subsystem selection requires MultiRateC execution policy"});
+                "A C-tier subsystem selection requires the MultiRateC execution policy"});
         }
     }
 

@@ -112,7 +112,7 @@ std::string RuntimeService::currentModelKey() const {
     if (!pick(modelScope_.modelPath).empty()) {
         return pick(modelScope_.modelPath);
     }
-    return "legacy";
+    return "default";
 }
 
 std::string RuntimeService::activeModelKey() const {
