@@ -1,0 +1,160 @@
+// Predator-Prey Dynamics (Spatiotemporal)
+// Reaction-diffusion system based on Lotka-Volterra equations
+//
+// Equations:
+// Prey: dx/dt = α*x - β*x*y + D_x * ∇²x
+// Predator: dy/dt = δ*x*y - γ*y + D_y * ∇²y
+//
+// Where: x = prey density, y = predator density
+// α = prey birth rate, β = predation rate
+// δ = predator reproduction rate, γ = predator death rate
+// D_x, D_y = diffusion rates for spatial movement
+
+// ============================================================
+// INTERACTION: advance_time
+// Target: Global Scalar
+// ============================================================
+@interaction(advance_time)
+func advance_time() {
+    %time_curr = GlobalLoad("time")
+    %dt = GlobalLoad("dt")
+    %time_next = Add(%time_curr, %dt)
+    Store("time", %time_next)
+}
+
+// ============================================================
+// INTERACTION: compute_prey_laplacian
+// Target: Grid Cell
+// Computes spatial Laplacian of prey density for diffusion
+// ============================================================
+@interaction(compute_prey_laplacian)
+func compute_prey_laplacian() {
+    %x = Load("prey_density", 0, 0)
+    
+    // Get neighbors
+    %x_e = Load("prey_density", 1, 0)
+    %x_w = Load("prey_density", -1, 0)
+    %x_n = Load("prey_density", 0, 1)
+    %x_s = Load("prey_density", 0, -1)
+    
+    // Central difference Laplacian: ∇²x ≈ x(i+1,j) + x(i-1,j) + x(i,j+1) + x(i,j-1) - 4*x(i,j)
+    %x_sum = Add(%x_e, %x_w)
+    %x_sum = Add(%x_sum, %x_n)
+    %x_sum = Add(%x_sum, %x_s)
+    %x_4 = Mul(%x, 4.0)
+    %lap_x = Sub(%x_sum, %x_4)
+    
+    Store("prey_laplacian", %lap_x)
+}
+
+// ============================================================
+// INTERACTION: compute_predator_laplacian
+// Target: Grid Cell
+// Computes spatial Laplacian of predator density for diffusion
+// ============================================================
+@interaction(compute_predator_laplacian)
+func compute_predator_laplacian() {
+    %y = Load("predator_density", 0, 0)
+    
+    // Get neighbors
+    %y_e = Load("predator_density", 1, 0)
+    %y_w = Load("predator_density", -1, 0)
+    %y_n = Load("predator_density", 0, 1)
+    %y_s = Load("predator_density", 0, -1)
+    
+    // Central difference Laplacian
+    %y_sum = Add(%y_e, %y_w)
+    %y_sum = Add(%y_sum, %y_n)
+    %y_sum = Add(%y_sum, %y_s)
+    %y_4 = Mul(%y, 4.0)
+    %lap_y = Sub(%y_sum, %y_4)
+    
+    Store("predator_laplacian", %lap_y)
+}
+
+// ============================================================
+// INTERACTION: update_populations
+// Target: Grid Cell
+// Updates prey and predator populations using Lotka-Volterra dynamics with diffusion
+// ============================================================
+@interaction(update_populations)
+func update_populations() {
+    // Load current populations
+    %x = Load("prey_density", 0, 0)
+    %y = Load("predator_density", 0, 0)
+    
+    // Load Laplacian for diffusion
+    %lap_x = Load("prey_laplacian", 0, 0)
+    %lap_y = Load("predator_laplacian", 0, 0)
+    
+    // Load parameters
+    %alpha = GlobalLoad("alpha")
+    %beta = GlobalLoad("beta")
+    %gamma = GlobalLoad("gamma")
+    %delta = GlobalLoad("delta")
+    %diff_x = GlobalLoad("diffusion_prey")
+    %diff_y = GlobalLoad("diffusion_predator")
+    %dt = GlobalLoad("dt")
+    
+    // --- Prey dynamics: dx/dt = α*x - β*x*y + D_x * ∇²x ---
+    
+    // Prey growth term: α * x
+    %prey_growth = Mul(%alpha, %x)
+    
+    // Predation term: β * x * y
+    %predation = Mul(%beta, %x)
+    %predation = Mul(%predation, %y)
+    
+    // Prey diffusion: D_x * ∇²x
+    %prey_diffusion = Mul(%diff_x, %lap_x)
+    
+    // Total prey rate of change
+    %prey_rate = Sub(%prey_growth, %predation)
+    %prey_rate = Add(%prey_rate, %prey_diffusion)
+    
+    // Update prey: x_new = x + dx/dt * dt
+    %dx = Mul(%prey_rate, %dt)
+    %x_new = Add(%x, %dx)
+    
+    // --- Predator dynamics: dy/dt = δ*x*y - γ*y + D_y * ∇²y ---
+    
+    // Predator growth from predation: δ * x * y
+    %predator_growth = Mul(%delta, %x)
+    %predator_growth = Mul(%predator_growth, %y)
+    
+    // Predator death term: γ * y
+    %predator_death = Mul(%gamma, %y)
+    
+    // Predator diffusion: D_y * ∇²y
+    %predator_diffusion = Mul(%diff_y, %lap_y)
+    
+    // Total predator rate of change
+    %predator_rate = Sub(%predator_growth, %predator_death)
+    %predator_rate = Add(%predator_rate, %predator_diffusion)
+    
+    // Update predator: y_new = y + dy/dt * dt
+    %dy = Mul(%predator_rate, %dt)
+    %y_new = Add(%y, %dy)
+    
+    // Store updated populations
+    Store("prey_density", %x_new)
+    Store("predator_density", %y_new)
+}
+
+// ============================================================
+// INTERACTION: clamp_populations
+// Target: Grid Cell
+// Ensures population densities remain non-negative
+// ============================================================
+@interaction(clamp_populations)
+func clamp_populations() {
+    %x = Load("prey_density", 0, 0)
+    %y = Load("predator_density", 0, 0)
+    
+    // Clamp to non-negative (populations cannot be negative)
+    %x_clamped = Max(%x, 0.0)
+    %y_clamped = Max(%y, 0.0)
+    
+    Store("prey_density", %x_clamped)
+    Store("predator_density", %y_clamped)
+}

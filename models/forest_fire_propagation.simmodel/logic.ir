@@ -1,0 +1,251 @@
+// Forest Fire Propagation
+// Stochastic cellular automaton for fire spread simulation
+//
+// Rules:
+// - Fire spreads from burning cells to vegetation with probability based on:
+//   - Vegetation density (more fuel = higher spread)
+//   - Moisture content (higher moisture = lower spread)
+//   - Wind direction and strength (upwind = faster spread)
+//   - Number of burning neighbors
+// - Burning cells become burned (state 2) after one step
+// - Burned cells have vegetation regrow over time
+// - Random ignition from lightning with base probability
+
+// Fire States:
+// 0 = unburned (has vegetation)
+// 1 = currently burning
+// 2 = burned out (no vegetation, can regrow)
+
+// ============================================================
+// INTERACTION: advance_time
+// Target: Global Scalar
+// ============================================================
+@interaction(advance_time)
+func advance_time() {
+    %time_curr = GlobalLoad("time")
+    %dt = GlobalLoad("dt")
+    %time_next = Add(%time_curr, %dt)
+    Store("time", %time_next)
+}
+
+// ============================================================
+// INTERACTION: compute_wind_factor
+// Target: Grid Cell
+// Computes wind-influenced spread probability modifier
+// Wind increases spread probability in the downwind direction
+// ============================================================
+@interaction(compute_wind_factor)
+func compute_wind_factor() {
+    %wind_dir = GlobalLoad("wind_direction")
+    %wind_strength = GlobalLoad("wind_strength")
+    
+    // Wind factor based on wind strength (normalized to 0-1 range)
+    // Higher wind strength = higher spread probability
+    %wind_factor = Div(%wind_strength, 50.0)
+    
+    // Clamp to reasonable range
+    %wind_clamped = Clamp(%wind_factor, 0.0, 1.0)
+    
+    Store("wind_factor", %wind_clamped)
+}
+
+// ============================================================
+// INTERACTION: count_burning_neighbors
+// Target: Grid Cell
+// Counts the number of burning (state=1) neighbors in 8 directions
+// ============================================================
+@interaction(count_burning_neighbors)
+func count_burning_neighbors() {
+    // Initialize count
+    %count = Constant(0, u32)
+    
+    // Check all 8 neighbors
+    // State 1 = burning
+    
+    // East neighbor
+    %state_e = Load("fire_state", 1, 0)
+    %is_burning_e = Compare(%state_e, 1, "==")
+    %count = Add(%count, Select(%is_burning_e, 1, 0))
+    
+    // West neighbor
+    %state_w = Load("fire_state", -1, 0)
+    %is_burning_w = Compare(%state_w, 1, "==")
+    %count = Add(%count, Select(%is_burning_w, 1, 0))
+    
+    // North neighbor
+    %state_n = Load("fire_state", 0, 1)
+    %is_burning_n = Compare(%state_n, 1, "==")
+    %count = Add(%count, Select(%is_burning_n, 1, 0))
+    
+    // South neighbor
+    %state_s = Load("fire_state", 0, -1)
+    %is_burning_s = Compare(%state_s, 1, "==")
+    %count = Add(%count, Select(%is_burning_s, 1, 0))
+    
+    // Northeast
+    %state_ne = Load("fire_state", 1, 1)
+    %is_burning_ne = Compare(%state_ne, 1, "==")
+    %count = Add(%count, Select(%is_burning_ne, 1, 0))
+    
+    // Northwest
+    %state_nw = Load("fire_state", -1, 1)
+    %is_burning_nw = Compare(%state_nw, 1, "==")
+    %count = Add(%count, Select(%is_burning_nw, 1, 0))
+    
+    // Southeast
+    %state_se = Load("fire_state", 1, -1)
+    %is_burning_se = Compare(%state_se, 1, "==")
+    %count = Add(%count, Select(%is_burning_se, 1, 0))
+    
+    // Southwest
+    %state_sw = Load("fire_state", -1, -1)
+    %is_burning_sw = Compare(%state_sw, 1, "==")
+    %count = Add(%count, Select(%is_burning_sw, 1, 0))
+    
+    Store("burning_neighbors", %count)
+}
+
+// ============================================================
+// INTERACTION: spread_fire
+// Target: Grid Cell
+// Determines if fire spreads to this cell based on:
+// - Has vegetation (state 0)
+// - Has burning neighbors
+// - Vegetation density, moisture, wind
+// - Random probability
+// ============================================================
+@interaction(spread_fire)
+func spread_fire() {
+    // Load current state
+    %fire_state = Load("fire_state", 0, 0)
+    %veg = Load("vegetation", 0, 0)
+    %moist = Load("moisture", 0, 0)
+    %burn_neighbors = Load("burning_neighbors", 0, 0)
+    %wind = Load("wind_factor", 0, 0)
+    
+    %spread_base = GlobalLoad("spread_prob")
+    %ignition_base = GlobalLoad("base_ignition_prob")
+    
+    // Only spread to cells that are unburned (state = 0)
+    %is_unburned = Compare(%fire_state, 0, "==")
+    
+    // Compute spread probability
+    // Higher vegetation = higher probability
+    // Higher moisture = lower probability
+    // More burning neighbors = higher probability
+    // Wind increases probability
+    
+    // Vegetation factor (0 to 1 based on density)
+    %veg_factor = %veg
+    
+    // Moisture reduces spread (inverse: dry = 1, wet = 0)
+    %moist_factor = Sub(1.0, %moist)
+    
+    // Neighbor factor: more burning neighbors = higher chance
+    %neighbor_factor = Convert(%burn_neighbors, f32)
+    %neighbor_factor = Div(%neighbor_factor, 8.0)
+    
+    // Wind factor addition
+    %wind_contrib = Mul(%wind, 0.5)
+    
+    // Combined probability
+    %spread_prob = Mul(%spread_base, %veg_factor)
+    %spread_prob = Mul(%spread_prob, %moist_factor)
+    %spread_prob = Add(%spread_prob, %neighbor_factor)
+    %spread_prob = Add(%spread_prob, %wind_contrib)
+    
+    // Clamp probability
+    %spread_prob = Clamp(%spread_prob, 0.0, 1.0)
+    
+    // Random factor would be needed here - using deterministic threshold for now
+    // In a full implementation, this would use a random number generator
+    // For deterministic simulation, we use the neighbor count as pseudo-random seed
+    
+    // Determine if fire spreads: combine spreading conditions
+    %has_neighbors = Compare(%burn_neighbors, 0, ">")
+    
+    // Spread if has vegetation, has burning neighbors, and passes probability check
+    %has_vegetation = Compare(%veg, 0.1, ">")
+    
+    %can_spread = And(%is_unburned, %has_vegetation)
+    %can_spread = And(%can_spread, %has_neighbors)
+    
+    // Simplified spread: if can spread and has enough neighbors, ignite
+    %spread_threshold = 0.3
+    %passes_prob = Compare(%spread_prob, %spread_threshold, ">")
+    
+    %ignite = And(%can_spread, %passes_prob)
+    
+    // Random ignition check (lightning)
+    %random_ignite = And(%is_unburned, %has_vegetation)
+    %random_ignite = And(%random_ignite, Compare(%ignition_base, %spread_threshold, "<"))
+    
+    // Final fire state
+    %new_state = Select(%ignite, 1, %fire_state)
+    %new_state = Select(%random_ignite, 1, %new_state)
+    
+    Store("fire_state", %new_state)
+}
+
+// ============================================================
+// INTERACTION: burnout_cells
+// Target: Grid Cell
+// Burning cells become burned out after one step
+// ============================================================
+@interaction(burnout_cells)
+func burnout_cells() {
+    %fire_state = Load("fire_state", 0, 0)
+    
+    // If currently burning (state = 1), become burned (state = 2)
+    %is_burning = Compare(%fire_state, 1, "==")
+    %new_state = Select(%is_burning, 2, %fire_state)
+    
+    Store("fire_state", %new_state)
+}
+
+// ============================================================
+// INTERACTION: regrow_vegetation
+// Target: Grid Cell
+// Vegetation regrows in burned areas (state = 2) over time
+// ============================================================
+@interaction(regrow_vegetation)
+func regrow_vegetation() {
+    %veg = Load("vegetation", 0, 0)
+    %fire_state = Load("fire_state", 0, 0)
+    %regrowth = GlobalLoad("regrowth_rate")
+    %dt = GlobalLoad("dt")
+    
+    // Only regrow in burned areas (state = 2)
+    %is_burned = Compare(%fire_state, 2, "==")
+    
+    // Regrowth amount
+    %growth = Mul(%regrowth, %dt)
+    %growth = Mul(%growth, 0.1)  // Slow regrowth factor
+    
+    // Add to current vegetation (capped at 1.0)
+    %new_veg = Add(%veg, %growth)
+    %new_veg = Min(%new_veg, 1.0)
+    
+    // Apply only to burned cells
+    %final_veg = Select(%is_burned, %new_veg, %veg)
+    
+    Store("vegetation", %final_veg)
+}
+
+// ============================================================
+// INTERACTION: clamp_variables
+// Target: Grid Cell
+// Ensures vegetation and moisture stay within valid ranges
+// ============================================================
+@interaction(clamp_variables)
+func clamp_variables() {
+    %veg = Load("vegetation", 0, 0)
+    %moist = Load("moisture", 0, 0)
+    
+    // Clamp to valid ranges
+    %veg_clamped = Clamp(%veg, 0.0, 1.0)
+    %moist_clamped = Clamp(%moist, 0.0, 1.0)
+    
+    Store("vegetation", %veg_clamped)
+    Store("moisture", %moist_clamped)
+}

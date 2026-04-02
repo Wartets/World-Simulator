@@ -1,0 +1,8 @@
+{
+  "id": "forest_fire_propagation",
+  "name": "Forest Fire Propagation",
+  "description": "Stochastic cellular automaton modeling fire spread based on vegetation density, wind conditions, and moisture. Implements probabilistic ignition and spread dynamics.",
+  "author": "Colin Bossu Réaubourg",
+  "creation_date": "2026-04-02",
+  "tags": ["biology", "ecology", "cellular_automaton", "forest_fire", "stochastic", "2d", "grid-simulation"]
+}

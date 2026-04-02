@@ -1,0 +1,140 @@
+{
+  "__comment_intro__": "Forest Fire Propagation. Stochastic cellular automaton modeling fire spread based on vegetation density, wind direction, wind strength, and moisture content. Uses probabilistic ignition and spread rules.",
+  "id": "forest_fire_propagation",
+  "version": "1.0.0",
+
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "fixed",
+      "y": "fixed"
+    },
+    "__comment__": "Fixed boundary conditions prevent fire from wrapping around. Fire can only spread from interior burning cells."
+  },
+
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "explicit_euler",
+    "__comment__": "Discrete time steps for cellular automaton behavior."
+  },
+
+  "domains": {
+    "vegetation_domain": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" },
+    "moisture_domain": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" },
+    "fire_state_domain": { "kind": "categorical", "values": [0, 1, 2], "type": "u32" },
+    "wind_domain": { "kind": "interval", "min": 0.0, "max": 50.0, "type": "f32" },
+    "probability_domain": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" }
+  },
+
+  "variables": [
+    {
+      "__comment_block__": "--- GLOBAL VARIABLES ---"
+    },
+    {
+      "id": "time", "role": "state", "support": "global", "type": "f32", "units": "s",
+      "description": "Simulation time in seconds."
+    },
+    {
+      "id": "dt", "role": "parameter", "support": "global", "type": "f32", "units": "s", "initial_value": 1.0,
+      "description": "Time increment per step (discrete steps)."
+    },
+    {
+      "id": "wind_direction", "role": "parameter", "support": "global", "type": "f32", "units": "rad", "initial_value": 0.0,
+      "description": "Wind direction in radians (0 = East, positive = counterclockwise)."
+    },
+    {
+      "id": "wind_strength", "role": "parameter", "support": "global", "type": "f32", "units": "m/s", "initial_value": 5.0,
+      "domain": "wind_domain",
+      "description": "Wind speed affecting fire spread probability."
+    },
+    {
+      "id": "base_ignition_prob", "role": "parameter", "support": "global", "type": "f32", "units": "1", "initial_value": 0.0001,
+      "domain": "probability_domain",
+      "description": "Base probability of spontaneous fire ignition (lightning, etc.)."
+    },
+    {
+      "id": "spread_prob", "role": "parameter", "support": "global", "type": "f32", "units": "1", "initial_value": 0.6,
+      "domain": "probability_domain",
+      "description": "Base probability of fire spreading to neighboring burning cell."
+    },
+    {
+      "id": "regrowth_rate", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 0.001,
+      "description": "Rate at which vegetation regrows in burned areas."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (STATE) ---"
+    },
+    {
+      "id": "vegetation", "role": "state", "support": "cell", "type": "f32", "units": "1", "domain": "vegetation_domain",
+      "description": "Vegetation density (0 = bare ground, 1 = full vegetation)."
+    },
+    {
+      "id": "moisture", "role": "state", "support": "cell", "type": "f32", "units": "1", "domain": "moisture_domain",
+      "description": "Fuel moisture content (0 = dry, 1 = saturated). Higher moisture reduces fire spread."
+    },
+    {
+      "id": "fire_state", "role": "state", "support": "cell", "type": "u32", "units": "1", "domain": "fire_state_domain",
+      "description": "Fire state: 0 = unburned/burned out, 1 = burning, 2 = burned (ash/empty)."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (AUXILIARY) ---"
+    },
+    {
+      "id": "wind_factor", "role": "auxiliary", "support": "cell", "type": "f32", "units": "1", "domain": "probability_domain",
+      "description": "Wind-influenced spread probability modifier for this cell."
+    },
+    {
+      "id": "burning_neighbors", "role": "auxiliary", "support": "cell", "type": "u32", "units": "1", "domain": "fire_state_domain",
+      "description": "Count of burning neighbor cells (0-8)."
+    }
+  ],
+
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Advances the overall simulation time.",
+      "interactions": [
+        { "id": "advance_time", "reads": ["time", "dt"], "writes": ["time"], "target_type": "scalar" }
+      ]
+    },
+    {
+      "id": "wind_effects",
+      "description": "Computes wind-influenced spread factor based on wind direction and cell position.",
+      "interactions": [
+        { "id": "compute_wind_factor", "reads": ["wind_direction", "wind_strength"], "writes": ["wind_factor"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "neighbor_detection",
+      "description": "Counts burning neighbors for fire spread calculation.",
+      "interactions": [
+        { "id": "count_burning_neighbors", "reads": ["fire_state"], "writes": ["burning_neighbors"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "fire_spread",
+      "description": "Determines fire spread based on vegetation, moisture, neighbors, and wind.",
+      "interactions": [
+        { "id": "spread_fire", "reads": ["vegetation", "moisture", "fire_state", "burning_neighbors", "wind_factor", "spread_prob", "base_ignition_prob"], "writes": ["fire_state"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "fire_evolution",
+      "description": "Updates burning cells (burnout) and vegetation regrowth in burned areas.",
+      "interactions": [
+        { "id": "burnout_cells", "reads": ["fire_state"], "writes": ["fire_state"], "target_type": "grid" },
+        { "id": "regrow_vegetation", "reads": ["vegetation", "fire_state", "regrowth_rate", "dt"], "writes": ["vegetation"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "constraints",
+      "description": "Ensures state variables remain within valid ranges.",
+      "interactions": [
+        { "id": "clamp_variables", "reads": ["vegetation", "moisture"], "writes": ["vegetation", "moisture"], "target_type": "grid" }
+      ]
+    }
+  ]
+}

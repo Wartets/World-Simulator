@@ -1,0 +1,121 @@
+{
+  "__comment_intro__": "Predator-Prey Dynamics (Spatiotemporal). Reaction-diffusion system modeling predator-prey interactions using Lotka-Volterra equations with spatial diffusion. Demonstrates ecological population dynamics on a 2D grid.",
+  "id": "predator_prey_dynamics",
+  "version": "1.0.0",
+
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "periodic",
+      "y": "periodic"
+    },
+    "__comment__": "Toroidal topology allows natural population flow without boundary effects."
+  },
+
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "explicit_euler",
+    "diffusion_scheme": "central_difference"
+  },
+
+  "domains": {
+    "population_domain": { "kind": "interval", "min": 0.0, "max": 1000.0, "type": "f32" },
+    "rate_domain": { "kind": "interval", "min": 0.0, "max": 10.0, "type": "f32" },
+    "carrying_capacity_domain": { "kind": "interval", "min": 0.0, "max": 1000.0, "type": "f32" }
+  },
+
+  "variables": [
+    {
+      "__comment_block__": "--- GLOBAL VARIABLES ---"
+    },
+    {
+      "id": "time", "role": "state", "support": "global", "type": "f32", "units": "s",
+      "description": "Simulation time in seconds."
+    },
+    {
+      "id": "dt", "role": "parameter", "support": "global", "type": "f32", "units": "s", "initial_value": 0.1,
+      "description": "Time increment per step."
+    },
+    {
+      "id": "alpha", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 1.0,
+      "description": "Prey birth rate (α). Rate at which prey reproduces in absence of predators."
+    },
+    {
+      "id": "beta", "role": "parameter", "support": "global", "type": "f32", "units": "1/(individuals*s)", "initial_value": 0.1,
+      "description": "Predation rate (β). Rate at which predators consume prey."
+    },
+    {
+      "id": "gamma", "role": "parameter", "support": "global", "type": "f32", "units": "1/s", "initial_value": 0.5,
+      "description": "Predator death rate (γ). Natural death rate of predators in absence of prey."
+    },
+    {
+      "id": "delta", "role": "parameter", "support": "global", "type": "f32", "units": "1/(individuals*s)", "initial_value": 0.1,
+      "description": "Predator reproduction rate (δ). Rate at which predators reproduce when consuming prey."
+    },
+    {
+      "id": "diffusion_prey", "role": "parameter", "support": "global", "type": "f32", "units": "m^2/s", "initial_value": 0.05,
+      "description": "Prey diffusion rate. Spatial movement rate of prey population."
+    },
+    {
+      "id": "diffusion_predator", "role": "parameter", "support": "global", "type": "f32", "units": "m^2/s", "initial_value": 0.02,
+      "description": "Predator diffusion rate. Spatial movement rate of predator population."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (STATE) ---"
+    },
+    {
+      "id": "prey_density", "role": "state", "support": "cell", "type": "f32", "units": "individuals/m^2", "domain": "population_domain",
+      "description": "Prey population density (x). Number of prey per unit area."
+    },
+    {
+      "id": "predator_density", "role": "state", "support": "cell", "type": "f32", "units": "individuals/m^2", "domain": "population_domain",
+      "description": "Predator population density (y). Number of predators per unit area."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (AUXILIARY) ---"
+    },
+    {
+      "id": "prey_laplacian", "role": "auxiliary", "support": "cell", "type": "f32", "units": "individuals/m^4", "domain": "population_domain",
+      "description": "Laplacian of prey density for diffusion computation."
+    },
+    {
+      "id": "predator_laplacian", "role": "auxiliary", "support": "cell", "type": "f32", "units": "individuals/m^4", "domain": "population_domain",
+      "description": "Laplacian of predator density for diffusion computation."
+    }
+  ],
+
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Advances the overall simulation time.",
+      "interactions": [
+        { "id": "advance_time", "reads": ["time", "dt"], "writes": ["time"], "target_type": "scalar" }
+      ]
+    },
+    {
+      "id": "spatial_diffusion",
+      "description": "Computes Laplacian operators for prey and predator diffusion.",
+      "interactions": [
+        { "id": "compute_prey_laplacian", "reads": ["prey_density"], "writes": ["prey_laplacian"], "target_type": "grid" },
+        { "id": "compute_predator_laplacian", "reads": ["predator_density"], "writes": ["predator_laplacian"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "reaction_kinetics",
+      "description": "Computes Lotka-Volterra reaction terms for population dynamics.",
+      "interactions": [
+        { "id": "update_populations", "reads": ["prey_density", "predator_density", "alpha", "beta", "gamma", "delta", "diffusion_prey", "diffusion_predator", "prey_laplacian", "predator_laplacian", "dt"], "writes": ["prey_density", "predator_density"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "constraints",
+      "description": "Ensures population densities remain non-negative.",
+      "interactions": [
+        { "id": "clamp_populations", "reads": ["prey_density", "predator_density"], "writes": ["prey_density", "predator_density"], "target_type": "grid" }
+      ]
+    }
+  ]
+}
