@@ -1,20 +1,136 @@
 :root {
-    --page-bg: #0f1118;
-    --page-bg-soft: #131722;
-    --panel: rgba(20, 24, 35, 0.9);
-    --panel-strong: #171c28;
-    --graph-bg: #10141d;
-    --border: #3c4868;
-    --border-strong: #5870a3;
-    --text: #f2f2ff;
-    --muted: #9aa6c3;
-    --accent: #476899;
-    --accent-soft: rgba(71, 104, 153, 0.22);
-    --resource-fill: #1b2230;
-    --subsystem-fill: #243148;
-    --read: #66a8f0;
-    --write: #82c0ff;
-    --shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
+    /* Darkened background colors by 30% */
+    --page-bg: #0a0c10;
+    --page-bg-soft: #0d0f16;
+    --panel: rgba(16, 18, 28, 0.95);
+    --panel-strong: #0f121a;
+    --graph-bg: #0a0e15;
+    --border: #2a3347;
+    --border-strong: #3d4f72;
+    --text: #e6e6ec;
+    --muted: #7a8aad;
+    --accent: #355073;
+    --accent-soft: rgba(53, 80, 115, 0.3);
+    --resource-fill: #131a26;
+    --subsystem-fill: #1a2435;
+    --read: #4d8fdc;
+    --write: #6ca8e6;
+    --shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+
+    /* Primary data series - high saturation, high contrast */
+    --color-primary: #3a6fc7;
+    --color-primary-light: #5d8fdc;
+    --color-primary-dark: #1f4a87;
+    
+    /* Secondary data series */
+    --color-secondary: #b04d56;
+    --color-secondary-light: #d27880;
+    --color-secondary-dark: #7a343b;
+    
+    /* Tertiary data series */
+    --color-tertiary: #6f9657;
+    --color-tertiary-light: #80b06f;
+    --color-tertiary-dark: #4d6a3a;
+    
+    /* Quaternary data series */
+    --color-quaternary: #b88a5b;
+    --color-quaternary-light: #d4b888;
+    --color-quaternary-dark: #7d5f3e;
+    
+    /* Quinary data series */
+    --color-quinary: #9f52b4;
+    --color-quinary-light: #bc7dd1;
+    --color-quinary-dark: #6d387c;
+    
+    /* Senary data series */
+    --color-senary: #3e8e96;
+    --color-senary-light: #6caeb5;
+    --color-senary-dark: #2a6268;
+    
+    /* Septenary data series */
+    --color-septenary: #a0714d;
+    --color-septenary-light: #c49076;
+    --color-septenary-dark: #6f4e35;
+    
+    /* Octonary data series */
+    --color-octonary: #3e4554;
+    --color-octonary-light: #5c6370;
+    --color-octonary-dark: #2a2e38;
+
+    /* Graph element colors - mapped to data types - Darkened */
+    --graph-bar-1: #3a6fc7;
+    --graph-bar-2: #b04d56;
+    --graph-bar-3: #6f9657;
+    --graph-bar-4: #b88a5b;
+    --graph-bar-5: #9f52b4;
+    --graph-bar-6: #3e8e96;
+    --graph-bar-7: #a0714d;
+    --graph-bar-8: #3e4554;
+    
+    /* Line chart colors */
+    --graph-line-1: #3a6fc7;
+    --graph-line-2: #b04d56;
+    --graph-line-3: #6f9657;
+    --graph-line-4: #b88a5b;
+    --graph-line-5: #9f52b4;
+    --graph-line-6: #3e8e96;
+    
+    /* Data point colors */
+    --graph-point-1: #5d8fdc;
+    --graph-point-2: #d27880;
+    --graph-point-3: #80b06f;
+    --graph-point-4: #d4b888;
+    --graph-point-5: #bc7dd1;
+    --graph-point-6: #6caeb5;
+    
+    /* Pie chart segment colors */
+    --pie-segment-1: #3a6fc7;
+    --pie-segment-2: #b04d56;
+    --pie-segment-3: #6f9657;
+    --pie-segment-4: #b88a5b;
+    --pie-segment-5: #9f52b4;
+    --pie-segment-6: #3e8e96;
+    --pie-segment-7: #a0714d;
+    --pie-segment-8: #3e4554;
+    
+    /* Subdued/secondary element colors */
+    --subdued-1: #3e4554;
+    --subdued-2: #323842;
+    --subdued-3: #262c36;
+    
+    /* Gradient definitions */
+    --gradient-primary: linear-gradient(135deg, #3a6fc7 0%, #1f4a87 100%);
+    --gradient-secondary: linear-gradient(135deg, #b04d56 0%, #7a343b 100%);
+    --gradient-success: linear-gradient(135deg, #6f9657 0%, #4d6a3a 100%);
+    --gradient-warning: linear-gradient(135deg, #b88a5b 0%, #7d5f3e 100%);
+    --gradient-info: linear-gradient(135deg, #3e8e96 0%, #2a6268 100%);
+    
+    /* Node type colors - Darkened */
+    --node-subsystem: #1a2435;
+    --node-subsystem-light: #24344a;
+    --node-subsystem-border: #3d4f72;
+    --node-field: #131a26;
+    --node-field-light: #1a2435;
+    --node-field-border: #2a3347;
+    
+    /* Edge colors - Darkened */
+    --edge-read: #4d8fdc;
+    --edge-read-light: #6ca8e0;
+    --edge-write: #6ca8e6;
+    --edge-write-light: #8fc4f0;
+    
+    /* Legend colors - Darkened */
+    --legend-color-1: #3a6fc7;
+    --legend-color-2: #6f9657;
+    --legend-color-3: #b88a5b;
+    --legend-color-4: #9f52b4;
+    --legend-color-5: #3e8e96;
+    --legend-color-6: #b04d56;
+    
+    /* Accessibility - WCAG AA compliant contrast indicators */
+    --high-contrast-text: #ffffff;
+    --medium-contrast-text: #e0e6f0;
+    --low-contrast-text: #9aa6c3;
 }
 
 * {
@@ -181,12 +297,18 @@ body {
 }
 
 .graph-shell {
-    display: grid;
-    grid-template-rows: auto 1fr;
+    display: flex;
+    flex-direction: column;
     padding: 16px;
     min-height: 0;
     max-height: 100%;
     overflow: hidden;
+    background: var(--graph-bg);
+}
+
+.graph-shell #graph {
+    flex: 1;
+    min-height: 0;
 }
 
 .graph-meta {
@@ -213,12 +335,19 @@ body {
     border-radius: 999px;
     background: rgba(24, 31, 45, 0.92);
     font-size: 1.08rem;
+    transition: transform 140ms ease, border-color 140ms ease;
+}
+
+.legend-item:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
 }
 
 .legend-item strong {
     font-size: 1.08rem;
 }
 
+/* Legend color indicators - distinct colors for different data series */
 .legend-line {
     width: 26px;
     height: 3px;
@@ -227,12 +356,386 @@ body {
 }
 
 .legend-line.read {
-    background: var(--read);
+    background: var(--edge-read);
 }
 
 .legend-line.write {
-    background: var(--write);
+    background: var(--edge-write);
 }
+
+/* Multi-color legend for data series */
+.legend-line.series-1 {
+    background: var(--legend-color-1);
+}
+
+.legend-line.series-2 {
+    background: var(--legend-color-2);
+}
+
+.legend-line.series-3 {
+    background: var(--legend-color-3);
+}
+
+.legend-line.series-4 {
+    background: var(--legend-color-4);
+}
+
+.legend-line.series-5 {
+    background: var(--legend-color-5);
+}
+
+.legend-line.series-6 {
+    background: var(--legend-color-6);
+}
+
+/* Legend with gradient indicator */
+.legend-line.gradient {
+    background: var(--gradient-primary);
+}
+
+/* Legend with dot indicator */
+.legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.legend-dot.series-1 {
+    background: var(--legend-color-1);
+}
+
+.legend-dot.series-2 {
+    background: var(--legend-color-2);
+}
+
+.legend-dot.series-3 {
+    background: var(--legend-color-3);
+}
+
+.legend-dot.series-4 {
+    background: var(--legend-color-4);
+}
+
+.legend-dot.series-5 {
+    background: var(--legend-color-5);
+}
+
+.legend-dot.series-6 {
+    background: var(--legend-color-6);
+}
+
+/* Data series legend container */
+.legend-series {
+    display: inline-flex;
+    gap: 4px;
+    padding: 6px 10px;
+}
+
+.legend-series .legend-line {
+    width: 18px;
+    height: 3px;
+    border-radius: 2px;
+}
+
+/* === Comprehensive Legend Styles === */
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.legend-section {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(24, 31, 45, 0.7);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.legend-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text);
+    margin-right: 4px;
+}
+
+.legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.92rem;
+    color: var(--muted);
+}
+
+.legend-item strong {
+    font-size: 0.95rem;
+    color: var(--text);
+    margin-left: 2px;
+}
+
+/* Legend line (edge) indicators */
+.legend-line {
+    width: 24px;
+    height: 3px;
+    border-radius: 2px;
+}
+
+.legend-line.read {
+    background: var(--edge-read);
+}
+
+.legend-line.write {
+    background: var(--edge-write);
+}
+
+/* Legend box for node types */
+.legend-box {
+    width: 20px;
+    height: 14px;
+    border-radius: 3px;
+    border-width: 2px;
+    border-style: solid;
+}
+
+.legend-box.subsystem {
+    background: var(--node-subsystem);
+    border-color: var(--node-subsystem-border);
+}
+
+.legend-box.field {
+    background: var(--node-field);
+    border-color: var(--node-field-border);
+}
+
+/* Border thickness for importance levels */
+.legend-border-thick {
+    width: 24px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--color-primary);
+    border: 3px solid var(--color-primary-dark);
+}
+
+.legend-border-thin {
+    width: 24px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--subdued-1);
+    border: 1px solid var(--subdued-3);
+}
+
+/* Color key grid for palette */
+.legend-colors {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.color-key-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 6px 0;
+}
+
+.color-key-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.color-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.2);
+}
+
+.legend-hint {
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-style: italic;
+}
+
+/* Compact legend styles */
+.graph-meta.compact {
+    padding: 4px 0;
+    gap: 6px;
+}
+
+.graph-meta.compact .legend {
+    gap: 8px;
+}
+
+.legend-section.compact {
+    padding: 4px 8px;
+    gap: 4px;
+    font-size: 0.8rem;
+}
+
+.legend-section.compact .legend-title {
+    font-size: 0.75rem;
+    margin-right: 2px;
+}
+
+.legend-section.compact .legend-item {
+    font-size: 0.75rem;
+    gap: 4px;
+}
+
+.legend-section.compact .legend-line {
+    width: 16px;
+    height: 2px;
+}
+
+.legend-dot {
+    width: 14px;
+    height: 10px;
+    border-radius: 2px;
+    border: 2px solid;
+}
+
+.legend-dot.subsystem {
+    background: var(--color-primary);
+    border-color: var(--color-primary-dark);
+}
+
+.legend-dot.field {
+    background: var(--color-secondary);
+    border-color: var(--color-secondary-dark);
+}
+
+.color-key-mini {
+    display: flex;
+    gap: 2px;
+}
+
+.color-key-mini span {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    font-size: 0.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+}
+
+.graph-help.compact {
+    font-size: 0.8rem;
+    padding: 4px 0;
+}
+
+/* === Visual Hierarchy Styles === */
+/* Key/primary data points - highlighted with glow effect */
+.key-node,
+.key-element {
+    position: relative;
+}
+
+.key-node::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 8px;
+    background: transparent;
+    box-shadow: 0 0 12px 2px var(--color-primary);
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+/* Secondary/subdued elements */
+.subdued-element {
+    opacity: 0.65;
+}
+
+/* Node importance indicators */
+.node-importance-high {
+    border-color: var(--color-primary) !important;
+    box-shadow: 0 0 8px var(--color-primary);
+}
+
+.node-importance-medium {
+    border-color: var(--color-tertiary) !important;
+}
+
+.node-importance-low {
+    border-color: var(--subdued-1) !important;
+    opacity: 0.85;
+}
+
+/* === Graph Element Colors === */
+/* Bar chart colors */
+.graph-bar {
+    transition: fill 200ms ease, stroke 200ms ease;
+}
+
+.graph-bar:hover {
+    filter: brightness(1.15);
+}
+
+.graph-bar.series-1 { fill: var(--graph-bar-1); stroke: var(--graph-bar-1); }
+.graph-bar.series-2 { fill: var(--graph-bar-2); stroke: var(--graph-bar-2); }
+.graph-bar.series-3 { fill: var(--graph-bar-3); stroke: var(--graph-bar-3); }
+.graph-bar.series-4 { fill: var(--graph-bar-4); stroke: var(--graph-bar-4); }
+.graph-bar.series-5 { fill: var(--graph-bar-5); stroke: var(--graph-bar-5); }
+.graph-bar.series-6 { fill: var(--graph-bar-6); stroke: var(--graph-bar-6); }
+.graph-bar.series-7 { fill: var(--graph-bar-7); stroke: var(--graph-bar-7); }
+.graph-bar.series-8 { fill: var(--graph-bar-8); stroke: var(--graph-bar-8); }
+
+/* Line chart colors */
+.graph-line {
+    fill: none;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.graph-line.series-1 { stroke: var(--graph-line-1); }
+.graph-line.series-2 { stroke: var(--graph-line-2); }
+.graph-line.series-3 { stroke: var(--graph-line-3); }
+.graph-line.series-4 { stroke: var(--graph-line-4); }
+.graph-line.series-5 { stroke: var(--graph-line-5); }
+.graph-line.series-6 { stroke: var(--graph-line-6); }
+
+/* Data point colors */
+.graph-point {
+    stroke: var(--graph-bg);
+    stroke-width: 2;
+}
+
+.graph-point.series-1 { fill: var(--graph-point-1); }
+.graph-point.series-2 { fill: var(--graph-point-2); }
+.graph-point.series-3 { fill: var(--graph-point-3); }
+.graph-point.series-4 { fill: var(--graph-point-4); }
+.graph-point.series-5 { fill: var(--graph-point-5); }
+.graph-point.series-6 { fill: var(--graph-point-6); }
+
+/* Pie segment colors */
+.pie-segment {
+    stroke: var(--graph-bg);
+    stroke-width: 2;
+    transition: transform 150ms ease, filter 150ms ease;
+}
+
+.pie-segment:hover {
+    transform: scale(1.03);
+    filter: brightness(1.1);
+}
+
+.pie-segment.series-1 { fill: var(--pie-segment-1); }
+.pie-segment.series-2 { fill: var(--pie-segment-2); }
+.pie-segment.series-3 { fill: var(--pie-segment-3); }
+.pie-segment.series-4 { fill: var(--pie-segment-4); }
+.pie-segment.series-5 { fill: var(--pie-segment-5); }
+.pie-segment.series-6 { fill: var(--pie-segment-6); }
+.pie-segment.series-7 { fill: var(--pie-segment-7); }
+.pie-segment.series-8 { fill: var(--pie-segment-8); }
 
 
 
@@ -247,8 +750,6 @@ body {
 #graph {
     min-height: 0;
     height: 100%;
-    border: 1px solid var(--border);
-    border-radius: 24px;
     background: var(--graph-bg);
     overflow: hidden;
     touch-action: none;
@@ -256,6 +757,13 @@ body {
     -webkit-user-select: none;
     user-select: none;
     position: relative;
+    outline: none;
+}
+
+#graph:focus,
+#graph:focus-visible {
+    outline: none;
+    box-shadow: none;
 }
 
 .details-panel {

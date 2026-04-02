@@ -15,14 +15,60 @@ const appState = {
     panTimeout: null,
 };
 
-// DOM element references - will be populated on DOM ready
+// Color palette array - darker variants for better contrast
+const COLOR_PALETTE = [
+    { primary: "#3a6fc7", light: "#5d8fdc", dark: "#1f4a87" },  // Blue
+    { primary: "#6f9657", light: "#80b06f", dark: "#4d6a3a" },  // Green
+    { primary: "#b88a5b", light: "#d4b888", dark: "#7d5f3e" },  // Yellow
+    { primary: "#9f52b4", light: "#bc7dd1", dark: "#6d387c" },  // Purple
+    { primary: "#3e8e96", light: "#6caeb5", dark: "#2a6268" },  // Cyan
+    { primary: "#b04d56", light: "#d27880", dark: "#7a343b" },  // Red
+    { primary: "#a0714d", light: "#c49076", dark: "#6f4e35" },  // Orange
+    { primary: "#3e4554", light: "#5c6370", dark: "#2a2e38" },  // Gray
+];
+
+// Get color from palette by index (cycles through colors)
+function getPaletteColor(index) {
+    return COLOR_PALETTE[index % COLOR_PALETTE.length];
+}
+
+// Node type colors
+const NODE_SUBSYSTEM_COLORS = {
+    background: "#243148",
+    backgroundLight: "#2d3f5a",
+    backgroundGradient: ["#2d3f5a", "#1f2d40"],
+    border: "#5870a3",
+    borderLight: "#6b82b5",
+    highlight: { background: "#3a5070", border: "#7a94c4" },
+};
+
+const NODE_FIELD_COLORS = {
+    background: "#1b2230",
+    backgroundLight: "#243148",
+    backgroundGradient: ["#243148", "#161c28"],
+    border: "#3c4868",
+    borderLight: "#4f5a7a",
+    highlight: { background: "#2d3848", border: "#5a6d88" },
+};
+
+// Edge colors for read/write modes
+const EDGE_COLORS = {
+    read: {
+        color: "#66a8f0",
+        colorLight: "#8dc4fc",
+        highlight: "#7fb0ff",
+    },
+    write: {
+        color: "#82c0ff",
+        colorLight: "#a8d6ff",
+        highlight: "#9ecbff",
+    },
+};
 let graphContainer = null;
 let countsLabel = null;
 let selectionTitle = null;
 let selectionSubtitle = null;
 let detailContent = null;
-let readCount = null;
-let writeCount = null;
 
 function initializeDOMReferences() {
     graphContainer = document.getElementById("graph");
@@ -30,8 +76,6 @@ function initializeDOMReferences() {
     selectionTitle = document.getElementById("selectionTitle");
     selectionSubtitle = document.getElementById("selectionSubtitle");
     detailContent = document.getElementById("detailContent");
-    readCount = document.getElementById("readCount");
-    writeCount = document.getElementById("writeCount");
     
     console.log("DOM references initialized:", {
         graphContainer: !!graphContainer,
@@ -292,8 +336,6 @@ function updateStats() {
     const reads = interactions.filter((interaction) => interaction.mode === "read").length;
     const writes = interactions.filter((interaction) => interaction.mode === "write").length;
 
-    readCount.textContent = String(reads);
-    writeCount.textContent = String(writes);
     countsLabel.textContent = `${nodes.length} nodes / ${interactions.length} interactions`;
 }
 
@@ -301,61 +343,92 @@ function makeVisData() {
     const interactions = appState.data?.interactions ?? [];
     const nodes = appState.data?.nodes ?? [];
 
-    // Create nodes array for vis.js
-    const visNodes = nodes.map((node) => ({
-        id: node.id,
-        label: formatDisplayLabel(node.label),
-        group: node.group,
-        title: node.description || node.label,
-        color: {
-            background: node.group === "subsystem" ? "#243148" : "#1b2230",
-            border: node.group === "subsystem" ? "#5870a3" : "#3c4868",
-            highlight: {
-                background: node.group === "subsystem" ? "#2d3f5a" : "#243148",
-                border: "#4c73b0",
-            },
-        },
-        font: {
-            color: "#f2f2ff",
-            size: 14,
-            face: "Trebuchet MS, Segoe UI, sans-serif",
-        },
-        shape: "box",
-        margin: 10,
-        borderWidth: 2,
-        borderWidthSelected: 3,
-    }));
+    // Calculate node importance based on connection count for visual hierarchy
+    const nodeConnectionCount = {};
+    interactions.forEach(interaction => {
+        nodeConnectionCount[interaction.source] = (nodeConnectionCount[interaction.source] || 0) + 1;
+        nodeConnectionCount[interaction.target] = (nodeConnectionCount[interaction.target] || 0) + 1;
+    });
 
-    // Create edges array for vis.js
-    const visEdges = interactions.map((interaction) => ({
-        id: interaction.id,
-        from: interaction.source,
-        to: interaction.target,
-        label: interaction.mode,
-        title: interaction.summary,
-        color: {
-            color: interaction.mode === "read" ? "#66a8f0" : "#82c0ff",
-            highlight: "#7fb0ff",
-            hover: "#7fb0ff",
-        },
-        arrows: {
-            to: {
-                enabled: true,
-                scaleFactor: 0.8,
+    // Get max connections for scaling
+    const maxConnections = Math.max(...Object.values(nodeConnectionCount), 1);
+
+    // Create nodes array for vis.js with enhanced colors and visual hierarchy
+    const visNodes = nodes.map((node, index) => {
+        const connectionCount = nodeConnectionCount[node.id] || 0;
+        const importanceRatio = connectionCount / maxConnections;
+        const paletteColor = getPaletteColor(index);
+        const isSubsystem = node.group === "subsystem";
+        
+        // Use dark backgrounds for better text contrast, high importance gets lighter
+        let backgroundColor = paletteColor.dark;
+        if (importanceRatio > 0.5) {
+            backgroundColor = paletteColor.primary;
+        }
+        
+        return {
+            id: node.id,
+            label: formatDisplayLabel(node.label),
+            group: node.group,
+            title: node.description || node.label,
+            color: {
+                background: backgroundColor,
+                border: paletteColor.dark,
+                highlight: {
+                    background: paletteColor.light,
+                    border: paletteColor.primary,
+                },
             },
-        },
-        font: {
-            color: "#9aa6c3",
-            size: 10,
-            strokeWidth: 3,
-            strokeColor: "#10141d",
-        },
-        width: 2,
-        smooth: {
-            type: "continuous",
-            roundness: 0.5,
-        },
-    }));
+            font: {
+                color: "#ffffff",
+                size: 13,
+                face: "Trebuchet MS, Segoe UI, sans-serif",
+            },
+            shape: "box",
+            margin: 8,
+            borderWidth: 2 + Math.floor(importanceRatio * 2),
+            borderWidthSelected: 3,
+            paletteIndex: index,
+        };
+    });
+
+    // Create edges array for vis.js with palette-based colors
+    const visEdges = interactions.map((interaction, index) => {
+        const nodeIndex = nodes.findIndex(n => n.id === interaction.source);
+        const edgePalette = getPaletteColor(nodeIndex);
+        
+        const edgeColor = interaction.mode === "read" ? edgePalette.primary : edgePalette.light;
+        const edgeHighlight = interaction.mode === "read" ? edgePalette.light : edgePalette.primary;
+        
+        return {
+            id: interaction.id,
+            from: interaction.source,
+            to: interaction.target,
+            label: interaction.mode,
+            title: interaction.summary,
+            color: {
+                color: edgeColor,
+                highlight: edgeHighlight,
+                hover: edgePalette.light,
+            },
+            arrows: {
+                to: {
+                    enabled: true,
+                    scaleFactor: 0.7,
+                },
+            },
+            font: {
+                color: "#ffffff",
+                size: 9,
+                background: "#10141d",
+            },
+            width: 1.5,
+            smooth: {
+                type: "continuous",
+                roundness: 0.5,
+            },
+        };
+    });
 
     return { visNodes, visEdges };
 }
@@ -374,9 +447,11 @@ function ensureNetwork() {
             shape: "box",
             margin: 10,
             font: {
-                color: "#f2f2ff",
+                color: "#ffffff",
                 size: 14,
                 face: "Trebuchet MS, Segoe UI, sans-serif",
+                strokeWidth: 3,
+                strokeColor: "#000000",
             },
             borderWidth: 2,
             shadow: {
@@ -400,7 +475,7 @@ function ensureNetwork() {
                 },
             },
             font: {
-                color: "#9aa6c3",
+                color: "#e0e6f0",
                 size: 10,
                 strokeWidth: 3,
                 strokeColor: "#10141d",
