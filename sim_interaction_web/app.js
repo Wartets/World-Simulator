@@ -100,6 +100,26 @@ function hideGraphLoader() {
     }
 }
 
+// localStorage key for saving model selection
+const STORAGE_KEY = "ws-selected-model";
+
+function saveModelSelection(modelId) {
+    try {
+        localStorage.setItem(STORAGE_KEY, modelId);
+    } catch (e) {
+        console.warn("Could not save model selection to localStorage:", e);
+    }
+}
+
+function loadModelSelection() {
+    try {
+        return localStorage.getItem(STORAGE_KEY);
+    } catch (e) {
+        console.warn("Could not load model selection from localStorage:", e);
+        return null;
+    }
+}
+
 function escapeHtml(value) {
     return String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -397,7 +417,7 @@ function makeVisData() {
             font: {
                 color: "#ffffff",
                 size: 13,
-                face: "Trebuchet MS, Segoe UI, sans-serif",
+                face: "Trebuchet MS, Segoe UI, sans-serif"
             },
             shape: "box",
             margin: 8,
@@ -466,7 +486,7 @@ function ensureNetwork() {
                 size: 14,
                 face: "Trebuchet MS, Segoe UI, sans-serif",
                 strokeWidth: 3,
-                strokeColor: "#000000",
+                strokeColor: "#000000"
             },
             borderWidth: 2,
             shadow: {
@@ -675,7 +695,7 @@ function applyGraph() {
             font: {
                 color: "#f2f2ff",
                 size: 14,
-                face: "Trebuchet MS, Segoe UI, sans-serif",
+                face: "Trebuchet MS, Segoe UI, sans-serif"
             },
             borderWidth: 2,
             shadow: {
@@ -875,7 +895,20 @@ async function initialize() {
             return;
         }
 
-        const modelId = selector?.value;
+        // Check for saved model selection
+        const savedModelId = loadModelSelection();
+        let modelId = selector?.value;
+        
+        // If there's a saved model selection, try to use it
+        if (savedModelId && selector) {
+            const availableOptions = Array.from(selector.options).map(opt => opt.value);
+            if (availableOptions.includes(savedModelId)) {
+                selector.value = savedModelId;
+                modelId = savedModelId;
+                console.log("Restored saved model selection:", modelId);
+            }
+        }
+        
         console.log("Initial modelId from selector:", modelId);
 
         if (modelId) {
@@ -907,6 +940,9 @@ async function initialize() {
                     
                     applyGraph();
                     console.log("Graph applied successfully");
+                    
+                    // Save model selection to localStorage
+                    saveModelSelection(newModelId);
                 } catch (error) {
                     console.error("Error loading model:", error);
                     countsLabel.textContent = `Error: ${error.message}`;

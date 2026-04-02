@@ -225,8 +225,6 @@ body {
     justify-items: end;
 }
 
-
-
 .model-selector {
     min-width: 200px;
     padding: 10px 14px;
@@ -270,8 +268,6 @@ body {
     font-size: 1.08rem;
     font-weight: 700;
 }
-
-
 
 .workspace {
     display: grid;
