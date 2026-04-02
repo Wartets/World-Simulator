@@ -1,35 +1,45 @@
-const TIER_RANK = { A: 1, B: 2, C: 3 };
+/**
+ * World Simulator Interaction Graph
+ * 
+ * Interactive force-directed graph visualization using vis.js Network
+ * Displays subsystem and state-field dependencies from .simmodel files
+ */
 
 const appState = {
-    selectedTier: "A",
     data: null,
-    cy: null,
+    network: null,
+    nodes: null,
+    edges: null,
     selection: null,
-    isPhoneLayout: false,
-    view: {
-        nodeCount: 0,
-        edgeCount: 0,
-        interactions: [],
-    },
+    zoomTimeout: null,
+    panTimeout: null,
 };
 
-const graphContainer = document.getElementById("graph");
-const tierButtons = Array.from(document.querySelectorAll("[data-tier]"));
-const countsLabel = document.getElementById("countsLabel");
-const tierDescription = document.getElementById("tierDescription");
-const readCount = document.getElementById("readCount");
-const writeCount = document.getElementById("writeCount");
-const advancedCount = document.getElementById("advancedCount");
-const selectionTitle = document.getElementById("selectionTitle");
-const selectionSubtitle = document.getElementById("selectionSubtitle");
-const detailContent = document.getElementById("detailContent");
+// DOM element references - will be populated on DOM ready
+let graphContainer = null;
+let countsLabel = null;
+let selectionTitle = null;
+let selectionSubtitle = null;
+let detailContent = null;
+let readCount = null;
+let writeCount = null;
 
-tierButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-        setSelectedTier(button.dataset.tier);
-        applyTierGraph(true);
+function initializeDOMReferences() {
+    graphContainer = document.getElementById("graph");
+    countsLabel = document.getElementById("countsLabel");
+    selectionTitle = document.getElementById("selectionTitle");
+    selectionSubtitle = document.getElementById("selectionSubtitle");
+    detailContent = document.getElementById("detailContent");
+    readCount = document.getElementById("readCount");
+    writeCount = document.getElementById("writeCount");
+    
+    console.log("DOM references initialized:", {
+        graphContainer: !!graphContainer,
+        countsLabel: !!countsLabel,
+        selectionTitle: !!selectionTitle,
+        detailContent: !!detailContent
     });
-});
+}
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -44,186 +54,8 @@ function formatDisplayLabel(value) {
     return String(value ?? "").replaceAll("_", " ");
 }
 
-function setSelectedTier(tier) {
-    appState.selectedTier = tier;
-    tierButtons.forEach((button) => {
-        button.setAttribute("aria-pressed", String(button.dataset.tier === tier));
-    });
-
-    if (appState.data?.tiers?.[tier]) {
-        tierDescription.textContent = appState.data.tiers[tier];
-    } else {
-        tierDescription.textContent = "";
-    }
-}
-
-function activeInteractions() {
-    if (!appState.data) {
-        return [];
-    }
-
-    const selectedRank = TIER_RANK[appState.selectedTier];
-    return appState.data.interactions.filter((interaction) => TIER_RANK[interaction.minTier] <= selectedRank);
-}
-
 function getNodeById(id) {
     return appState.data?.nodes.find((node) => node.id === id) ?? null;
-}
-
-function isPhoneLayout() {
-    return window.matchMedia("(max-width: 640px)").matches;
-}
-
-function makeElements() {
-    const interactions = activeInteractions();
-    const nodeIds = new Set();
-
-    interactions.forEach((interaction) => {
-        nodeIds.add(interaction.source);
-        nodeIds.add(interaction.target);
-    });
-
-    const nodes = appState.data.nodes
-        .filter((node) => nodeIds.has(node.id))
-        .map((node) => ({
-            data: {
-                id: node.id,
-                label: formatDisplayLabel(node.label),
-                group: node.group,
-            },
-            classes: node.group,
-        }));
-
-    const edges = interactions.map((interaction) => ({
-        data: {
-            id: interaction.id,
-            source: interaction.source,
-            target: interaction.target,
-            summary: interaction.summary,
-            detail: interaction.detail,
-            equation: interaction.equation,
-            evidence: interaction.evidence,
-            minTier: interaction.minTier,
-            mode: interaction.mode,
-        },
-        classes: [interaction.mode, interaction.minTier !== "A" ? "advanced" : ""].filter(Boolean).join(" "),
-    }));
-
-    return { nodes, edges, interactions };
-}
-
-function buildLayout(animate) {
-    const phoneLayout = isPhoneLayout();
-
-    return {
-        name: "breadthfirst",
-        directed: true,
-        circle: false,
-        grid: false,
-        spacingFactor: phoneLayout ? 1.05 : 1.15,
-        avoidOverlap: true,
-        nodeDimensionsIncludeLabels: true,
-        fit: true,
-        padding: phoneLayout ? 24 : 36,
-        transform: (_node, position) =>
-            phoneLayout
-                ? {
-                      x: position.x,
-                      y: position.y,
-                  }
-                : {
-                      x: position.y,
-                      y: position.x,
-                  },
-        animate,
-        animationDuration: 220,
-    };
-}
-
-function applyResponsiveGraphStyle() {
-    if (!appState.cy) {
-        return;
-    }
-
-    const phoneLayout = isPhoneLayout();
-    appState.isPhoneLayout = phoneLayout;
-
-    appState.cy.style()
-        .selector("node")
-        .style({
-            "font-size": phoneLayout ? 30 : 64,
-            "text-max-width": phoneLayout ? 190 : 420,
-            padding: phoneLayout ? "18px" : "38px",
-        })
-        .selector("node.subsystem")
-        .style({
-            padding: phoneLayout ? "22px" : "44px",
-        })
-        .update();
-}
-
-function clearFocus() {
-    if (!appState.cy) {
-        return;
-    }
-
-    appState.cy.batch(() => {
-        appState.cy.elements().removeClass("faded active-node active-edge related-node related-edge");
-    });
-}
-
-function focusNode(node) {
-    const cy = appState.cy;
-    if (!cy || node.empty()) {
-        return;
-    }
-
-    const connectedEdges = node.connectedEdges();
-    const connectedNodes = connectedEdges.connectedNodes();
-    const relatedNodes = connectedNodes.difference(node);
-    const neighborhood = node.union(connectedEdges).union(relatedNodes);
-
-    cy.batch(() => {
-        cy.elements().addClass("faded");
-        neighborhood.removeClass("faded");
-        node.addClass("active-node");
-        connectedEdges.addClass("related-edge");
-        relatedNodes.addClass("related-node");
-    });
-}
-
-function focusEdge(edge) {
-    const cy = appState.cy;
-    if (!cy || edge.empty()) {
-        return;
-    }
-
-    const connectedNodes = edge.connectedNodes();
-    const neighborhood = edge.union(connectedNodes);
-
-    cy.batch(() => {
-        cy.elements().addClass("faded");
-        neighborhood.removeClass("faded");
-        edge.addClass("active-edge");
-        connectedNodes.addClass("related-node");
-    });
-}
-
-function updateStats(interactions, nodeCount, edgeCount) {
-    const reads = interactions.filter((interaction) => interaction.mode === "read").length;
-    const writes = interactions.filter((interaction) => interaction.mode === "write").length;
-    const tierAdded = interactions.filter((interaction) => interaction.minTier !== "A").length;
-
-    appState.view = {
-        interactions,
-        nodeCount,
-        edgeCount,
-    };
-
-    readCount.textContent = String(reads);
-    writeCount.textContent = String(writes);
-    advancedCount.textContent = String(tierAdded);
-    countsLabel.textContent = `${nodeCount} nodes / ${edgeCount} interactions`;
 }
 
 function createSummaryCard(label, value) {
@@ -262,8 +94,7 @@ function createInteractionCard(interaction) {
                 <span class="relation-tag">${escapeHtml(interaction.mode)}</span>
             </div>
             <div class="relation-meta">
-                ${escapeHtml(sourceLabel)} -> ${escapeHtml(targetLabel)}<br />
-                Minimum tier ${escapeHtml(interaction.minTier)}
+                ${escapeHtml(sourceLabel)} -> ${escapeHtml(targetLabel)}
             </div>
         </button>
     `;
@@ -284,18 +115,18 @@ function bindDetailActions() {
 }
 
 function renderOverview() {
-    const { interactions, nodeCount, edgeCount } = appState.view;
+    const interactions = appState.data?.interactions ?? [];
+    const nodes = appState.data?.nodes ?? [];
     const reads = interactions.filter((interaction) => interaction.mode === "read").length;
     const writes = interactions.filter((interaction) => interaction.mode === "write").length;
 
-    selectionTitle.textContent = `Tier ${appState.selectedTier} overview`;
-    selectionSubtitle.textContent =
-        appState.data?.tiers?.[appState.selectedTier] ?? "Choose a node or connection to inspect its details.";
+    selectionTitle.textContent = "Overview";
+    selectionSubtitle.textContent = "Choose a node or connection to inspect its details.";
 
     detailContent.innerHTML = `
         <div class="summary-grid">
-            ${createSummaryCard("Visible nodes", nodeCount)}
-            ${createSummaryCard("Visible interactions", edgeCount)}
+            ${createSummaryCard("Total nodes", nodes.length)}
+            ${createSummaryCard("Total interactions", interactions.length)}
             ${createSummaryCard("Read edges", reads)}
             ${createSummaryCard("Write edges", writes)}
         </div>
@@ -303,8 +134,9 @@ function renderOverview() {
         <section class="detail-section">
             <h3>How to use this view</h3>
             <p>
-                Click any node in the graph to see the interactions connected to it. Click any connection to open its
-                summary, equation, implementation note, and evidence.
+                Click any node in the graph to see the interactions connected to it. 
+                Click any connection to read the full interaction details.
+                Drag nodes to reposition them. The graph uses force-directed layout.
             </p>
         </section>
     `;
@@ -317,7 +149,7 @@ function renderNodeDetails(nodeData) {
         return;
     }
 
-    const interactions = activeInteractions();
+    const interactions = appState.data?.interactions ?? [];
     const incoming = interactions
         .filter((interaction) => interaction.target === node.id)
         .sort((left, right) => left.summary.localeCompare(right.summary));
@@ -330,7 +162,7 @@ function renderNodeDetails(nodeData) {
     const outgoingTitle = node.group === "subsystem" ? "Outgoing effects" : "Used by";
 
     selectionTitle.textContent = formatDisplayLabel(node.label);
-    selectionSubtitle.textContent = `${typeLabel} visible in tier ${appState.selectedTier}.`;
+    selectionSubtitle.textContent = `${typeLabel}.`;
 
     detailContent.innerHTML = `
         <div class="meta-pills">
@@ -341,7 +173,6 @@ function renderNodeDetails(nodeData) {
 
         <div class="summary-grid">
             ${createSummaryCard("Linked interactions", incoming.length + outgoing.length)}
-            ${createSummaryCard("Active tier", appState.selectedTier)}
         </div>
 
         <section class="detail-section">
@@ -349,7 +180,7 @@ function renderNodeDetails(nodeData) {
             ${
                 incoming.length
                     ? `<div class="relation-list">${incoming.map((interaction) => createInteractionCard(interaction)).join("")}</div>`
-                    : `<div class="empty-state">No visible incoming interactions for this tier.</div>`
+                    : `<div class="empty-state">No incoming interactions.</div>`
             }
         </section>
 
@@ -358,7 +189,7 @@ function renderNodeDetails(nodeData) {
             ${
                 outgoing.length
                     ? `<div class="relation-list">${outgoing.map((interaction) => createInteractionCard(interaction)).join("")}</div>`
-                    : `<div class="empty-state">No visible outgoing interactions for this tier.</div>`
+                    : `<div class="empty-state">No outgoing interactions.</div>`
             }
         </section>
     `;
@@ -373,12 +204,11 @@ function renderInteractionDetails(interaction) {
     const targetLabel = formatDisplayLabel(target?.label ?? interaction.target);
 
     selectionTitle.textContent = interaction.summary;
-    selectionSubtitle.textContent = `${interaction.mode === "read" ? "Read" : "Write"} interaction in tier ${interaction.minTier}.`;
+    selectionSubtitle.textContent = `${interaction.mode === "read" ? "Read" : "Write"} interaction.`;
 
     detailContent.innerHTML = `
         <div class="meta-pills">
             ${createMetaPill("Mode", interaction.mode)}
-            ${createMetaPill("Minimum tier", interaction.minTier)}
             ${createMetaPill("Interaction", interaction.id)}
         </div>
 
@@ -399,259 +229,544 @@ function renderInteractionDetails(interaction) {
     bindDetailActions();
 }
 
-function ensureGraph() {
-    if (appState.cy) {
-        applyResponsiveGraphStyle();
-        return;
-    }
+function updateStats() {
+    const interactions = appState.data?.interactions ?? [];
+    const nodes = appState.data?.nodes ?? [];
+    const reads = interactions.filter((interaction) => interaction.mode === "read").length;
+    const writes = interactions.filter((interaction) => interaction.mode === "write").length;
 
-    appState.cy = window.cytoscape({
-        container: graphContainer,
-        elements: [],
-        style: [
-            {
-                selector: "node",
-                style: {
-                    label: "data(label)",
-                    "font-size": 64,
-                    "font-weight": 700,
-                    "text-wrap": "wrap",
-                    "text-max-width": 420,
-                    color: "#f2f2ff",
-                    "text-valign": "center",
-                    "text-halign": "center",
-                    width: "label",
-                    height: "label",
-                    shape: "round-rectangle",
-                    "background-color": "#1b2230",
-                    "border-width": 2,
-                    "border-color": "#3c4868",
-                    padding: "38px",
-                    "transition-property": "opacity, background-color, border-color, width",
-                    "transition-duration": "180ms",
-                },
-            },
-            {
-                selector: "node.subsystem",
-                style: {
-                    "background-color": "#243148",
-                    "border-color": "#5870a3",
-                    padding: "44px",
-                },
-            },
-            {
-                selector: "edge",
-                style: {
-                    width: 3,
-                    "curve-style": "bezier",
-                    "control-point-step-size": 70,
-                    "source-endpoint": "outside-to-node",
-                    "target-endpoint": "outside-to-node",
-                    "target-arrow-shape": "triangle",
-                    "target-arrow-color": "#6d86bb",
-                    "line-color": "#6d86bb",
-                    "arrow-scale": 1.05,
-                    opacity: 0.78,
-                    "transition-property": "opacity, width, line-color, target-arrow-color",
-                    "transition-duration": "180ms",
-                },
-            },
-            {
-                selector: "edge.read",
-                style: {
-                    "line-color": "#66a8f0",
-                    "target-arrow-color": "#66a8f0",
-                },
-            },
-            {
-                selector: "edge.write",
-                style: {
-                    width: 3.4,
-                    "line-color": "#82c0ff",
-                    "target-arrow-color": "#82c0ff",
-                },
-            },
-            {
-                selector: "edge.advanced",
-                style: {
-                    "line-style": "dashed",
-                    "line-dash-pattern": [9, 5],
-                },
-            },
-            {
-                selector: ".faded",
-                style: {
-                    opacity: 0.16,
-                },
-            },
-            {
-                selector: "node.active-node",
-                style: {
-                    "border-width": 4,
-                    "border-color": "#4c73b0",
-                },
-            },
-            {
-                selector: "node.related-node",
-                style: {
-                    "border-width": 3,
-                    "border-color": "#6d86bb",
-                },
-            },
-            {
-                selector: "edge.active-edge",
-                style: {
-                    width: 5,
-                    opacity: 1,
-                    "line-color": "#7fb0ff",
-                    "target-arrow-color": "#7fb0ff",
-                },
-            },
-            {
-                selector: "edge.related-edge",
-                style: {
-                    width: 4,
-                    opacity: 1,
-                },
-            },
-        ],
-        wheelSensitivity: 0.2,
-    });
+    readCount.textContent = String(reads);
+    writeCount.textContent = String(writes);
+    countsLabel.textContent = `${nodes.length} nodes / ${interactions.length} interactions`;
+}
 
-    applyResponsiveGraphStyle();
+function makeVisData() {
+    const interactions = appState.data?.interactions ?? [];
+    const nodes = appState.data?.nodes ?? [];
 
-    appState.cy.on("tap", "node", (event) => {
-        const node = event.target;
-        appState.selection = { type: "node", id: node.id() };
-        clearFocus();
-        focusNode(node);
-        renderNodeDetails(node.data());
-    });
+    // Create nodes array for vis.js
+    const visNodes = nodes.map((node) => ({
+        id: node.id,
+        label: formatDisplayLabel(node.label),
+        group: node.group,
+        title: node.description || node.label,
+        color: {
+            background: node.group === "subsystem" ? "#243148" : "#1b2230",
+            border: node.group === "subsystem" ? "#5870a3" : "#3c4868",
+            highlight: {
+                background: node.group === "subsystem" ? "#2d3f5a" : "#243148",
+                border: "#4c73b0",
+            },
+        },
+        font: {
+            color: "#f2f2ff",
+            size: 14,
+            face: "Trebuchet MS, Segoe UI, sans-serif",
+        },
+        shape: "box",
+        margin: 10,
+        borderWidth: 2,
+        borderWidthSelected: 3,
+    }));
 
-    appState.cy.on("tap", "edge", (event) => {
-        const edge = event.target;
-        appState.selection = { type: "edge", id: edge.id() };
-        clearFocus();
-        focusEdge(edge);
-        renderInteractionDetails(edge.data());
-    });
+    // Create edges array for vis.js
+    const visEdges = interactions.map((interaction) => ({
+        id: interaction.id,
+        from: interaction.source,
+        to: interaction.target,
+        label: interaction.mode,
+        title: interaction.summary,
+        color: {
+            color: interaction.mode === "read" ? "#66a8f0" : "#82c0ff",
+            highlight: "#7fb0ff",
+            hover: "#7fb0ff",
+        },
+        arrows: {
+            to: {
+                enabled: true,
+                scaleFactor: 0.8,
+            },
+        },
+        font: {
+            color: "#9aa6c3",
+            size: 10,
+            strokeWidth: 3,
+            strokeColor: "#10141d",
+        },
+        width: 2,
+        smooth: {
+            type: "continuous",
+            roundness: 0.5,
+        },
+    }));
 
-    appState.cy.on("tap", (event) => {
-        if (event.target !== appState.cy) {
-            return;
+    return { visNodes, visEdges };
+}
+
+function ensureNetwork() {
+    console.log("ensureNetwork called");
+
+    const { visNodes, visEdges } = makeVisData();
+    console.log("Created vis data:", visNodes.length, "nodes,", visEdges.length, "edges");
+
+    appState.nodes = new vis.DataSet(visNodes);
+    appState.edges = new vis.DataSet(visEdges);
+
+    const options = {
+        nodes: {
+            shape: "box",
+            margin: 10,
+            font: {
+                color: "#f2f2ff",
+                size: 14,
+                face: "Trebuchet MS, Segoe UI, sans-serif",
+            },
+            borderWidth: 2,
+            shadow: {
+                enabled: true,
+                color: "rgba(0,0,0,0.3)",
+                size: 10,
+                x: 3,
+                y: 3,
+            },
+        },
+        edges: {
+            width: 2,
+            smooth: {
+                type: "continuous",
+                roundness: 0.5,
+            },
+            arrows: {
+                to: {
+                    enabled: true,
+                    scaleFactor: 0.8,
+                },
+            },
+            font: {
+                color: "#9aa6c3",
+                size: 10,
+                strokeWidth: 3,
+                strokeColor: "#10141d",
+            },
+            shadow: {
+                enabled: true,
+                color: "rgba(0,0,0,0.2)",
+                size: 5,
+                x: 2,
+                y: 2,
+            },
+        },
+        physics: {
+            enabled: false,
+            forceAtlas2Based: {
+                gravitationalConstant: -30,
+                centralGravity: 0.01,
+                springLength: 150,
+                springConstant: 0.08,
+                damping: 0.4,
+                avoidOverlap: 0.5,
+            },
+            solver: "forceAtlas2Based",
+            stabilization: {
+                enabled: true,
+                iterations: 1000,
+                updateInterval: 25,
+                onlyDynamicEdges: false,
+                fit: true,
+            },
+            timestep: 0.5,
+            adaptiveTimestep: true,
+        },
+        interaction: {
+            hover: true,
+            tooltipDelay: 200,
+            hideEdgesOnDrag: false,
+            hideNodesOnDrag: false,
+            navigationButtons: false,
+            keyboard: {
+                enabled: true,
+                bindToWindow: false,
+            },
+        },
+        layout: {
+            randomSeed: 42,
+            improvedLayout: true,
+        },
+    };
+
+    appState.network = new vis.Network(
+        graphContainer,
+        {
+            nodes: appState.nodes,
+            edges: appState.edges,
+        },
+        options
+    );
+
+    // Enable physics after network is created
+    appState.network.setOptions({ physics: { enabled: true } });
+
+    // Event handlers
+    appState.network.on("click", (params) => {
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            const node = appState.nodes.get(nodeId);
+            appState.selection = { type: "node", id: nodeId };
+            renderNodeDetails(node);
+        } else if (params.edges.length > 0) {
+            const edgeId = params.edges[0];
+            const edge = appState.edges.get(edgeId);
+            appState.selection = { type: "edge", id: edgeId };
+            renderInteractionDetails(edge);
+        } else {
+            appState.selection = null;
+            renderOverview();
         }
+    });
 
-        appState.selection = null;
-        clearFocus();
-        renderOverview();
+    appState.network.on("dragStart", () => {
+        appState.network.setOptions({ physics: { enabled: false } });
+    });
+
+    appState.network.on("dragEnd", () => {
+        setTimeout(() => {
+            appState.network.setOptions({ physics: { enabled: true } });
+        }, 100);
+    });
+
+    appState.network.on("zoom", () => {
+        appState.network.setOptions({ physics: { enabled: false } });
+        clearTimeout(appState.zoomTimeout);
+        appState.zoomTimeout = setTimeout(() => {
+            appState.network.setOptions({ physics: { enabled: true } });
+        }, 300);
+    });
+
+    appState.network.on("pan", () => {
+        appState.network.setOptions({ physics: { enabled: false } });
+        clearTimeout(appState.panTimeout);
+        appState.panTimeout = setTimeout(() => {
+            appState.network.setOptions({ physics: { enabled: true } });
+        }, 300);
     });
 }
 
 function selectNodeById(id) {
-    const node = appState.cy?.getElementById(id);
-    if (!node || node.empty() || !node.isNode()) {
-        return;
-    }
+    if (!appState.network) return;
 
-    appState.selection = { type: "node", id };
-    clearFocus();
-    focusNode(node);
-    renderNodeDetails(node.data());
+    appState.network.selectNodes([id]);
+    const node = appState.nodes.get(id);
+    if (node) {
+        appState.selection = { type: "node", id };
+        renderNodeDetails(node);
+    }
 }
 
 function selectInteractionById(id) {
-    const edge = appState.cy?.getElementById(id);
-    if (!edge || edge.empty() || !edge.isEdge()) {
-        return;
-    }
+    if (!appState.network) return;
 
-    appState.selection = { type: "edge", id };
-    clearFocus();
-    focusEdge(edge);
-    renderInteractionDetails(edge.data());
+    appState.network.selectEdges([id]);
+    const edge = appState.edges.get(id);
+    if (edge) {
+        appState.selection = { type: "edge", id };
+        renderInteractionDetails(edge);
+    }
 }
 
-function restoreSelection() {
-    if (!appState.selection) {
-        return false;
-    }
-
-    if (appState.selection.type === "node") {
-        const node = appState.cy.getElementById(appState.selection.id);
-        if (!node.empty() && node.isNode()) {
-            focusNode(node);
-            renderNodeDetails(node.data());
-            return true;
-        }
-    }
-
-    if (appState.selection.type === "edge") {
-        const edge = appState.cy.getElementById(appState.selection.id);
-        if (!edge.empty() && edge.isEdge()) {
-            focusEdge(edge);
-            renderInteractionDetails(edge.data());
-            return true;
-        }
-    }
-
-    appState.selection = null;
-    return false;
-}
-
-function applyTierGraph(animate) {
+function applyGraph() {
+    console.log("applyGraph called, data:", appState.data ? "present" : "null");
+    
     if (!appState.data) {
+        console.warn("applyGraph called but no data available");
         return;
     }
 
-    ensureGraph();
+    // Verify DOM elements exist
+    if (!graphContainer) {
+        console.error("Graph container not found in DOM");
+        return;
+    }
+    
+    console.log("Graph container found, dimensions:", graphContainer.clientWidth, "x", graphContainer.clientHeight);
 
-    const { nodes, edges, interactions } = makeElements();
-    const cy = appState.cy;
+    // Ensure container has dimensions
+    if (graphContainer.clientWidth === 0 || graphContainer.clientHeight === 0) {
+        console.warn("Graph container has no dimensions, forcing redraw...");
+        graphContainer.style.width = "100%";
+        graphContainer.style.height = "100%";
+        // Force browser to calculate layout
+        graphContainer.offsetHeight;
+    }
 
-    cy.batch(() => {
-        cy.elements().remove();
-        cy.add([...nodes, ...edges]);
+    // Create fresh data for vis.js to ensure no stale references
+    const { visNodes, visEdges } = makeVisData();
+    console.log("Created vis data with", visNodes.length, "nodes and", visEdges.length, "edges");
+
+    // Destroy old network completely
+    if (appState.network) {
+        console.log("Destroying existing network");
+        try {
+            appState.network.destroy();
+        } catch (e) {
+            console.warn("Error destroying network:", e);
+        }
+        appState.network = null;
+    }
+    
+    // Clear DataSets completely
+    appState.nodes = null;
+    appState.edges = null;
+    
+    // Create new DataSets
+    appState.nodes = new vis.DataSet(visNodes);
+    appState.edges = new vis.DataSet(visEdges);
+    
+    const options = {
+        nodes: {
+            shape: "box",
+            margin: 10,
+            font: {
+                color: "#f2f2ff",
+                size: 14,
+                face: "Trebuchet MS, Segoe UI, sans-serif",
+            },
+            borderWidth: 2,
+            shadow: {
+                enabled: true,
+                color: "rgba(0,0,0,0.3)",
+                size: 10,
+                x: 3,
+                y: 3,
+            },
+        },
+        edges: {
+            width: 2,
+            smooth: {
+                type: "continuous",
+                roundness: 0.5,
+            },
+            arrows: {
+                to: {
+                    enabled: true,
+                    scaleFactor: 0.8,
+                },
+            },
+            font: {
+                color: "#9aa6c3",
+                size: 10,
+                strokeWidth: 3,
+                strokeColor: "#10141d",
+            },
+            shadow: {
+                enabled: true,
+                color: "rgba(0,0,0,0.2)",
+                size: 5,
+                x: 2,
+                y: 2,
+            },
+        },
+        physics: {
+            enabled: false,
+            forceAtlas2Based: {
+                gravitationalConstant: -30,
+                centralGravity: 0.01,
+                springLength: 150,
+                springConstant: 0.08,
+                damping: 0.4,
+                avoidOverlap: 0.5,
+            },
+            solver: "forceAtlas2Based",
+            stabilization: {
+                enabled: true,
+                iterations: 1000,
+                updateInterval: 25,
+                onlyDynamicEdges: false,
+                fit: true,
+            },
+            timestep: 0.5,
+            adaptiveTimestep: true,
+        },
+        interaction: {
+            hover: true,
+            tooltipDelay: 200,
+            hideEdgesOnDrag: false,
+            hideNodesOnDrag: false,
+            navigationButtons: false,
+            keyboard: {
+                enabled: true,
+                bindToWindow: false,
+            },
+        },
+        layout: {
+            randomSeed: 42,
+            improvedLayout: true,
+        },
+    };
+
+    console.log("Creating new network...");
+    appState.network = new vis.Network(
+        graphContainer,
+        {
+            nodes: appState.nodes,
+            edges: appState.edges,
+        },
+        options
+    );
+
+    // Enable physics after network is created
+    appState.network.setOptions({ physics: { enabled: true } });
+
+    // Event handlers
+    appState.network.on("click", (params) => {
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            const node = appState.nodes.get(nodeId);
+            appState.selection = { type: "node", id: nodeId };
+            renderNodeDetails(node);
+        } else if (params.edges.length > 0) {
+            const edgeId = params.edges[0];
+            const edge = appState.edges.get(edgeId);
+            appState.selection = { type: "edge", id: edgeId };
+            renderInteractionDetails(edge);
+        } else {
+            appState.selection = null;
+            renderOverview();
+        }
     });
 
-    updateStats(interactions, nodes.length, edges.length);
-    clearFocus();
+    appState.network.on("dragStart", () => {
+        appState.network.setOptions({ physics: { enabled: false } });
+    });
+
+    appState.network.on("dragEnd", () => {
+        setTimeout(() => {
+            appState.network.setOptions({ physics: { enabled: true } });
+        }, 100);
+    });
+
+    appState.network.on("zoom", () => {
+        appState.network.setOptions({ physics: { enabled: false } });
+        clearTimeout(appState.zoomTimeout);
+        appState.zoomTimeout = setTimeout(() => {
+            appState.network.setOptions({ physics: { enabled: true } });
+        }, 300);
+    });
+
+    appState.network.on("pan", () => {
+        appState.network.setOptions({ physics: { enabled: false } });
+        clearTimeout(appState.panTimeout);
+        appState.panTimeout = setTimeout(() => {
+            appState.network.setOptions({ physics: { enabled: true } });
+        }, 300);
+    });
+    
+    updateStats();
     renderOverview();
-
-    const layout = cy.layout(buildLayout(animate));
-    layout.run();
-
-    if (!restoreSelection()) {
-        renderOverview();
-    }
+    
+    console.log("Graph applied successfully");
 }
 
-async function loadInteractionData() {
-    const response = await fetch("sim_interaction_web/interaction-data.json", { cache: "no-store" });
-    if (!response.ok) {
-        throw new Error(`Unable to load interaction data (${response.status})`);
+async function loadInteractionData(modelId) {
+    if (!modelId) {
+        throw new Error("No model selected");
     }
 
-    appState.data = await response.json();
+    console.log("loadInteractionData called with:", modelId);
+    
+    // Clear cache for fresh load to ensure we get latest data
+    SimModelLoader.clearCache();
+    
+    const data = await SimModelLoader.loadModel(modelId);
+    console.log("Data loaded, nodes:", data?.nodes?.length, "interactions:", data?.interactions?.length);
+    appState.data = data;
+}
+
+async function populateModelSelector() {
+    const selector = document.getElementById("modelSelector");
+    if (!selector) return;
+
+    try {
+        const models = await SimModelLoader.getAvailableModels();
+
+        selector.innerHTML = "";
+
+        if (models.length === 0) {
+            selector.innerHTML = '<option value="">No models found</option>';
+            return;
+        }
+
+        models.forEach((model) => {
+            const option = document.createElement("option");
+            option.value = model.id;
+            option.textContent = model.name || model.id;
+            selector.appendChild(option);
+        });
+
+        selector.value = models[0].id;
+    } catch (error) {
+        console.error("Failed to populate model selector:", error);
+        selector.innerHTML = '<option value="">Error loading models</option>';
+    }
 }
 
 async function initialize() {
+    // Initialize DOM references first
+    initializeDOMReferences();
+    
     try {
-        appState.isPhoneLayout = isPhoneLayout();
-        setSelectedTier("A");
-        await loadInteractionData();
-        setSelectedTier("A");
-        applyTierGraph(false);
+        await populateModelSelector();
 
-        window.addEventListener("resize", () => {
-            const nextPhoneLayout = isPhoneLayout();
-            if (nextPhoneLayout === appState.isPhoneLayout) {
-                return;
-            }
+        const selector = document.getElementById("modelSelector");
+        
+        // Wait for DOM to be fully ready before initializing
+        if (!graphContainer) {
+            console.error("Graph container not found, retrying...");
+            setTimeout(initialize, 100);
+            return;
+        }
 
-            appState.isPhoneLayout = nextPhoneLayout;
-            applyTierGraph(false);
-        });
+        const modelId = selector?.value;
+        console.log("Initial modelId from selector:", modelId);
+
+        if (modelId) {
+            await loadInteractionData(modelId);
+            applyGraph();
+        }
+
+        if (selector) {
+            selector.addEventListener("change", async (event) => {
+                // Use event.target.value explicitly to avoid any DOM timing issues
+                const newModelId = event.target.value;
+                console.log("Model changed event fired, new model:", newModelId);
+                
+                if (!newModelId) {
+                    console.warn("No model ID in change event");
+                    return;
+                }
+                
+                try {
+                    console.log("Loading interaction data for:", newModelId);
+                    await loadInteractionData(newModelId);
+                    console.log("Data loaded, applying graph...");
+                    
+                    // Get the value directly from selector to ensure consistency
+                    console.log("Current selector value:", selector.value);
+                    
+                    applyGraph();
+                    console.log("Graph applied successfully");
+                } catch (error) {
+                    console.error("Error loading model:", error);
+                    countsLabel.textContent = `Error: ${error.message}`;
+                    selectionTitle.textContent = "Unable to load the graph";
+                    selectionSubtitle.textContent = "The interaction data could not be read.";
+                    detailContent.innerHTML = `
+                        <div class="empty-state">${escapeHtml(error.message)}</div>
+                    `;
+                }
+            });
+        }
     } catch (error) {
+        console.error("Initialization error:", error);
         countsLabel.textContent = `Error: ${error.message}`;
         selectionTitle.textContent = "Unable to load the graph";
         selectionSubtitle.textContent = "The interaction data could not be read.";

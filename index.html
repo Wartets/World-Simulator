@@ -5,6 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>World Simulator Interaction Graph</title>
         <link rel="stylesheet" href="sim_interaction_web/styles.css" />
+        <script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
     </head>
     <body>
         <div class="app">
@@ -13,23 +14,20 @@
                     <p class="eyebrow">World Simulator</p>
                     <h1>Interaction Topology</h1>
                     <p class="subhead">
-                        Readable subsystem and state-field dependencies by model tier.
+                        Readable subsystem and state-field dependencies.
                     </p>
                 </div>
 
                 <div class="toolbar" aria-label="Graph controls">
                     <div class="toolbar-group">
-                        <span class="control-label">Tier</span>
-                        <div class="tier-picker" role="group" aria-label="Model tier selector">
-                            <button type="button" data-tier="A" aria-pressed="true">A</button>
-                            <button type="button" data-tier="B" aria-pressed="false">B</button>
-                            <button type="button" data-tier="C" aria-pressed="false">C</button>
-                        </div>
+                        <span class="control-label">Model</span>
+                        <select id="modelSelector" class="model-selector" aria-label="Model selector">
+                            <option value="">Loading models...</option>
+                        </select>
                     </div>
 
                     <div class="toolbar-group toolbar-summary">
                         <span id="countsLabel" class="counts">0 nodes / 0 interactions</span>
-                        <span id="tierDescription" class="tier-description"></span>
                     </div>
                 </div>
             </header>
@@ -48,15 +46,11 @@
                                 <span>Write</span>
                                 <strong id="writeCount">0</strong>
                             </div>
-                            <div class="legend-item">
-                                <span class="legend-line tier-c"></span>
-                                <span>Tier-added</span>
-                                <strong id="advancedCount">0</strong>
-                            </div>
                         </div>
 
                         <p class="graph-help">
                             Click a node to inspect everything linked to it, or click a connection to read the full interaction.
+                            Drag nodes to reposition them. The graph uses force-directed layout.
                         </p>
                     </div>
 
@@ -66,7 +60,7 @@
                 <aside class="details-panel" aria-label="Selection details">
                     <div class="panel-head">
                         <p class="panel-kicker">Selection</p>
-                        <h2 id="selectionTitle">Tier overview</h2>
+                        <h2 id="selectionTitle">Overview</h2>
                         <p id="selectionSubtitle" class="selection-subtitle">
                             Choose a node or connection to inspect its details.
                         </p>
@@ -77,9 +71,7 @@
             </main>
         </div>
 
-        <script src="https://unpkg.com/cytoscape@3.31.2/dist/cytoscape.min.js"></script>
-        <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
-        <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+        <script src="sim_interaction_web/simmodel-loader.js"></script>
         <script src="sim_interaction_web/app.js" defer></script>
     </body>
 </html>

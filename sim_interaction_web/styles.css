@@ -14,7 +14,6 @@
     --subsystem-fill: #243148;
     --read: #66a8f0;
     --write: #82c0ff;
-    --tier: #6d86bb;
     --shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
 }
 
@@ -33,6 +32,11 @@ body {
 }
 
 body {
+    display: flex;
+    flex-direction: column;
+}
+
+body {
     min-height: 100vh;
 }
 
@@ -42,6 +46,7 @@ body {
     grid-template-rows: auto 1fr;
     gap: 12px;
     padding: 12px;
+    overflow: hidden;
 }
 
 .topbar {
@@ -49,13 +54,13 @@ body {
     flex-wrap: wrap;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px 24px;
+    gap: 12px 20px;
     margin: 0 auto;
     width: min(100%, 1680px);
     max-width: 1680px;
-    padding: 18px 22px;
+    padding: 12px 16px;
     border: 1px solid rgba(76, 92, 126, 0.6);
-    border-radius: 22px;
+    border-radius: 18px;
     background: rgba(17, 21, 31, 0.84);
     box-shadow: var(--shadow);
     backdrop-filter: blur(12px);
@@ -68,9 +73,9 @@ body {
 .eyebrow,
 .panel-kicker,
 .control-label {
-    margin: 0 0 6px;
+    margin: 0 0 4px;
     color: var(--muted);
-    font-size: 2rem;
+    font-size: 1.6rem;
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -78,15 +83,15 @@ body {
 
 .title-block h1 {
     margin: 0;
-    font-size: clamp(1.8rem, 2.5vw, 2.9rem);
+    font-size: clamp(1.4rem, 2vw, 2.2rem);
     line-height: 1;
     letter-spacing: -0.03em;
 }
 
 .subhead {
-    margin: 8px 0 0;
+    margin: 6px 0 0;
     max-width: 60ch;
-    font-size: 1.1rem;
+    font-size: 1rem;
     line-height: 1.45;
     color: var(--muted);
 }
@@ -104,13 +109,10 @@ body {
     justify-items: end;
 }
 
-.tier-picker {
-    display: inline-flex;
-    gap: 8px;
-}
 
-.tier-picker button {
-    min-width: 52px;
+
+.model-selector {
+    min-width: 200px;
     padding: 10px 14px;
     border: 1px solid var(--border);
     border-radius: 999px;
@@ -121,18 +123,31 @@ body {
     font-weight: 700;
     cursor: pointer;
     transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa6c3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    padding-right: 40px;
 }
 
-.tier-picker button:hover {
+.model-selector:hover {
     transform: translateY(-1px);
     border-color: var(--border-strong);
     background: #20293b;
 }
 
-.tier-picker button[aria-pressed="true"] {
+.model-selector:focus {
+    outline: none;
     border-color: var(--accent);
-    background: var(--accent);
-    color: #f8fbff;
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.model-selector option {
+    background: var(--panel-strong);
+    color: var(--text);
+    padding: 10px;
 }
 
 .counts {
@@ -140,22 +155,18 @@ body {
     font-weight: 700;
 }
 
-.tier-description {
-    color: var(--muted);
-    font-size: 1rem;
-    line-height: 1.35;
-    text-align: right;
-    max-width: 28ch;
-}
+
 
 .workspace {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(340px, 0.82fr);
-    gap: 12px;
-    max-width: 1680px;
+    grid-template-columns: minmax(0, 2.5fr) minmax(320px, 0.7fr);
+    grid-template-rows: 1fr;
+    gap: 16px;
+    max-width: 1920px;
     margin: 0 auto;
-    width: min(100%, 1680px);
+    width: min(100%, 1920px);
     min-height: 0;
+    max-height: 100%;
 }
 
 .graph-shell,
@@ -172,7 +183,10 @@ body {
 .graph-shell {
     display: grid;
     grid-template-rows: auto 1fr;
-    padding: 14px;
+    padding: 16px;
+    min-height: 0;
+    max-height: 100%;
+    overflow: hidden;
 }
 
 .graph-meta {
@@ -220,9 +234,7 @@ body {
     background: var(--write);
 }
 
-.legend-line.tier-c {
-    background: var(--tier);
-}
+
 
 .graph-help {
     margin: 0;
@@ -243,12 +255,13 @@ body {
     overscroll-behavior: contain;
     -webkit-user-select: none;
     user-select: none;
+    position: relative;
 }
 
 .details-panel {
     display: grid;
     grid-template-rows: auto 1fr;
-    padding: 16px 18px;
+    padding: 18px 20px;
 }
 
 .panel-head {
@@ -524,20 +537,21 @@ body {
 
     .workspace {
         grid-template-columns: 1fr;
+        max-width: 100%;
     }
 
     .graph-shell {
-        min-height: 560px;
+        min-height: 600px;
     }
 }
 
 @media (max-width: 900px) {
     .app {
-        padding: 10px;
+        padding: 12px;
     }
 
     .topbar {
-        padding: 16px;
+        padding: 18px;
     }
 
     .topbar,
@@ -550,9 +564,10 @@ body {
         justify-items: start;
     }
 
-    .tier-description {
-        text-align: left;
-        max-width: none;
+
+
+    .graph-shell {
+        min-height: 500px;
     }
 }
 
@@ -564,19 +579,19 @@ body {
 
     .app {
         height: auto;
-        gap: 10px;
-        padding: 10px;
+        gap: 12px;
+        padding: 12px;
     }
 
     .topbar,
     .details-panel,
     .graph-shell {
-        padding: 14px;
+        padding: 16px;
         border-radius: 18px;
     }
 
     .topbar {
-        gap: 14px;
+        gap: 16px;
     }
 
     .title-block {
@@ -586,16 +601,16 @@ body {
     .eyebrow,
     .panel-kicker,
     .control-label {
-        font-size: 0.8rem;
+        font-size: 0.85rem;
     }
 
     .title-block h1 {
-        font-size: 1.8rem;
+        font-size: 1.9rem;
         line-height: 1.05;
     }
 
     .subhead {
-        font-size: 0.96rem;
+        font-size: 1rem;
     }
 
     .toolbar,
@@ -605,23 +620,19 @@ body {
         justify-items: stretch;
     }
 
-    .tier-picker {
-        width: 100%;
+
+
+    .graph-shell {
+        min-height: 450px;
     }
 
-    .tier-picker button {
-        flex: 1 1 0;
-        min-width: 0;
-        font-size: 1rem;
-    }
+
 
     .counts {
         font-size: 1rem;
     }
 
-    .tier-description {
-        font-size: 0.92rem;
-    }
+
 
     .workspace {
         grid-template-columns: 1fr;
