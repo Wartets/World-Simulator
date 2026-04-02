@@ -2,13 +2,43 @@
 #include "ws/core/scheduler.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <filesystem>
+#include <optional>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
+
+std::filesystem::path resolveModelsRoot() {
+    const std::filesystem::path direct = "models";
+    if (std::filesystem::exists(direct) && std::filesystem::is_directory(direct)) {
+        return direct;
+    }
+
+    const std::filesystem::path parent = std::filesystem::path("..") / "models";
+    if (std::filesystem::exists(parent) && std::filesystem::is_directory(parent)) {
+        return parent;
+    }
+
+    return {};
+}
+
+std::optional<ws::ModelExecutionSpec> loadCompatibleExecutionSpec(const std::filesystem::path& modelPath) {
+    ws::ModelExecutionSpec executionSpec;
+    std::string message;
+    if (!ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, message)) {
+        return std::nullopt;
+    }
+    if (executionSpec.cellScalarVariableIds.empty()) {
+        return std::nullopt;
+    }
+    return executionSpec;
+}
 
 ws::ProfileResolverInput fullTierProfileInput(const ws::ModelTier tier) {
     ws::ProfileResolverInput input;
@@ -22,13 +52,41 @@ ws::ProfileResolverInput fullTierProfileInput(const ws::ModelTier tier) {
     return input;
 }
 
+std::optional<ws::ModelExecutionSpec> selectExecutionSpec() {
+    const auto modelsRoot = resolveModelsRoot();
+    if (modelsRoot.empty()) {
+        return std::nullopt;
+    }
+
+    std::vector<std::filesystem::path> candidates;
+    for (const auto& entry : std::filesystem::directory_iterator(modelsRoot)) {
+        if (!entry.is_directory() || entry.path().extension() != ".simmodel") {
+            continue;
+        }
+        candidates.push_back(entry.path());
+    }
+
+    std::sort(candidates.begin(), candidates.end());
+    for (const auto& candidate : candidates) {
+        const auto executionSpec = loadCompatibleExecutionSpec(candidate);
+        if (executionSpec.has_value()) {
+            return executionSpec;
+        }
+    }
+    return std::nullopt;
+}
+
 void verifyCTierAdmissionAndExecution() {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+
     ws::RuntimeConfig config;
     config.seed = 20260325;
     config.grid = ws::GridSpec{6, 6};
     config.temporalPolicy = ws::TemporalPolicy::MultiRateC;
     config.guardrailPolicy.multiRateMicroStepCount = 3;
     config.profileInput = fullTierProfileInput(ws::ModelTier::C);
+    config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
@@ -51,6 +109,9 @@ void verifyCTierAdmissionAndExecution() {
 }
 
 ws::RuntimeSnapshot runBoundedScenario() {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+
     ws::RuntimeConfig config;
     config.seed = 314159;
     config.grid = ws::GridSpec{5, 5};
@@ -59,6 +120,7 @@ ws::RuntimeSnapshot runBoundedScenario() {
     config.profileInput.requestedSubsystemTiers["hydrology"] = ws::ModelTier::C;
     config.profileInput.requestedSubsystemTiers["temperature"] = ws::ModelTier::C;
     config.profileInput.requestedSubsystemTiers["temporal"] = ws::ModelTier::C;
+    config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
@@ -74,6 +136,9 @@ ws::RuntimeSnapshot runBoundedScenario() {
 }
 
 void verifyBoundedReproducibilityClassIsDeterministic() {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+
     const ws::RuntimeSnapshot runA = runBoundedScenario();
     const ws::RuntimeSnapshot runB = runBoundedScenario();
 
@@ -107,6 +172,9 @@ public:
 };
 
 void verifyEscalationFallbackPath() {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+
     ws::StateStore store(ws::GridSpec{2, 2});
     store.allocateScalarField(ws::VariableSpec{900, "signal"});
 
@@ -117,6 +185,7 @@ void verifyEscalationFallbackPath() {
     profile.subsystemTiers["spike"] = ws::ModelTier::C;
     profile.subsystemTiers["temporal"] = ws::ModelTier::C;
     profile.compatibilityAssumptions = {"escalation_path_test"};
+    profile.modelExecutionSpec = *executionSpec;
 
     scheduler.initialize(store, profile);
 
