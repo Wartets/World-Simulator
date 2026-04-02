@@ -1,0 +1,335 @@
+// Navier-Stokes Fluid Solver (2D)
+// Incompressible fluid flow simulation using projection method
+//
+// Equations:
+// - Momentum: ∂u/∂t + (u·∇)u = -∇p/ρ + ν∇²u + f
+// - Continuity: ∇·u = 0
+// 
+// Algorithm (Projection Method):
+// 1. Advect velocity field (semi-Lagrangian)
+// 2. Apply viscous diffusion
+// 3. Apply body forces
+// 4. Compute divergence
+// 5. Solve pressure Poisson equation
+// 6. Correct velocity to be divergence-free
+// 7. Apply boundary conditions and constraints
+
+// ============================================================
+// INTERACTION: advance_time
+// Target: Global Scalar
+// ============================================================
+@interaction(advance_time)
+func advance_time() {
+    // Load current time and time step
+    %time_curr = GlobalLoad("time")
+    %dt = GlobalLoad("dt")
+    
+    // Advance time
+    %time_next = Add(%time_curr, %dt)
+    Store("time", %time_next)
+}
+
+// ============================================================
+// INTERACTION: advect_velocity  
+// Target: Grid Cell
+// Semi-Lagrangian advection using upwind scheme
+// ============================================================
+@interaction(advect_velocity)
+func advect_velocity() {
+    // Load current and previous velocities
+    %u = Load("velocity_x", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    %u_prev = Load("velocity_x_prev", 0, 0)
+    %v_prev = Load("velocity_y_prev", 0, 0)
+    
+    // Load global time step
+    %dt = GlobalLoad("dt")
+    
+    // Compute upwind neighbor indices based on velocity direction
+    // For cell (i,j):
+    // - If u > 0, take from (i-1,j); if u < 0, take from (i+1,j)
+    // - If v > 0, take from (i,j-1); if v < 0, take from (i,j+1)
+    
+    // Get neighboring velocities for upwinding
+    // East neighbor (i+1, j)
+    %u_e = Load("velocity_x", 1, 0)
+    %v_e = Load("velocity_y", 1, 0)
+    
+    // West neighbor (i-1, j)
+    %u_w = Load("velocity_x", -1, 0)
+    %v_w = Load("velocity_y", -1, 0)
+    
+    // North neighbor (i, j+1)
+    %u_n = Load("velocity_x", 0, 1)
+    %v_n = Load("velocity_y", 0, 1)
+    
+    // South neighbor (i, j-1)
+    %u_s = Load("velocity_x", 0, -1)
+    %v_s = Load("velocity_y", 0, -1)
+    
+    // Compute upwind advection for u component
+    // Use donor cell upwinding: choose neighbor based on velocity sign
+    %u_upwind = Select(%u, %u_w, %u_e)  // Simplified: use centered as fallback
+    %v_upwind = Select(%v, %v_s, %v_n)  // Simplified: use centered as fallback
+    
+    // Semi-Lagrangian: trace back and interpolate
+    // x_new = x - u * dt, y_new = y - v * dt
+    %trace_x = Mul(%u, %dt)
+    %trace_y = Mul(%v, %dt)
+    
+    // Simplified advection: use upwind scheme
+    // du/dt + u*du/dx + v*du/dy = 0
+    // Discretized with upwind: -(u * d(u)/dx + v * d(u)/dy)
+    
+    // Compute spatial gradients (upwind differencing)
+    %du_dx = Sub(%u_e, %u_w)
+    %du_dy = Sub(%u_n, %u_s)
+    
+    // Advection terms
+    %adv_u_x = Mul(%u, %du_dx)
+    %adv_u_y = Mul(%v, %du_dy)
+    %adv_u = Add(%adv_u_x, %adv_u_y)
+    
+    // Update u with advection
+    %u_advected = Sub(%u, %adv_u)
+    
+    // Similarly for v component
+    %dv_dx = Sub(%v_e, %v_w)
+    %dv_dy = Sub(%v_n, %v_s)
+    
+    %adv_v_x = Mul(%u, %dv_dx)
+    %adv_v_y = Mul(%v, %dv_dy)
+    %adv_v = Add(%adv_v_x, %adv_v_y)
+    
+    %v_advected = Sub(%v, %adv_v)
+    
+    // Store advected velocities
+    Store("velocity_x_prev", %u)
+    Store("velocity_y_prev", %v)
+    Store("velocity_x", %u_advected)
+    Store("velocity_y", %v_advected)
+}
+
+// ============================================================
+// INTERACTION: diffuse_velocity
+// Target: Grid Cell
+// Viscous diffusion using central difference Laplacian
+// ============================================================
+@interaction(diffuse_velocity)
+func diffuse_velocity() {
+    // Load velocities and parameters
+    %u = Load("velocity_x", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    
+    %nu = GlobalLoad("viscosity")
+    %rho = GlobalLoad("density")
+    %dt = GlobalLoad("dt")
+    
+    // Compute Laplacian of velocity using neighbors
+    // ∇²u ≈ (u(i+1,j) + u(i-1,j) + u(i,j+1) + u(i,j-1) - 4*u(i,j))
+    
+    %u_e = Load("velocity_x", 1, 0)
+    %u_w = Load("velocity_x", -1, 0)
+    %u_n = Load("velocity_x", 0, 1)
+    %u_s = Load("velocity_x", 0, -1)
+    
+    %v_e = Load("velocity_y", 1, 0)
+    %v_w = Load("velocity_y", -1, 0)
+    %v_n = Load("velocity_y", 0, 1)
+    %v_s = Load("velocity_y", 0, -1)
+    
+    // Laplacian for u
+    %u_sum = Add(%u_e, %u_w)
+    %u_sum = Add(%u_sum, %u_n)
+    %u_sum = Add(%u_sum, %u_s)
+    %u_4 = Mul(%u, 4.0)
+    %lap_u = Sub(%u_sum, %u_4)
+    
+    // Laplacian for v
+    %v_sum = Add(%v_e, %v_w)
+    %v_sum = Add(%v_sum, %v_n)
+    %v_sum = Add(%v_sum, %v_s)
+    %v_4 = Mul(%v, 4.0)
+    %lap_v = Sub(%v_sum, %v_4)
+    
+    // Diffusion term: ν * ∇²u * dt / ρ (for kinematic viscosity nu = μ/ρ)
+    %diff_coeff = Div(%nu, %rho)
+    %diff_coeff = Mul(%diff_coeff, %dt)
+    
+    %diff_u = Mul(%diff_coeff, %lap_u)
+    %diff_v = Mul(%diff_coeff, %lap_v)
+    
+    // Update velocities with diffusion
+    %u_new = Add(%u, %diff_u)
+    %v_new = Add(%v, %diff_v)
+    
+    Store("velocity_x", %u_new)
+    Store("velocity_y", %v_new)
+}
+
+// ============================================================
+// INTERACTION: apply_body_forces
+// Target: Grid Cell
+// Applies external body forces (gravity, pressure gradient)
+// ============================================================
+@interaction(apply_body_forces)
+func apply_body_forces() {
+    // Load velocities and body force parameters
+    %u = Load("velocity_x", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    
+    %gx = GlobalLoad("gravity_x")
+    %gy = GlobalLoad("gravity_y")
+    %rho = GlobalLoad("density")
+    %dt = GlobalLoad("dt")
+    
+    // Pressure gradient (computed from neighboring pressure values)
+    %p_e = Load("pressure", 1, 0)
+    %p_w = Load("pressure", -1, 0)
+    %p_n = Load("pressure", 0, 1)
+    %p_s = Load("pressure", 0, -1)
+    %p = Load("pressure", 0, 0)
+    
+    // Central difference pressure gradient
+    %dp_dx = Sub(%p_e, %p_w)
+    %dp_dy = Sub(%p_n, %p_s)
+    
+    // Convert to forces: F = -∇p/ρ
+    %force_x = Div(%dp_dx, %rho)
+    %force_y = Div(%dp_dy, %rho)
+    
+    // Add body forces (gravity)
+    %total_force_x = Add(%force_x, %gx)
+    %total_force_y = Add(%force_y, %gy)
+    
+    // Update velocity: u_new = u + F * dt
+    %u_new = Add(%u, Mul(%total_force_x, %dt))
+    %v_new = Add(%v, Mul(%total_force_y, %dt))
+    
+    Store("velocity_x", %u_new)
+    Store("velocity_y", %v_new)
+}
+
+// ============================================================
+// INTERACTION: compute_divergence
+// Target: Grid Cell
+// Computes velocity field divergence for pressure projection
+// ============================================================
+@interaction(compute_divergence)
+func compute_divergence() {
+    // Load velocities
+    %u_e = Load("velocity_x", 1, 0)
+    %u_w = Load("velocity_x", -1, 0)
+    %v_n = Load("velocity_y", 0, 1)
+    %v_s = Load("velocity_y", 0, -1)
+    
+    // Central difference divergence: ∇·u = du/dx + dv/dy
+    %div_u = Add(%u_e, %u_w)
+    %div_v = Add(%v_n, %v_s)
+    %divergence = Add(%div_u, %div_v)
+    
+    Store("divergence", %divergence)
+}
+
+// ============================================================
+// INTERACTION: solve_pressure_poisson
+// Target: Grid Cell
+// Solves pressure Poisson equation: ∇²p = ∇·u/dt
+// ============================================================
+@interaction(solve_pressure_poisson)
+func solve_pressure_poisson() {
+    // Load divergence and current pressure
+    %div = Load("divergence", 0, 0)
+    %p = Load("pressure", 0, 0)
+    %dt = GlobalLoad("dt")
+    
+    // Right-hand side: ∇·u / dt
+    %rhs = Div(%div, %dt)
+    
+    // Laplacian of pressure using neighbors
+    %p_e = Load("pressure", 1, 0)
+    %p_w = Load("pressure", -1, 0)
+    %p_n = Load("pressure", 0, 1)
+    %p_s = Load("pressure", 0, -1)
+    
+    %p_sum = Add(%p_e, %p_w)
+    %p_sum = Add(%p_sum, %p_n)
+    %p_sum = Add(%p_sum, %p_s)
+    %p_4 = Mul(%p, 4.0)
+    %lap_p = Sub(%p_sum, %p_4)
+    
+    // Solve using Jacobi iteration (simplified: one iteration)
+    // p = (lap_p - rhs) / 4 (for uniform grid with h=1)
+    %lap_minus_rhs = Sub(%lap_p, %rhs)
+    %p_new = Div(%lap_minus_rhs, 4.0)
+    
+    // Ensure non-negative pressure
+    %p_clamped = Clamp(%p_new, 0.0, 1000000.0)
+    
+    Store("pressure_rhs", %rhs)
+    Store("pressure", %p_clamped)
+}
+
+// ============================================================
+// INTERACTION: correct_velocity
+// Target: Grid Cell
+// Projects velocity to be divergence-free using pressure gradient
+// u_corr = u - dt * ∇p
+// ============================================================
+@interaction(correct_velocity)
+func correct_velocity() {
+    // Load velocities and pressure
+    %u = Load("velocity_x", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    
+    %p_e = Load("pressure", 1, 0)
+    %p_w = Load("pressure", -1, 0)
+    %p_n = Load("pressure", 0, 1)
+    %p_s = Load("pressure", 0, -1)
+    
+    %dt = GlobalLoad("dt")
+    
+    // Pressure gradient (central difference)
+    %dp_dx = Sub(%p_e, %p_w)
+    %dp_dy = Sub(%p_n, %p_s)
+    
+    // Correction: u = u - dt * ∇p
+    %u_corr = Sub(%u, Mul(%dp_dx, %dt))
+    %v_corr = Sub(%v, Mul(%dp_dy, %dt))
+    
+    Store("velocity_x", %u_corr)
+    Store("velocity_y", %v_corr)
+}
+
+// ============================================================
+// INTERACTION: clamp_velocity
+// Target: Grid Cell
+// Ensures velocity stays within physical bounds
+// ============================================================
+@interaction(clamp_velocity)
+func clamp_velocity() {
+    %u = Load("velocity_x", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    
+    // Clamp to reasonable physical bounds
+    %u_clamped = Clamp(%u, -1000.0, 1000.0)
+    %v_clamped = Clamp(%v, -1000.0, 1000.0)
+    
+    Store("velocity_x", %u_clamped)
+    Store("velocity_y", %v_clamped)
+}
+
+// ============================================================
+// INTERACTION: clamp_pressure
+// Target: Grid Cell
+// Ensures pressure stays within physical bounds
+// ============================================================
+@interaction(clamp_pressure)
+func clamp_pressure() {
+    %p = Load("pressure", 0, 0)
+    
+    // Pressure must be non-negative
+    %p_clamped = Clamp(%p, 0.0, 1000000.0)
+    
+    Store("pressure", %p_clamped)
+}

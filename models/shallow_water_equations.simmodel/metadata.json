@@ -1,0 +1,8 @@
+{
+  "id": "shallow_water_equations",
+  "name": "Shallow Water Equations (2D)",
+  "description": "Simplified 3D fluid dynamics assuming hydrostatic pressure. Models water surface waves, tsunami propagation, and river hydraulics using depth-averaged equations.",
+  "author": "Colin Bossu Réaubourg",
+  "creation_date": "2026-04-02",
+  "tags": ["fluid_dynamics", "shallow_water", "hydrostatic", "waves", "tsunami", "2d", "hydrology"]
+}

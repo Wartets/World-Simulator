@@ -1,0 +1,155 @@
+{
+  "__comment_intro__": "Shallow Water Equations (2D). Depth-averaged hydrostatic flow simulation for water surface waves, tsunami propagation, and river hydraulics. Uses explicit finite volume method with wet/dry handling.",
+  "id": "shallow_water_equations",
+  "version": "1.0.0",
+
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "periodic",
+      "y": "periodic"
+    },
+    "__comment__": "Toroidal topology for demonstration. Real applications would use open or reflective boundaries."
+  },
+
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "explicit_euler",
+    "diffusion_scheme": "upwind",
+    "__comment__": "Explicit Euler with upwind flux scheme (Rusanov/Lax-Friedrichs) for stability in shallow water flows."
+  },
+
+  "domains": {
+    "water_depth_domain": { "kind": "interval", "min": 0.0, "max": 10000.0, "type": "f32" },
+    "elevation_domain": { "kind": "interval", "min": -5000.0, "max": 10000.0, "type": "f32" },
+    "velocity_domain": { "kind": "interval", "min": -1000.0, "max": 1000.0, "type": "f32" },
+    "bathymetry_domain": { "kind": "interval", "min": -10000.0, "max": 10000.0, "type": "f32" },
+    "friction_domain": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" }
+  },
+
+  "variables": [
+    {
+      "__comment_block__": "--- GLOBAL VARIABLES ---"
+    },
+    {
+      "id": "time", "role": "state", "support": "global", "type": "f32", "units": "s",
+      "description": "Simulation time in seconds."
+    },
+    {
+      "id": "dt", "role": "parameter", "support": "global", "type": "f32", "units": "s", "initial_value": 0.1,
+      "description": "Time increment per step. Must satisfy CFL condition for stability."
+    },
+    {
+      "id": "gravity", "role": "parameter", "support": "global", "type": "f32", "units": "m/s^2", "initial_value": 9.81,
+      "description": "Gravitational acceleration."
+    },
+    {
+      "id": "friction_coeff", "role": "parameter", "support": "global", "type": "f32", "units": "1/m", "initial_value": 0.01,
+      "domain": "friction_domain",
+      "description": "Manning friction coefficient (n) for bottom roughness. Applied as C_f = g*n^2/h^(4/3)."
+    },
+    {
+      "id": "baseline_water_level", "role": "parameter", "support": "global", "type": "f32", "units": "m", "initial_value": 10.0,
+      "description": "Initial still water depth for the domain."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (STATE) ---"
+    },
+    {
+      "id": "water_height", "role": "state", "support": "cell", "type": "f32", "units": "m", "domain": "water_depth_domain",
+      "description": "Water depth (h). Total water column height from bathymetry to surface."
+    },
+    {
+      "id": "surface_elevation", "role": "state", "support": "cell", "type": "f32", "units": "m", "domain": "elevation_domain",
+      "description": "Surface elevation (η) relative to reference datum. η = h + bathymetry."
+    },
+    {
+      "id": "velocity_x", "role": "state", "support": "cell", "type": "f32", "units": "m/s", "domain": "velocity_domain",
+      "description": "Depth-averaged velocity in X direction."
+    },
+    {
+      "id": "velocity_y", "role": "state", "support": "cell", "type": "f32", "units": "m/s", "domain": "velocity_domain",
+      "description": "Depth-averaged velocity in Y direction."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (PARAMETER/BATHYMETRY) ---"
+    },
+    {
+      "id": "bathymetry", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "bathymetry_domain",
+      "description": "Bottom topography (negative values for underwater, positive for above water). Combined with water_height gives surface_elevation."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (AUXILIARY) ---"
+    },
+    {
+      "id": "flux_x", "role": "auxiliary", "support": "cell", "type": "f32", "units": "m^2/s", "domain": "velocity_domain",
+      "description": "X-direction mass flux (h*u) for finite volume scheme."
+    },
+    {
+      "id": "flux_y", "role": "auxiliary", "support": "cell", "type": "f32", "units": "m^2/s", "domain": "velocity_domain",
+      "description": "Y-direction mass flux (h*v) for finite volume scheme."
+    },
+    {
+      "id": "total_depth", "role": "auxiliary", "support": "cell", "type": "f32", "units": "m", "domain": "water_depth_domain",
+      "description": "Total water depth including bathymetry (for wet/dry detection)."
+    }
+  ],
+
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Advances the overall simulation time.",
+      "interactions": [
+        { "id": "advance_time", "reads": ["time", "dt"], "writes": ["time"], "target_type": "scalar" }
+      ]
+    },
+    {
+      "id": "depth_update",
+      "description": "Computes total depth and updates water height from flux divergence.",
+      "interactions": [
+        { "id": "compute_total_depth", "reads": ["water_height", "bathymetry"], "writes": ["total_depth"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "flux_computation",
+      "description": "Computes mass fluxes using Rusanov (Lax-Friedrichs) scheme for numerical stability.",
+      "interactions": [
+        { "id": "compute_fluxes", "reads": ["water_height", "surface_elevation", "velocity_x", "velocity_y", "gravity"], "writes": ["flux_x", "flux_y"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "mass_equation",
+      "description": "Updates water height using mass conservation equation: ∂h/∂t + ∇·F = 0",
+      "interactions": [
+        { "id": "update_water_height", "reads": ["water_height", "flux_x", "flux_y", "dt"], "writes": ["water_height"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "momentum_equation",
+      "description": "Updates velocities using momentum equations with pressure gradient and friction.",
+      "interactions": [
+        { "id": "update_velocity_x", "reads": ["water_height", "velocity_x", "surface_elevation", "flux_x", "flux_y", "gravity", "friction_coeff", "dt"], "writes": ["velocity_x"], "target_type": "grid" },
+        { "id": "update_velocity_y", "reads": ["water_height", "velocity_y", "surface_elevation", "flux_x", "flux_y", "gravity", "friction_coeff", "dt"], "writes": ["velocity_y"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "wet_dry_handling",
+      "description": "Manages wet/dry interfaces to prevent negative water depths and apply drying conditions.",
+      "interactions": [
+        { "id": "handle_wet_dry", "reads": ["water_height", "velocity_x", "velocity_y", "bathymetry"], "writes": ["water_height", "velocity_x", "velocity_y"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "constraints",
+      "description": "Ensures numerical stability by constraining variables to physical bounds.",
+      "interactions": [
+        { "id": "clamp_water_depth", "reads": ["water_height"], "writes": ["water_height"], "target_type": "grid" },
+        { "id": "clamp_velocity", "reads": ["velocity_x", "velocity_y"], "writes": ["velocity_x", "velocity_y"], "target_type": "grid" }
+      ]
+    }
+  ]
+}

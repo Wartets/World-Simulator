@@ -1,0 +1,367 @@
+// Shallow Water Equations (2D)
+// Depth-averaged hydrostatic flow simulation
+//
+// Equations (2D shallow water):
+// Mass: ∂h/∂t + ∂(hu)/∂x + ∂(hv)/∂y = 0
+// Momentum X: ∂(hu)/∂t + ∂(hu² + ½gh²)/∂x + ∂(huv)/∂y = -gh∂η/∂x - C_f*u*sqrt(u²+v²)/h^(4/3)
+// Momentum Y: ∂(hv)/∂t + ∂(huv)/∂x + ∂(hv² + ½gh²)/∂y = -gh∂η/∂y - C_f*v*sqrt(u²+v²)/h^(4/3)
+//
+// Where: h = water depth, η = surface elevation, g = gravity, C_f = friction coefficient
+// Surface elevation: η = h + bathymetry
+//
+// Algorithm (Finite Volume with Rusanov flux):
+// 1. Compute total depth and update water height from flux divergence
+// 2. Compute fluxes using Rusanov scheme (local Lax-Friedrichs)
+// 3. Update water height (mass conservation)
+// 4. Update velocities (momentum conservation with pressure gradient and friction)
+// 5. Handle wet/dry interfaces
+// 6. Apply constraints
+
+// ============================================================
+// INTERACTION: advance_time
+// Target: Global Scalar
+// ============================================================
+@interaction(advance_time)
+func advance_time() {
+    // Load current time and time step
+    %time_curr = GlobalLoad("time")
+    %dt = GlobalLoad("dt")
+    
+    // Advance time
+    %time_next = Add(%time_curr, %dt)
+    Store("time", %time_next)
+}
+
+// ============================================================
+// INTERACTION: compute_total_depth
+// Target: Grid Cell
+// Computes total depth = water_height + bathymetry for wet/dry detection
+// ============================================================
+@interaction(compute_total_depth)
+func compute_total_depth() {
+    // Load water height and bathymetry
+    %h = Load("water_height", 0, 0)
+    %b = Load("bathymetry", 0, 0)
+    
+    // Total depth = h + bathymetry (positive upward from reference)
+    %total_depth = Add(%h, %b)
+    
+    Store("total_depth", %total_depth)
+}
+
+// ============================================================
+// INTERACTION: compute_fluxes
+// Target: Grid Cell
+// Computes mass fluxes using Rusanov (Lax-Friedrichs) scheme
+// F = 0.5 * (F_left + F_right) - 0.5 * alpha * (U_right - U_left)
+// where alpha = max eigenvalue (|u| + sqrt(gh))
+// ============================================================
+@interaction(compute_fluxes)
+func compute_fluxes() {
+    // Load state variables
+    %h = Load("water_height", 0, 0)
+    %eta = Load("surface_elevation", 0, 0)
+    %u = Load("velocity_x", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    
+    %g = GlobalLoad("gravity")
+    
+    // Get neighboring states for flux computation
+    %h_e = Load("water_height", 1, 0)
+    %h_w = Load("water_height", -1, 0)
+    %h_n = Load("water_height", 0, 1)
+    %h_s = Load("water_height", 0, -1)
+    
+    %u_e = Load("velocity_x", 1, 0)
+    %u_w = Load("velocity_x", -1, 0)
+    %u_n = Load("velocity_x", 0, 1)
+    %u_s = Load("velocity_x", 0, -1)
+    
+    %v_e = Load("velocity_y", 1, 0)
+    %v_w = Load("velocity_y", -1, 0)
+    %v_n = Load("velocity_y", 0, 1)
+    %v_s = Load("velocity_y", 0, -1)
+    
+    %eta_e = Load("surface_elevation", 1, 0)
+    %eta_w = Load("surface_elevation", -1, 0)
+    %eta_n = Load("surface_elevation", 0, 1)
+    %eta_s = Load("surface_elevation", 0, -1)
+    
+    // Compute wave speeds for X direction
+    // Eigenvalues: u - sqrt(gh), u, u + sqrt(gh)
+    // Maximum: |u| + sqrt(gh)
+    %gh_e = Mul(%g, %h_e)
+    %gh_e_sqrt = Sqrt(%gh_e)
+    %speed_e = Add(Abs(%u_e), %gh_e_sqrt)
+    
+    %gh_w = Mul(%g, %h_w)
+    %gh_w_sqrt = Sqrt(%gh_w)
+    %speed_w = Add(Abs(%u_w), %gh_w_sqrt)
+    
+    %speed_x = Max(%speed_e, %speed_w)
+    
+    // Compute wave speeds for Y direction
+    %gh_n = Mul(%g, %h_n)
+    %gh_n_sqrt = Sqrt(%gh_n)
+    %speed_n = Add(Abs(%v_n), %gh_n_sqrt)
+    
+    %gh_s = Mul(%g, %h_s)
+    %gh_s_sqrt = Sqrt(%gh_s)
+    %speed_s = Add(Abs(%v_s), %gh_s_sqrt)
+    
+    %speed_y = Max(%speed_n, %speed_s)
+    
+    // Rusanov flux for X direction: F = 0.5*(F_L + F_R) - 0.5*alpha*(U_R - U_L)
+    // Mass flux in X: hu
+    %flux_x_e = Mul(%h_e, %u_e)
+    %flux_x_w = Mul(%h_w, %u_w)
+    %flux_x_avg = Mul(Add(%flux_x_e, %flux_x_w), 0.5)
+    %h_diff_x = Sub(%h_e, %h_w)
+    %flux_x = Sub(%flux_x_avg, Mul(%speed_x, Mul(%h_diff_x, 0.5)))
+    
+    // Rusanov flux for Y direction
+    // Mass flux in Y: hv
+    %flux_y_n = Mul(%h_n, %v_n)
+    %flux_y_s = Mul(%h_s, %v_s)
+    %flux_y_avg = Mul(Add(%flux_y_n, %flux_y_s), 0.5)
+    %h_diff_y = Sub(%h_n, %h_s)
+    %flux_y = Sub(%flux_y_avg, Mul(%speed_y, Mul(%h_diff_y, 0.5)))
+    
+    // Store fluxes
+    Store("flux_x", %flux_x)
+    Store("flux_y", %flux_y)
+}
+
+// ============================================================
+// INTERACTION: update_water_height
+// Target: Grid Cell
+// Updates water height using mass conservation: h_new = h - dt * ∇·F
+// ============================================================
+@interaction(update_water_height)
+func update_water_height() {
+    // Load current water height and fluxes
+    %h = Load("water_height", 0, 0)
+    %flux_x = Load("flux_x", 0, 0)
+    %flux_y = Load("flux_y", 0, 0)
+    %dt = GlobalLoad("dt")
+    
+    // Get neighbor fluxes for divergence
+    %flux_x_e = Load("flux_x", 1, 0)
+    %flux_x_w = Load("flux_x", -1, 0)
+    %flux_y_n = Load("flux_y", 0, 1)
+    %flux_y_s = Load("flux_y", 0, -1)
+    
+    // Compute divergence: dF/dx + dF/dy
+    %div_x = Add(%flux_x_e, %flux_x_w)
+    %div_y = Add(%flux_y_n, %flux_y_s)
+    %divergence = Add(%div_x, %div_y)
+    
+    // Update: h_new = h - dt * divergence
+    %h_change = Mul(%dt, %divergence)
+    %h_new = Sub(%h, %h_change)
+    
+    // Store updated water height
+    Store("water_height", %h_new)
+    
+    // Also update surface elevation: η = h + bathymetry
+    %b = Load("bathymetry", 0, 0)
+    %eta_new = Add(%h_new, %b)
+    Store("surface_elevation", %eta_new)
+}
+
+// ============================================================
+// INTERACTION: update_velocity_x
+// Target: Grid Cell
+// Updates X-velocity using momentum equation with pressure gradient and friction
+// ============================================================
+@interaction(update_velocity_x)
+func update_velocity_x() {
+    // Load state variables
+    %h = Load("water_height", 0, 0)
+    %u = Load("velocity_x", 0, 0)
+    %eta = Load("surface_elevation", 0, 0)
+    %flux_x = Load("flux_x", 0, 0)
+    %flux_y = Load("flux_y", 0, 0)
+    
+    %g = GlobalLoad("gravity")
+    %cf = GlobalLoad("friction_coeff")
+    %dt = GlobalLoad("dt")
+    
+    // Get neighbors for gradient computation
+    %eta_e = Load("surface_elevation", 1, 0)
+    %eta_w = Load("surface_elevation", -1, 0)
+    %eta_n = Load("surface_elevation", 0, 1)
+    %eta_s = Load("surface_elevation", 0, -1)
+    
+    %h_e = Load("water_height", 1, 0)
+    %h_w = Load("water_height", -1, 0)
+    %h_n = Load("water_height", 0, 1)
+    %h_s = Load("water_height", 0, -1)
+    
+    // Pressure gradient term: -g * h * d(eta)/dx
+    %deta_dx = Sub(%eta_e, %eta_w)
+    %h_avg_x = Mul(Add(%h_e, %h_w), 0.5)
+    %pressure_grad_x = Mul(Mul(%g, %h_avg_x), %deta_dx)
+    
+    // Advection term (simplified): -u * du/dx - v * du/dy
+    %du_dx = Sub(Load("velocity_x", 1, 0), Load("velocity_x", -1, 0))
+    %du_dy = Sub(Load("velocity_x", 0, 1), Load("velocity_x", 0, -1))
+    %u_e = Load("velocity_x", 1, 0)
+    %u_w = Load("velocity_x", -1, 0)
+    %u_n = Load("velocity_x", 0, 1)
+    %u_s = Load("velocity_x", 0, -1)
+    %u_avg_x = Mul(Add(%u_e, %u_w), 0.5)
+    %u_avg_y = Mul(Add(%u_n, %u_s), 0.5)
+    %v_avg_x = Mul(Add(Load("velocity_y", 1, 0), Load("velocity_y", -1, 0)), 0.5)
+    %v_avg_y = Mul(Add(Load("velocity_y", 0, 1), Load("velocity_y", 0, -1)), 0.5)
+    
+    %adv_x = Add(Mul(%u_avg_x, %du_dx), Mul(%v_avg_x, %du_dy))
+    
+    // Friction term: -C_f * u * sqrt(u²+v²) / h^(4/3)
+    %u_sq = Mul(%u, %u)
+    %v = Load("velocity_y", 0, 0)
+    %v_sq = Mul(%v, %v)
+    %speed = Sqrt(Add(%u_sq, %v_sq))
+    %h_pow = Pow(%h, 1.333333)  // h^(4/3)
+    %friction = Mul(Mul(%cf, %u), %speed)
+    %friction = Div(%friction, %h_pow)
+    
+    // Combine forces
+    %force_x = Sub(Add(Mul(%g, Mul(%h, %deta_dx)), %adv_x), %friction)
+    
+    // Update velocity: u_new = u + dt * force
+    %u_new = Add(%u, Mul(%dt, %force_x))
+    
+    Store("velocity_x", %u_new)
+}
+
+// ============================================================
+// INTERACTION: update_velocity_y
+// Target: Grid Cell
+// Updates Y-velocity using momentum equation with pressure gradient and friction
+// ============================================================
+@interaction(update_velocity_y)
+func update_velocity_y() {
+    // Load state variables
+    %h = Load("water_height", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    %eta = Load("surface_elevation", 0, 0)
+    %flux_x = Load("flux_x", 0, 0)
+    %flux_y = Load("flux_y", 0, 0)
+    
+    %g = GlobalLoad("gravity")
+    %cf = GlobalLoad("friction_coeff")
+    %dt = GlobalLoad("dt")
+    
+    // Get neighbors for gradient computation
+    %eta_e = Load("surface_elevation", 1, 0)
+    %eta_w = Load("surface_elevation", -1, 0)
+    %eta_n = Load("surface_elevation", 0, 1)
+    %eta_s = Load("surface_elevation", 0, -1)
+    
+    %h_e = Load("water_height", 1, 0)
+    %h_w = Load("water_height", -1, 0)
+    %h_n = Load("water_height", 0, 1)
+    %h_s = Load("water_height", 0, -1)
+    
+    // Pressure gradient term: -g * h * d(eta)/dy
+    %deta_dy = Sub(%eta_n, %eta_s)
+    %h_avg_y = Mul(Add(%h_n, %h_s), 0.5)
+    %pressure_grad_y = Mul(Mul(%g, %h_avg_y), %deta_dy)
+    
+    // Advection term (simplified)
+    %dv_dx = Sub(Load("velocity_y", 1, 0), Load("velocity_y", -1, 0))
+    %dv_dy = Sub(Load("velocity_y", 0, 1), Load("velocity_y", 0, -1))
+    %u = Load("velocity_x", 0, 0)
+    %u_avg_x = Mul(Add(Load("velocity_x", 1, 0), Load("velocity_x", -1, 0)), 0.5)
+    %u_avg_y = Mul(Add(Load("velocity_x", 0, 1), Load("velocity_x", 0, -1)), 0.5)
+    %v_e = Load("velocity_y", 1, 0)
+    %v_w = Load("velocity_y", -1, 0)
+    %v_n = Load("velocity_y", 0, 1)
+    %v_s = Load("velocity_y", 0, -1)
+    %v_avg_x = Mul(Add(%v_e, %v_w), 0.5)
+    %v_avg_y = Mul(Add(%v_n, %v_s), 0.5)
+    
+    %adv_y = Add(Mul(%u_avg_y, %dv_dx), Mul(%v_avg_y, %dv_dy))
+    
+    // Friction term
+    %u_sq = Mul(%u, %u)
+    %v_sq = Mul(%v, %v)
+    %speed = Sqrt(Add(%u_sq, %v_sq))
+    %h_pow = Pow(%h, 1.333333)
+    %friction = Mul(Mul(%cf, %v), %speed)
+    %friction = Div(%friction, %h_pow)
+    
+    // Combine forces
+    %force_y = Sub(Add(Mul(%g, Mul(%h, %deta_dy)), %adv_y), %friction)
+    
+    // Update velocity
+    %v_new = Add(%v, Mul(%dt, %force_y))
+    
+    Store("velocity_y", %v_new)
+}
+
+// ============================================================
+// INTERACTION: handle_wet_dry
+// Target: Grid Cell
+// Handles wet/dry interfaces to prevent negative water depths
+// Sets velocity to zero in dry cells
+// ============================================================
+@interaction(handle_wet_dry)
+func handle_wet_dry() {
+    // Load variables
+    %h = Load("water_height", 0, 0)
+    %u = Load("velocity_x", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    %b = Load("bathymetry", 0, 0)
+    
+    // Threshold for dry cell (small water depth)
+    %dry_threshold = 0.01
+    
+    // If water height is below threshold, set to zero and velocity to zero
+    %is_wet = Compare(%h, %dry_threshold, ">")
+    
+    // Clamp water height to minimum
+    %h_safe = Max(%h, 0.0)
+    
+    // Zero velocity in dry cells
+    %u_dry = Mul(%u, Select(%is_wet, 1.0, 0.0))
+    %v_dry = Mul(%v, Select(%is_wet, 1.0, 0.0))
+    
+    Store("water_height", %h_safe)
+    Store("velocity_x", %u_dry)
+    Store("velocity_y", %v_dry)
+}
+
+// ============================================================
+// INTERACTION: clamp_water_depth
+// Target: Grid Cell
+// Ensures water depth stays non-negative
+// ============================================================
+@interaction(clamp_water_depth)
+func clamp_water_depth() {
+    %h = Load("water_height", 0, 0)
+    
+    // Clamp to non-negative
+    %h_clamped = Max(%h, 0.0)
+    
+    Store("water_height", %h_clamped)
+}
+
+// ============================================================
+// INTERACTION: clamp_velocity
+// Target: Grid Cell
+// Ensures velocity stays within reasonable bounds
+// ============================================================
+@interaction(clamp_velocity)
+func clamp_velocity() {
+    %u = Load("velocity_x", 0, 0)
+    %v = Load("velocity_y", 0, 0)
+    
+    // Clamp to physical bounds
+    %u_clamped = Clamp(%u, -1000.0, 1000.0)
+    %v_clamped = Clamp(%v, -1000.0, 1000.0)
+    
+    Store("velocity_x", %u_clamped)
+    Store("velocity_y", %v_clamped)
+}

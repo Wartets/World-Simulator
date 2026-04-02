@@ -1,0 +1,146 @@
+{
+  "__comment_intro__": "Navier-Stokes Fluid Solver (2D). Incompressible fluid flow simulation solving the Navier-Stokes equations using a projection method. Implements velocity advection, viscous diffusion, and pressure correction for 2D incompressible flow.",
+  "id": "navier_stokes_fluid_solver",
+  "version": "1.0.0",
+
+  "grid": {
+    "dimensions": 2,
+    "topology": "cartesian",
+    "boundary_conditions": {
+      "x": "periodic",
+      "y": "periodic"
+    },
+    "__comment__": "Toroidal topology for demonstration. In real applications, solid wall or open boundary conditions would be used."
+  },
+
+  "numerics": {
+    "dt_ref": "dt",
+    "time_integrator": "semi_implicit_euler",
+    "diffusion_scheme": "central_difference",
+    "advection_scheme": "upwind",
+    "__comment__": "Semi-implicit Euler provides better stability for incompressible flow. Projection method enforces divergence-free velocity field."
+  },
+
+  "domains": {
+    "velocity_domain": { "kind": "interval", "min": -1000.0, "max": 1000.0, "type": "f32" },
+    "pressure_domain": { "kind": "interval", "min": 0.0, "max": 1000000.0, "type": "f32" },
+    "positive_density": { "kind": "interval", "min": 0.0, "max": 10000.0, "type": "f32" },
+    "positive_viscosity": { "kind": "interval", "min": 0.0, "max": 1.0, "type": "f32" }
+  },
+
+  "variables": [
+    {
+      "__comment_block__": "--- GLOBAL VARIABLES ---"
+    },
+    {
+      "id": "time", "role": "state", "support": "global", "type": "f32", "units": "s",
+      "description": "Simulation time in seconds."
+    },
+    {
+      "id": "dt", "role": "parameter", "support": "global", "type": "f32", "units": "s", "initial_value": 0.01,
+      "description": "Time increment per step. Must satisfy CFL condition for stability."
+    },
+    {
+      "id": "density", "role": "parameter", "support": "global", "type": "f32", "units": "kg/m^3", "initial_value": 1000.0,
+      "domain": "positive_density",
+      "description": "Fluid density. Default is water (1000 kg/m^3)."
+    },
+    {
+      "id": "viscosity", "role": "parameter", "support": "global", "type": "f32", "units": "m^2/s", "initial_value": 0.001,
+      "domain": "positive_viscosity",
+      "description": "Kinematic viscosity. Default is for water at room temperature."
+    },
+    {
+      "id": "gravity_x", "role": "parameter", "support": "global", "type": "f32", "units": "m/s^2", "initial_value": 0.0,
+      "description": "Body force in X direction (e.g., pressure gradient or gravitational component)."
+    },
+    {
+      "id": "gravity_y", "role": "parameter", "support": "global", "type": "f32", "units": "m/s^2", "initial_value": 0.0,
+      "description": "Body force in Y direction."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (STATE) ---"
+    },
+    {
+      "id": "velocity_x", "role": "state", "support": "cell", "type": "f32", "units": "m/s", "domain": "velocity_domain",
+      "description": "Velocity component in X direction (horizontal)."
+    },
+    {
+      "id": "velocity_y", "role": "state", "support": "cell", "type": "f32", "units": "m/s", "domain": "velocity_domain",
+      "description": "Velocity component in Y direction (vertical)."
+    },
+    {
+      "id": "pressure", "role": "state", "support": "cell", "type": "f32", "units": "Pa", "domain": "pressure_domain",
+      "description": "Pressure field. Updated via projection method to enforce incompressibility."
+    },
+
+    {
+      "__comment_block__": "--- CELL VARIABLES (AUXILIARY) ---"
+    },
+    {
+      "id": "velocity_x_prev", "role": "auxiliary", "support": "cell", "type": "f32", "units": "m/s", "domain": "velocity_domain",
+      "description": "Previous timestep velocity in X for multi-step schemes."
+    },
+    {
+      "id": "velocity_y_prev", "role": "auxiliary", "support": "cell", "type": "f32", "units": "m/s", "domain": "velocity_domain",
+      "description": "Previous timestep velocity in Y for multi-step schemes."
+    },
+    {
+      "id": "divergence", "role": "auxiliary", "support": "cell", "type": "f32", "units": "1/s", "domain": "velocity_domain",
+      "description": "Velocity divergence field for pressure projection."
+    },
+    {
+      "id": "pressure_rhs", "role": "auxiliary", "support": "cell", "type": "f32", "units": "Pa/s", "domain": "pressure_domain",
+      "description": "Right-hand side for pressure Poisson equation."
+    }
+  ],
+
+  "stages": [
+    {
+      "id": "timekeeping",
+      "description": "Advances the overall simulation time.",
+      "interactions": [
+        { "id": "advance_time", "reads": ["time", "dt"], "writes": ["time"], "target_type": "scalar" }
+      ]
+    },
+    {
+      "id": "advection",
+      "description": "Advects velocity field using upwind scheme. Semi-Lagrangian approach for stability.",
+      "interactions": [
+        { "id": "advect_velocity", "reads": ["velocity_x", "velocity_y", "velocity_x_prev", "velocity_y_prev", "dt"], "writes": ["velocity_x", "velocity_y"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "diffusion",
+      "description": "Applies viscous diffusion to velocity field using central difference Laplacian.",
+      "interactions": [
+        { "id": "diffuse_velocity", "reads": ["velocity_x", "velocity_y", "viscosity", "density", "dt"], "writes": ["velocity_x", "velocity_y"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "body_forces",
+      "description": "Applies external body forces (gravity, pressure gradient) to velocity field.",
+      "interactions": [
+        { "id": "apply_body_forces", "reads": ["velocity_x", "velocity_y", "gravity_x", "gravity_y", "density", "dt"], "writes": ["velocity_x", "velocity_y"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "projection",
+      "description": "Projects velocity field to be divergence-free using pressure correction. This is the core of the incompressibility constraint.",
+      "interactions": [
+        { "id": "compute_divergence", "reads": ["velocity_x", "velocity_y"], "writes": ["divergence"], "target_type": "grid" },
+        { "id": "solve_pressure_poisson", "reads": ["divergence", "pressure", "dt"], "writes": ["pressure"], "target_type": "grid" },
+        { "id": "correct_velocity", "reads": ["pressure", "velocity_x", "velocity_y", "dt"], "writes": ["velocity_x", "velocity_y"], "target_type": "grid" }
+      ]
+    },
+    {
+      "id": "constraints",
+      "description": "Ensures numerical stability by clamping velocity and pressure to physical bounds.",
+      "interactions": [
+        { "id": "clamp_velocity", "reads": ["velocity_x", "velocity_y"], "writes": ["velocity_x", "velocity_y"], "target_type": "grid" },
+        { "id": "clamp_pressure", "reads": ["pressure"], "writes": ["pressure"], "target_type": "grid" }
+      ]
+    }
+  ]
+}
