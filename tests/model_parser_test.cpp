@@ -276,6 +276,45 @@ void test_model_display_spec_loader() {
     std::cout << "Model display spec loader test passed.\n";
 }
 
+void test_model_binding_plan_uses_catalog_metadata() {
+    initialization::ModelVariableCatalog catalog;
+    catalog.modelId = "tag_driven_binding_fixture";
+
+    initialization::VariableDescriptor vegetation;
+    vegetation.id = "alpha_field";
+    vegetation.role = "state";
+    vegetation.support = "cell";
+    vegetation.type = "f32";
+    vegetation.tags = {"biomass", "vegetation"};
+
+    initialization::VariableDescriptor water;
+    water.id = "beta_field";
+    water.role = "state";
+    water.support = "cell";
+    water.type = "f32";
+    water.tags = {"surface", "water"};
+
+    catalog.variables = {vegetation, water};
+
+    initialization::InitializationRequest conwayRequest;
+    conwayRequest.type = InitialConditionType::Conway;
+    conwayRequest.allowKeywordFallback = false;
+    const auto conwayPlan = initialization::buildBindingPlan(catalog, conwayRequest);
+    assert(!conwayPlan.decisions.empty());
+    assert(conwayPlan.decisions[0].resolved);
+    assert(conwayPlan.decisions[0].variableId == "alpha_field");
+
+    initialization::InitializationRequest wavesRequest;
+    wavesRequest.type = InitialConditionType::Waves;
+    wavesRequest.allowKeywordFallback = false;
+    const auto wavesPlan = initialization::buildBindingPlan(catalog, wavesRequest);
+    assert(!wavesPlan.decisions.empty());
+    assert(wavesPlan.decisions[0].resolved);
+    assert(wavesPlan.decisions[0].variableId == "beta_field");
+
+    std::cout << "Model binding plan metadata-first test passed.\n";
+}
+
 int main() {
     test_unit_system();
     test_ir_parser();
@@ -284,5 +323,6 @@ int main() {
     test_model_parameter_controls_loader();
     test_model_execution_spec_loader();
     test_model_display_spec_loader();
+    test_model_binding_plan_uses_catalog_metadata();
     return 0;
 }

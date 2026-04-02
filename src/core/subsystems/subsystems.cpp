@@ -10,14 +10,6 @@ namespace ws {
 
 namespace {
 
-ModelTier tierFor(const ModelProfile& profile, const std::string& subsystemName) {
-    const auto it = profile.subsystemTiers.find(subsystemName);
-    if (it == profile.subsystemTiers.end()) {
-        throw std::runtime_error("Missing model tier for subsystem: " + subsystemName);
-    }
-    return it->second;
-}
-
 float clampRange(const float value, const float low, const float high) {
     return std::clamp(value, low, high);
 }
@@ -37,8 +29,7 @@ void GenerationSubsystem::initialize(const StateStore& stateStore, StateStore::W
 }
 
 void GenerationSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
-    if (tier == ModelTier::A) return;
+    (void)profile;
 
     const auto h_terrain = stateStore.getFieldHandle("terrain_elevation_h");
     const auto w_terrain = writeSession.getFieldHandle("terrain_elevation_h");
@@ -61,8 +52,7 @@ void GenerationSubsystem::step(const StateStore& stateStore, StateStore::WriteSe
             const float down  = (y + 1 < height) ? h_terrain_ptr[idx + W] : center;
             const float neighborhood = 0.25f * (left + right + up + down);
 
-            const float rate = (tier == ModelTier::B) ? 0.01f : 0.02f;
-            const float eroded = clampRange(center + rate * (neighborhood - center), 0.0f, 1.0f);
+            const float eroded = clampRange(center + 0.02f * (neighborhood - center), 0.0f, 1.0f);
             w_terrain_ptr[idx] = eroded;
         }
     }
@@ -79,7 +69,7 @@ void HydrologySubsystem::initialize(const StateStore& stateStore, StateStore::Wr
 }
 
 void HydrologySubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
+    (void)profile;
     double total = 0.0;
     
     const auto h_elevation = stateStore.getFieldHandle("terrain_elevation_h");
@@ -117,22 +107,17 @@ void HydrologySubsystem::step(const StateStore& stateStore, StateStore::WriteSes
             
             float next = priorWater + 0.015f * humidity - 0.010f * elevation + 0.003f * climate + eventPulse;
             
-            if (tier == ModelTier::B || tier == ModelTier::C) {
-                const float left  = (x > 0) ? h_water_ptr[idx - 1] : priorWater;
-                const float right = (x + 1 < width) ? h_water_ptr[idx + 1] : priorWater;
-                const float up    = (y > 0) ? h_water_ptr[idx - W] : priorWater;
-                const float down  = (y + 1 < height) ? h_water_ptr[idx + W] : priorWater;
-                const float neighborAvg = 0.25f * (left + right + up + down);
-                const float exchange = (tier == ModelTier::B) ? 0.08f : 0.16f;
-                next += exchange * (neighborAvg - priorWater);
-            }
-            
-            if (tier == ModelTier::C) {
-                const float wind = h_wind_ptr[idx];
-                const float windV = h_wind_v_ptr[idx];
-                next += 0.015f * clampRange(wind, -8.0f, 8.0f);
-                next += 0.010f * clampRange(windV, -8.0f, 8.0f);
-            }
+            const float left  = (x > 0) ? h_water_ptr[idx - 1] : priorWater;
+            const float right = (x + 1 < width) ? h_water_ptr[idx + 1] : priorWater;
+            const float up    = (y > 0) ? h_water_ptr[idx - W] : priorWater;
+            const float down  = (y + 1 < height) ? h_water_ptr[idx + W] : priorWater;
+            const float neighborAvg = 0.25f * (left + right + up + down);
+            next += 0.08f * (neighborAvg - priorWater);
+
+            const float wind = h_wind_ptr[idx];
+            const float windV = h_wind_v_ptr[idx];
+            next += 0.015f * clampRange(wind, -8.0f, 8.0f);
+            next += 0.010f * clampRange(windV, -8.0f, 8.0f);
             
             next = clampRange(next, 0.0f, 2.0f);
             w_water_ptr[idx] = next;
@@ -155,7 +140,7 @@ void TemperatureSubsystem::initialize(const StateStore&, StateStore::WriteSessio
 }
 
 void TemperatureSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t stepIndex) {
-    const ModelTier tier = tierFor(profile, name());
+    (void)profile;
     const float diurnal = static_cast<float>((stepIndex % 24u)) / 24.0f;
     
     // Check out Temperature Generation issue: "When displaying the temperature, it's the same everywhere."
@@ -199,20 +184,15 @@ void TemperatureSubsystem::step(const StateStore& stateStore, StateStore::WriteS
             const float terrainLapse = -5.0f * elevation;
             
             float next = prior + 0.05f * climate - 0.03f * std::fabs(wind) + eventDelta + 0.2f * (diurnal - 0.5f) + 0.01f * terrainLapse;
-            if (tier == ModelTier::B || tier == ModelTier::C) {
-                const float left  = (x > 0) ? h_prior_ptr[idx - 1] : prior;
-                const float right = (x + 1 < width) ? h_prior_ptr[idx + 1] : prior;
-                const float up    = (y > 0) ? h_prior_ptr[idx - W] : prior;
-                const float down  = (y + 1 < height) ? h_prior_ptr[idx + W] : prior;
-                const float neighborAvg = 0.25f * (left + right + up + down);
-                const float blend = (tier == ModelTier::B) ? 0.06f : 0.10f;
-                next += blend * (neighborAvg - prior);
-            }
-            
-            if (tier == ModelTier::C) {
-                const float humidity = h_humidity_ptr[idx];
-                next += 0.08f * (humidity - 0.5f);
-            }
+            const float left  = (x > 0) ? h_prior_ptr[idx - 1] : prior;
+            const float right = (x + 1 < width) ? h_prior_ptr[idx + 1] : prior;
+            const float up    = (y > 0) ? h_prior_ptr[idx - W] : prior;
+            const float down  = (y + 1 < height) ? h_prior_ptr[idx + W] : prior;
+            const float neighborAvg = 0.25f * (left + right + up + down);
+            next += 0.06f * (neighborAvg - prior);
+
+            const float humidity = h_humidity_ptr[idx];
+            next += 0.08f * (humidity - 0.5f);
             
             next = clampRange(next, 220.0f, 340.0f);
             w_temp_ptr[idx] = next;
@@ -230,7 +210,7 @@ void HumiditySubsystem::initialize(const StateStore&, StateStore::WriteSession& 
 }
 
 void HumiditySubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
+    (void)profile;
     
     const auto h_water = stateStore.getFieldHandle("surface_water_w");
     const auto h_temp = stateStore.getFieldHandle("temperature_T");
@@ -261,15 +241,11 @@ void HumiditySubsystem::step(const StateStore& stateStore, StateStore::WriteSess
             
             const float tempStress = clampRange((temp - 285.15f) / 40.0f, -1.0f, 1.0f);
             float next = 0.40f + 0.22f * water - 0.12f * tempStress + 0.08f * vegetation;
-            if (tier == ModelTier::B || tier == ModelTier::C) {
-                const float left = (x > 0) ? h_hum_ptr[idx - 1] : h_hum_ptr[idx];
-                next += 0.03f * left;
-            }
-            
-            if (tier == ModelTier::C) {
-                const float climate = h_cli_ptr[idx];
-                next += 0.06f * climate;
-            }
+            const float left = (x > 0) ? h_hum_ptr[idx - 1] : h_hum_ptr[idx];
+            next += 0.03f * left;
+
+            const float climate = h_cli_ptr[idx];
+            next += 0.06f * climate;
             
             next = clampRange(next, 0.0f, 1.0f);
             w_hum_ptr[idx] = next;
@@ -286,7 +262,7 @@ void WindSubsystem::initialize(const StateStore&, StateStore::WriteSession& writ
 }
 
 void WindSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
+    (void)profile;
     
     const auto h_temp = stateStore.getFieldHandle("temperature_T");
     const auto h_terrain = stateStore.getFieldHandle("terrain_elevation_h");
@@ -318,21 +294,14 @@ void WindSubsystem::step(const StateStore& stateStore, StateStore::WriteSession&
             const float northTerrain = (y > 0) ? h_terrain_ptr[idx - W] : h_terrain_ptr[idx];
             const float southTerrain = (y + 1 < height) ? h_terrain_ptr[idx + W] : h_terrain_ptr[idx];
             
-            float next = 0.02f * (eastTemp - westTemp) - 0.08f * (eastTerrain - westTerrain);
-            float nextV = 0.02f * (southTemp - northTemp) - 0.08f * (southTerrain - northTerrain);
-            if (tier == ModelTier::B || tier == ModelTier::C) {
-                next += 0.01f * (southTemp - northTemp);
-                nextV += 0.01f * (eastTemp - westTemp);
-            }
-            
-            if (tier == ModelTier::C) {
-                const float southHumidity = (y + 1 < height) ? h_hum_ptr[idx + W] : h_hum_ptr[idx];
-                const float northHumidity = (y > 0) ? h_hum_ptr[idx - W] : h_hum_ptr[idx];
-                const float eastHumidity = (x + 1 < width) ? h_hum_ptr[idx + 1] : h_hum_ptr[idx];
-                const float westHumidity = (x > 0) ? h_hum_ptr[idx - 1] : h_hum_ptr[idx];
-                next += 0.08f * (southHumidity - northHumidity);
-                nextV += 0.08f * (eastHumidity - westHumidity);
-            }
+            float next = 0.02f * (eastTemp - westTemp) - 0.08f * (eastTerrain - westTerrain) + 0.01f * (southTemp - northTemp);
+            float nextV = 0.02f * (southTemp - northTemp) - 0.08f * (southTerrain - northTerrain) + 0.01f * (eastTemp - westTemp);
+            const float southHumidity = (y + 1 < height) ? h_hum_ptr[idx + W] : h_hum_ptr[idx];
+            const float northHumidity = (y > 0) ? h_hum_ptr[idx - W] : h_hum_ptr[idx];
+            const float eastHumidity = (x + 1 < width) ? h_hum_ptr[idx + 1] : h_hum_ptr[idx];
+            const float westHumidity = (x > 0) ? h_hum_ptr[idx - 1] : h_hum_ptr[idx];
+            next += 0.08f * (southHumidity - northHumidity);
+            nextV += 0.08f * (eastHumidity - westHumidity);
             
             w_wind_ptr[idx] = clampRange(next, -8.0f, 8.0f);
             w_wind_v_ptr[idx] = clampRange(nextV, -8.0f, 8.0f);
@@ -349,8 +318,8 @@ void ClimateSubsystem::initialize(const StateStore&, StateStore::WriteSession& w
 }
 
 void ClimateSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
-    
+    (void)profile;
+
     const auto h_temp = stateStore.getFieldHandle("temperature_T");
     const auto h_hum = stateStore.getFieldHandle("humidity_q");
     const auto h_wind = stateStore.getFieldHandle("wind_u");
@@ -379,23 +348,14 @@ void ClimateSubsystem::step(const StateStore& stateStore, StateStore::WriteSessi
             const float wind = h_wind_ptr[idx];
             
             const float thermalTerm = clampRange((temp - 285.15f) / 20.0f, -3.0f, 3.0f);
+            const float left  = (x > 0) ? h_cli_ptr[idx - 1] : h_cli_ptr[idx];
+            const float right = (x + 1 < width) ? h_cli_ptr[idx + 1] : h_cli_ptr[idx];
+            const float up    = (y > 0) ? h_cli_ptr[idx - W] : h_cli_ptr[idx];
+            const float down  = (y + 1 < height) ? h_cli_ptr[idx + W] : h_cli_ptr[idx];
+            const float neighborhood = 0.25f * (left + right + up + down);
             float next = 0.50f * thermalTerm + 0.80f * (humidity - 0.5f) - 0.12f * std::fabs(wind);
-            
-            if (tier == ModelTier::B || tier == ModelTier::C) {
-                const float left  = (x > 0) ? h_cli_ptr[idx - 1] : h_cli_ptr[idx];
-                const float right = (x + 1 < width) ? h_cli_ptr[idx + 1] : h_cli_ptr[idx];
-                const float up    = (y > 0) ? h_cli_ptr[idx - W] : h_cli_ptr[idx];
-                const float down  = (y + 1 < height) ? h_cli_ptr[idx + W] : h_cli_ptr[idx];
-                const float neighborhood = 0.25f * (left + right + up + down);
-                const float localWeight = (tier == ModelTier::B) ? 0.85f : 0.70f;
-                const float neighborWeight = 1.0f - localWeight;
-                next = localWeight * next + neighborWeight * neighborhood;
-            }
-            
-            if (tier == ModelTier::C) {
-                const float water = h_water_ptr[idx];
-                next += 0.12f * (water - 0.5f);
-            }
+            next = 0.85f * next + 0.15f * neighborhood;
+            next += 0.12f * (h_water_ptr[idx] - 0.5f);
             
             w_cli_ptr[idx] = clampRange(next, -4.0f, 4.0f);
         }
@@ -412,8 +372,8 @@ void SoilSubsystem::initialize(const StateStore&, StateStore::WriteSession& writ
 }
 
 void SoilSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
-    
+    (void)profile;
+
     const auto h_water = stateStore.getFieldHandle("surface_water_w");
     const auto h_temp = stateStore.getFieldHandle("temperature_T");
     const auto h_fert = stateStore.getFieldHandle("fertility_phi");
@@ -439,17 +399,10 @@ void SoilSubsystem::step(const StateStore& stateStore, StateStore::WriteSession&
             const float temp = h_temp_ptr[idx];
             
             const float thermalSuitability = 1.0f - std::fabs((temp - 290.15f) / 35.0f);
+            const float down = (y + 1 < height) ? h_fert_ptr[idx + W] : h_fert_ptr[idx];
             float next = 0.35f + 0.30f * water + 0.30f * clampRange(thermalSuitability, 0.0f, 1.0f);
-            
-            if (tier == ModelTier::B || tier == ModelTier::C) {
-                const float down = (y + 1 < height) ? h_fert_ptr[idx + W] : h_fert_ptr[idx];
-                next += 0.05f * down;
-            }
-            
-            if (tier == ModelTier::C) {
-                const float climate = h_cli_ptr[idx];
-                next -= 0.04f * std::fabs(climate);
-            }
+            next += 0.05f * down;
+            next -= 0.04f * std::fabs(h_cli_ptr[idx]);
             
             w_fert_ptr[idx] = clampRange(next, 0.0f, 1.0f);
         }
@@ -465,8 +418,8 @@ void VegetationSubsystem::initialize(const StateStore&, StateStore::WriteSession
 }
 
 void VegetationSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
-    
+    (void)profile;
+
     const auto h_fert = stateStore.getFieldHandle("fertility_phi");
     const auto h_hum = stateStore.getFieldHandle("humidity_q");
     const auto h_temp = stateStore.getFieldHandle("temperature_T");
@@ -498,16 +451,11 @@ void VegetationSubsystem::step(const StateStore& stateStore, StateStore::WriteSe
             const float resources = h_res_ptr[idx];
             
             const float thermalSuitability = 1.0f - std::fabs((temperature - 289.15f) / 40.0f);
+            const float east = (x + 1 < width) ? h_veg_ptr[idx + 1] : h_veg_ptr[idx];
+            const float water = h_water_ptr[idx];
             float growth = 0.20f * fertility + 0.20f * humidity + 0.10f * resources + 0.25f * clampRange(thermalSuitability, 0.0f, 1.0f);
-            if (tier == ModelTier::B || tier == ModelTier::C) {
-                const float east = (x + 1 < width) ? h_veg_ptr[idx + 1] : h_veg_ptr[idx];
-                growth += 0.08f * east;
-            }
-            
-            if (tier == ModelTier::C) {
-                const float water = h_water_ptr[idx];
-                growth += 0.12f * water;
-            }
+            growth += 0.08f * east;
+            growth += 0.12f * water;
             
             w_veg_ptr[idx] = clampRange(growth, 0.0f, 1.0f);
         }
@@ -524,7 +472,7 @@ void ResourcesSubsystem::initialize(const StateStore&, StateStore::WriteSession&
 }
 
 void ResourcesSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
+    (void)profile;
     double totalResources = 0.0;
     
     const auto h_fert = stateStore.getFieldHandle("fertility_phi");
@@ -554,16 +502,11 @@ void ResourcesSubsystem::step(const StateStore& stateStore, StateStore::WriteSes
             const float vegetation = h_veg_ptr[idx];
             const float climate = h_cli_ptr[idx];
             
+            const float up = (y > 0) ? h_res_ptr[idx - W] : h_res_ptr[idx];
+            const float water = h_water_ptr[idx];
             float next = 0.25f + 0.35f * fertility + 0.25f * vegetation - 0.04f * std::fabs(climate);
-            if (tier == ModelTier::B || tier == ModelTier::C) {
-                const float up = (y > 0) ? h_res_ptr[idx - W] : h_res_ptr[idx];
-                next += 0.06f * up;
-            }
-            
-            if (tier == ModelTier::C) {
-                const float water = h_water_ptr[idx];
-                next += 0.10f * water;
-            }
+            next += 0.06f * up;
+            next += 0.10f * water;
             
             next = clampRange(next, 0.0f, 2.5f);
             w_res_ptr[idx] = next;
@@ -587,11 +530,11 @@ void EventSubsystem::initialize(const StateStore&, StateStore::WriteSession& wri
 }
 
 void EventSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, const std::uint64_t) {
-    const ModelTier tier = tierFor(profile, name());
+    (void)profile;
 
-    const float retention = (tier == ModelTier::A) ? 0.35f : ((tier == ModelTier::B) ? 0.55f : 0.70f);
-    const float exogenousScale = (tier == ModelTier::A) ? 0.03f : ((tier == ModelTier::B) ? 0.06f : 0.09f);
-    const float coolingScale = (tier == ModelTier::A) ? -0.15f : ((tier == ModelTier::B) ? -0.30f : -0.45f);
+    const float retention = 0.55f;
+    const float exogenousScale = 0.06f;
+    const float coolingScale = -0.30f;
     
     const auto h_event = stateStore.getFieldHandle("event_signal_e");
     const auto h_temp = stateStore.getFieldHandle("temperature_T");
@@ -622,14 +565,10 @@ void EventSubsystem::step(const StateStore& stateStore, StateStore::WriteSession
             const float humidity = h_hum_ptr[idx];
 
             float trigger = 0.0f;
-            if (tier == ModelTier::A) {
-                if (temperature > 303.15f && humidity < 0.25f) {
-                    trigger = 0.12f;
-                }
-            } else if (tier == ModelTier::B) {
-                if (temperature > 301.15f && humidity < 0.35f) {
-                    trigger = 0.14f + 0.15f * clampRange((0.35f - humidity), 0.0f, 1.0f);
-                }
+            if (temperature > 303.15f && humidity < 0.25f) {
+                trigger = 0.12f;
+            } else if (temperature > 301.15f && humidity < 0.35f) {
+                trigger = 0.14f + 0.15f * clampRange((0.35f - humidity), 0.0f, 1.0f);
             } else if (temperature > 299.15f && humidity < 0.45f) {
                 trigger = 0.20f + 0.20f * clampRange((0.45f - humidity), 0.0f, 1.0f);
             }
