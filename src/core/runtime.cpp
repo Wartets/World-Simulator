@@ -1221,6 +1221,8 @@ bool Runtime::validateDeterminism(const std::vector<std::uint64_t>& referenceHas
 }
 
 void Runtime::allocateCanonicalFields() {
+    std::uint32_t nextRuntimeVariableId = 1000u;
+
     if (config_.modelExecutionSpec.has_value()) {
         std::vector<std::string> variableNames = config_.modelExecutionSpec->cellScalarVariableIds;
         variableNames.erase(
@@ -1231,42 +1233,17 @@ void Runtime::allocateCanonicalFields() {
         std::sort(variableNames.begin(), variableNames.end());
         variableNames.erase(std::unique(variableNames.begin(), variableNames.end()), variableNames.end());
 
-        std::uint32_t nextRuntimeVariableId = 1000u;
         for (const auto& variableName : variableNames) {
             if (stateStore_.hasField(variableName)) {
                 continue;
             }
             stateStore_.allocateScalarField(VariableSpec{nextRuntimeVariableId++, variableName});
         }
-        for (const auto& internalVariableName : std::vector<std::string>{"bootstrap_marker", "seed_probe"}) {
-            if (!stateStore_.hasField(internalVariableName)) {
-                stateStore_.allocateScalarField(VariableSpec{nextRuntimeVariableId++, internalVariableName});
-            }
-        }
-        return;
     }
 
-    const std::vector<VariableSpec> legacySpecs = {
-        {0, "terrain_elevation_h"},
-        {1, "surface_water_w"},
-        {2, "temperature_T"},
-        {3, "humidity_q"},
-        {4, "wind_u"},
-        {5, "climate_index_c"},
-        {6, "fertility_phi"},
-        {7, "vegetation_v"},
-        {8, "resource_stock_r"},
-        {9, "event_signal_e"},
-        {10, "event_water_delta"},
-        {11, "event_temperature_delta"},
-        {12, "bootstrap_marker"},
-        {13, "seed_probe"},
-        {14, "wind_v"}
-    };
-
-    for (const auto& spec : legacySpecs) {
-        if (!stateStore_.hasField(spec.name)) {
-            stateStore_.allocateScalarField(spec);
+    for (const auto& internalVariableName : std::vector<std::string>{"bootstrap_marker", "seed_probe"}) {
+        if (!stateStore_.hasField(internalVariableName)) {
+            stateStore_.allocateScalarField(VariableSpec{nextRuntimeVariableId++, internalVariableName});
         }
     }
 }
