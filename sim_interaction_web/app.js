@@ -117,19 +117,53 @@ function bindDetailActions() {
 function renderOverview() {
     const interactions = appState.data?.interactions ?? [];
     const nodes = appState.data?.nodes ?? [];
+    const metadata = appState.data?.metadata ?? {};
     const reads = interactions.filter((interaction) => interaction.mode === "read").length;
     const writes = interactions.filter((interaction) => interaction.mode === "write").length;
 
-    selectionTitle.textContent = "Overview";
-    selectionSubtitle.textContent = "Choose a node or connection to inspect its details.";
+    selectionTitle.textContent = metadata.name || "Overview";
+    selectionSubtitle.textContent = metadata.description || "Choose a node or connection to inspect its details.";
+
+    // Build model info cards
+    let modelInfoCards = '';
+    if (metadata.author) {
+        modelInfoCards += createSummaryCard("Author", metadata.author);
+    }
+    if (metadata.creation_date) {
+        modelInfoCards += createSummaryCard("Created", metadata.creation_date);
+    }
+    if (metadata.version) {
+        modelInfoCards += createSummaryCard("Version", metadata.version);
+    }
+
+    // Build tags display
+    let tagsHtml = '';
+    if (metadata.tags && metadata.tags.length > 0) {
+        tagsHtml = `
+            <section class="detail-section">
+                <h3>Tags</h3>
+                <div class="meta-pills">
+                    ${metadata.tags.map(tag => `<span class="pill">${escapeHtml(tag)}</span>`).join('')}
+                </div>
+            </section>
+        `;
+    }
 
     detailContent.innerHTML = `
         <div class="summary-grid">
+            ${modelInfoCards}
             ${createSummaryCard("Total nodes", nodes.length)}
             ${createSummaryCard("Total interactions", interactions.length)}
             ${createSummaryCard("Read edges", reads)}
             ${createSummaryCard("Write edges", writes)}
         </div>
+
+        ${tagsHtml}
+
+        <section class="detail-section">
+            <h3>Model Description</h3>
+            <p>${escapeHtml(metadata.description || 'No description available.')}</p>
+        </section>
 
         <section class="detail-section">
             <h3>How to use this view</h3>
@@ -161,6 +195,21 @@ function renderNodeDetails(nodeData) {
     const incomingTitle = node.group === "subsystem" ? "Incoming dependencies" : "Written by";
     const outgoingTitle = node.group === "subsystem" ? "Outgoing effects" : "Used by";
 
+    // Build additional info for nodes (role, type, units, description)
+    let additionalInfo = '';
+    if (node.role) {
+        additionalInfo += createMetaPill("Role", node.role);
+    }
+    if (node.support) {
+        additionalInfo += createMetaPill("Support", node.support);
+    }
+    if (node.type) {
+        additionalInfo += createMetaPill("Type", node.type);
+    }
+    if (node.units) {
+        additionalInfo += createMetaPill("Units", node.units);
+    }
+
     selectionTitle.textContent = formatDisplayLabel(node.label);
     selectionSubtitle.textContent = `${typeLabel}.`;
 
@@ -169,7 +218,15 @@ function renderNodeDetails(nodeData) {
             ${createMetaPill("Type", typeLabel)}
             ${createMetaPill("Incoming", incoming.length)}
             ${createMetaPill("Outgoing", outgoing.length)}
+            ${additionalInfo}
         </div>
+
+        ${node.description ? `
+        <section class="detail-section">
+            <h3>Description</h3>
+            <p>${escapeHtml(node.description)}</p>
+        </section>
+        ` : ''}
 
         <div class="summary-grid">
             ${createSummaryCard("Linked interactions", incoming.length + outgoing.length)}

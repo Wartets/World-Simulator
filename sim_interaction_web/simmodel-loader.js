@@ -119,6 +119,10 @@ const SimModelLoader = {
             id: m.id,
             name: m.name || m.id,
             description: m.description || '',
+            author: m.author || '',
+            creation_date: m.creation_date || '',
+            tags: m.tags || [],
+            runtime_field_aliases: m.runtime_field_aliases || {},
             directory: m.directory
         }));
     },
@@ -351,7 +355,15 @@ const SimModelLoader = {
                 description: metadata.description || '',
                 version: modelData.version || '1.0.0',
                 author: metadata.author || '',
-                tags: metadata.tags || []
+                tags: metadata.tags || [],
+                creation_date: metadata.creation_date || '',
+                runtime_field_aliases: metadata.runtime_field_aliases || {},
+                // Include rich model information
+                grid: modelData.grid || {},
+                numerics: modelData.numerics || {},
+                domains: modelData.domains || {},
+                variables: modelData.variables || [],
+                stages: modelData.stages || []
             }
         };
     },

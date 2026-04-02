@@ -82,6 +82,11 @@ function listModels() {
                         modelInfo.description = metadata.description || '';
                         modelInfo.tags = metadata.tags || [];
                         modelInfo.author = metadata.author || '';
+                        modelInfo.creation_date = metadata.creation_date || '';
+                        modelInfo.runtime_field_aliases = metadata.runtime_field_aliases || {};
+                        
+                        // Add any additional metadata fields
+                        if (metadata.id) modelInfo.id = metadata.id;
                     } catch (error) {
                         console.warn(`Error reading ${metadataPath}:`, error.message);
                     }
