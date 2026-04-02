@@ -97,6 +97,16 @@ struct ParameterControl {
     std::string units = "1";
 };
 
+struct ModelExecutionSpec {
+    std::vector<std::string> cellScalarVariableIds;
+    std::vector<std::string> stageOrder;
+    std::vector<std::string> conservedVariables;
+};
+
+struct ModelDisplaySpec {
+    std::unordered_map<std::string, std::vector<std::string>> fieldTags;
+};
+
 struct RuntimeConfig {
     std::uint64_t seed = 1;
     GridSpec grid{16, 16};
@@ -110,6 +120,8 @@ struct RuntimeConfig {
     ProfileResolverInput profileInput{};
     InitialConditionConfig initialConditions{};
     std::vector<ParameterControl> modelParameterControls{};
+    std::optional<ModelExecutionSpec> modelExecutionSpec{};
+    std::optional<ModelDisplaySpec> modelDisplaySpec{};
 };
 
 enum class PerturbationType : std::uint8_t {

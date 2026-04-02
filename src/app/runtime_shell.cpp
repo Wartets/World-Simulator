@@ -3,6 +3,7 @@
 #include "ws/app/checkpoint_io.hpp"
 #include "ws/app/profile_store.hpp"
 #include "ws/app/shell_support.hpp"
+#include "ws/app/world_store.hpp"
 #include "ws/core/runtime.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
 
@@ -19,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ws::app {
@@ -51,16 +53,18 @@ private:
     void printBanner() const {
         std::cout << "World Simulator Runtime Shell\n";
         std::cout << "Type 'help' for commands; type 'dashboard' for session overview.\n";
+        std::cout << "Model selection is scoped with 'model' and 'world' commands.\n";
     }
 
     void printPrompt() const {
         if (!runtime_ || runtime_->status() != RuntimeStatus::Running) {
-            std::cout << "world-sim[stopped]> " << std::flush;
+            std::cout << "world-sim[model=" << currentModelKey() << ",stopped]> " << std::flush;
             return;
         }
 
         const auto& snapshot = runtime_->snapshot();
         std::cout << "world-sim[step=" << snapshot.stateHeader.stepIndex
+                  << ",model=" << currentModelKey()
                   << ",tier=" << toString(launchConfig_.tier)
                   << "]> " << std::flush;
     }
@@ -105,6 +109,12 @@ private:
             << "  set init <terrain|conway|gray_scott|waves|blank>  Configure initialization mode\n"
             << "  preset                               List available built-in presets\n"
             << "  preset <name>                        Apply built-in preset (requires restart)\n"
+            << "  model                                Show current model scope and catalog\n"
+            << "  model list                           List available models in the workspace\n"
+            << "  model current                        Show the active model key\n"
+            << "  model select <id|path>               Select active model scope\n"
+            << "  world list [--model <id|path>]       List worlds for a model scope\n"
+            << "  world open --model <id|path> <name>  Open a world for a model scope\n"
             << "  profile list                         List saved runtime profiles\n"
             << "  profile save <name>                  Persist current launch configuration\n"
             << "  profile load <name>                  Load saved launch configuration\n"
@@ -204,6 +214,14 @@ private:
             }
             if (command == "summary") {
                 executeSummaryCommand(input);
+                return true;
+            }
+            if (command == "model") {
+                executeModelCommand(input);
+                return true;
+            }
+            if (command == "world") {
+                executeWorldCommand(input);
                 return true;
             }
             if (command == "fields") {
@@ -590,6 +608,125 @@ private:
         }
     }
 
+    void executeModelCommand(std::istringstream& input) {
+        std::string action;
+        input >> action;
+        action = toLower(action);
+
+        if (action.empty() || action == "list") {
+            const auto models = listAvailableModels();
+            std::cout << "model_current key=" << currentModelKey() << "\n";
+            if (models.empty()) {
+                std::cout << "models=empty\n";
+                return;
+            }
+
+            std::cout << "models:\n";
+            for (const auto& model : models) {
+                std::cout << "  - " << model.key
+                          << " path=" << model.path.string()
+                          << " kind=" << (model.isDirectory ? "directory" : "archive")
+                          << "\n";
+            }
+            return;
+        }
+
+        if (action == "current") {
+            std::cout << "model_current key=" << currentModelKey() << "\n";
+            return;
+        }
+
+        if (action == "select") {
+            std::string token;
+            input >> token;
+            if (token.empty()) {
+                throw std::invalid_argument("usage: model select <id|path>");
+            }
+
+            const std::string modelKey = normalizeModelKey(token);
+            if (modelKey.empty()) {
+                throw std::invalid_argument("model selection resolved to an empty key");
+            }
+
+            selectedModelKey_ = modelKey;
+            std::cout << "model_selected key=" << selectedModelKey_ << "\n";
+            return;
+        }
+
+        throw std::invalid_argument("usage: model <list|current|select> [id|path]");
+    }
+
+    void executeWorldCommand(std::istringstream& input) {
+        std::string action;
+        input >> action;
+        action = toLower(action);
+
+        if (action.empty() || action == "list") {
+            const auto [modelKey, worldName] = parseWorldCommandScope(input);
+            if (!worldName.empty()) {
+                throw std::invalid_argument("usage: world list [--model <id|path>]");
+            }
+
+            std::string message;
+            const auto records = worldStore_.list(modelKey, message);
+            std::cout << "worlds model_key=" << modelKey << " count=" << records.size() << "\n";
+            if (!message.empty()) {
+                std::cout << "worlds_message " << message << "\n";
+            }
+            for (const auto& record : records) {
+                std::cout << "  - " << record.worldName
+                          << " profile=" << (record.hasProfile ? "yes" : "no")
+                          << " checkpoint=" << (record.hasCheckpoint ? "yes" : "no")
+                          << " seed=" << record.seed
+                          << " step=" << record.stepIndex
+                          << " temporal=" << record.temporalPolicy
+                          << " init=" << record.initialConditionMode
+                          << "\n";
+            }
+            return;
+        }
+
+        if (action == "open") {
+            const auto [modelKey, worldName] = parseWorldCommandScope(input);
+            if (worldName.empty()) {
+                throw std::invalid_argument("usage: world open --model <id|path> <name>");
+            }
+
+            std::string message;
+            try {
+                launchConfig_ = worldProfileStore_.load(worldName, modelKey);
+            } catch (const std::exception& exception) {
+                throw std::runtime_error(std::string("world_open_failed error=") + exception.what());
+            }
+
+            selectedModelKey_ = modelKey;
+            startSession();
+
+            const auto checkpointPath = worldStore_.checkpointPathFor(worldName, modelKey);
+            const bool hasCheckpoint = std::filesystem::exists(checkpointPath);
+            if (hasCheckpoint) {
+                try {
+                    const auto checkpoint = app::readCheckpointFile(checkpointPath);
+                    runtime_->resetToCheckpoint(checkpoint);
+                    checkpoints_.clear();
+                    std::cout << "world_opened name=" << worldName
+                              << " model_key=" << modelKey
+                              << " source=checkpoint\n";
+                    return;
+                } catch (const std::exception& exception) {
+                    throw std::runtime_error(std::string("world_open_failed checkpoint_restore_error=") + exception.what());
+                }
+            }
+
+            std::cout << "world_opened name=" << worldName
+                      << " model_key=" << modelKey
+                      << " source=profile\n";
+            return;
+        }
+
+        throw std::invalid_argument("usage: world <list|open>");
+    }
+
     void executeSampleCommand(std::istringstream& input) const {
         requireRuntime("sample");
 
@@ -954,6 +1091,7 @@ private:
         std::cout << "run_identity_hash : " << snapshot.runSignature.identityHash() << "\n";
         std::cout << "step_index        : " << snapshot.stateHeader.stepIndex << "\n";
         std::cout << "state_hash        : " << snapshot.stateHash << "\n";
+        std::cout << "model_key         : " << currentModelKey() << "\n";
         std::cout << "reproducibility   : " << toString(snapshot.reproducibilityClass) << "\n";
         std::cout << "grid              : " << launchConfig_.grid.width << 'x' << launchConfig_.grid.height << "\n";
         std::cout << "tier / temporal   : " << toString(launchConfig_.tier)
@@ -980,6 +1118,7 @@ private:
 
     void printConfig() const {
         std::cout << "config"
+                  << " model_key=" << currentModelKey()
                   << " seed=" << launchConfig_.seed
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                   << " tier=" << toString(launchConfig_.tier)
@@ -1008,10 +1147,49 @@ private:
         const auto& snapshot = runtime_->snapshot();
         std::cout << "session_started"
                   << " run_identity_hash=" << snapshot.runSignature.identityHash()
+                  << " model_key=" << currentModelKey()
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
                   << "\n";
+    }
+
+    std::pair<std::string, std::string> parseWorldCommandScope(std::istringstream& input) const {
+        std::string modelKey = currentModelKey();
+        std::string worldName;
+
+        std::vector<std::string> tokens;
+        std::string token;
+        while (input >> token) {
+            tokens.push_back(token);
+        }
+
+        for (std::size_t i = 0; i < tokens.size(); ++i) {
+            const std::string& current = tokens[i];
+            if (current == "--model" && (i + 1u) < tokens.size()) {
+                modelKey = normalizeModelKey(tokens[++i]);
+                continue;
+            }
+            if (current.rfind("--model=", 0) == 0) {
+                modelKey = normalizeModelKey(current.substr(8));
+                continue;
+            }
+            if (worldName.empty()) {
+                worldName = current;
+            } else {
+                throw std::invalid_argument("unexpected argument: " + current);
+            }
+        }
+
+        if (modelKey.empty()) {
+            modelKey = "legacy";
+        }
+
+        return {modelKey, worldName};
+    }
+
+    std::string currentModelKey() const {
+        return selectedModelKey_.empty() ? std::string{"legacy"} : selectedModelKey_;
     }
 
     void stopRuntime() {
@@ -1029,10 +1207,13 @@ private:
     }
 
     LaunchConfig launchConfig_{};
+    std::string selectedModelKey_{"legacy"};
     std::unique_ptr<Runtime> runtime_;
     std::map<std::string, RuntimeCheckpoint, std::less<>> checkpoints_;
     std::vector<std::string> commandHistory_;
     ProfileStore profileStore_{};
+    ProfileStore worldProfileStore_{std::filesystem::path("checkpoints") / "world_profiles"};
+    WorldStore worldStore_{};
 };
 
 } // namespace

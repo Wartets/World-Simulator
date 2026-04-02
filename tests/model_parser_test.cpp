@@ -11,6 +11,7 @@
 #include <fstream>
 #include <cstring>
 #include <iterator>
+#include <nlohmann/json.hpp>
 
 using namespace ws;
 
@@ -103,6 +104,21 @@ static bool create_model_archive(
     return ok;
 }
 
+static bool copy_directory_recursive(const std::filesystem::path& source, const std::filesystem::path& destination) {
+    std::error_code ec;
+    std::filesystem::create_directories(destination, ec);
+    if (ec) {
+        return false;
+    }
+
+    std::filesystem::copy(
+        source,
+        destination,
+        std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing,
+        ec);
+    return !ec;
+}
+
 void test_model_variable_catalog_loader() {
     const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
     if (!std::filesystem::exists(modelDir)) {
@@ -158,11 +174,115 @@ void test_model_parameter_controls_loader() {
     assert(it->maxValue == 1.0f);
 }
 
+void test_model_execution_spec_loader() {
+    const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping model execution spec loader test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    ModelExecutionSpec executionSpec;
+    std::string message;
+    const bool ok = initialization::loadModelExecutionSpec(modelDir, executionSpec, message);
+    assert(ok);
+    assert(!executionSpec.cellScalarVariableIds.empty());
+    assert(!executionSpec.stageOrder.empty());
+    assert(executionSpec.conservedVariables.empty());
+
+    const auto tempIt = std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "temperature");
+    assert(tempIt != executionSpec.cellScalarVariableIds.end());
+
+    const auto windIt = std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "wind_velocity");
+    assert(windIt == executionSpec.cellScalarVariableIds.end());
+
+    const auto stageIt = std::find(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end(), "atmosphere");
+    assert(stageIt != executionSpec.stageOrder.end());
+}
+
+void test_model_display_spec_loader() {
+    const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping model display spec loader test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_model_display_test";
+    const auto tempModel = tempRoot / "tagged_model.simmodel";
+    std::filesystem::remove_all(tempRoot);
+    if (!copy_directory_recursive(modelDir, tempModel)) {
+        std::cerr << "Failed to create temporary model directory for display-spec test.\n";
+        assert(false);
+    }
+
+    try {
+        const auto modelPath = tempModel / "model.json";
+        std::ifstream in(modelPath);
+        nlohmann::json model = nlohmann::json::parse(in);
+
+        if (model.contains("variables") && model["variables"].is_array()) {
+            for (auto& variable : model["variables"]) {
+                if (!variable.is_object() || !variable.contains("id") || !variable["id"].is_string()) {
+                    continue;
+                }
+                const std::string id = variable["id"].get<std::string>();
+                if (id == "water_height") {
+                    variable["display_tags"] = {"water", "terrain"};
+                } else if (id == "wind_velocity") {
+                    variable["display_tags"] = {"vector_x", "vector_y"};
+                } else if (id == "soil_water_fraction") {
+                    variable["display_tags"] = {"moisture"};
+                }
+            }
+        }
+
+        model["display_channels"] = {
+            {"terrain", {"water_height"}},
+            {"wind_u", {"wind_velocity"}},
+            {"wind_v", {"wind_velocity"}},
+            {"moisture", {"soil_water_fraction"}}
+        };
+
+        std::ofstream out(modelPath, std::ios::trunc);
+        out << model.dump(2);
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to prepare temporary model display-spec fixture: " << e.what() << "\n";
+        assert(false);
+    }
+
+    ModelDisplaySpec displaySpec;
+    std::string message;
+    const bool ok = initialization::loadModelDisplaySpec(tempModel, displaySpec, message);
+    assert(ok);
+    assert(!displaySpec.fieldTags.empty());
+    assert(displaySpec.fieldTags.size() >= 3u);
+
+    const auto waterIt = displaySpec.fieldTags.find("water_height");
+    assert(waterIt != displaySpec.fieldTags.end());
+    assert(std::find(waterIt->second.begin(), waterIt->second.end(), "terrain") != waterIt->second.end());
+    assert(std::find(waterIt->second.begin(), waterIt->second.end(), "water") != waterIt->second.end());
+
+    const auto windIt = displaySpec.fieldTags.find("wind_velocity");
+    assert(windIt != displaySpec.fieldTags.end());
+    assert(std::find(windIt->second.begin(), windIt->second.end(), "vector_x") != windIt->second.end());
+    assert(std::find(windIt->second.begin(), windIt->second.end(), "vector_y") != windIt->second.end());
+    assert(std::find(windIt->second.begin(), windIt->second.end(), "wind_u") != windIt->second.end());
+    assert(std::find(windIt->second.begin(), windIt->second.end(), "wind_v") != windIt->second.end());
+
+    const auto soilIt = displaySpec.fieldTags.find("soil_water_fraction");
+    assert(soilIt != displaySpec.fieldTags.end());
+    assert(std::find(soilIt->second.begin(), soilIt->second.end(), "moisture") != soilIt->second.end());
+
+    std::filesystem::remove_all(tempRoot);
+    std::cout << "Model display spec loader test passed.\n";
+}
+
 int main() {
     test_unit_system();
     test_ir_parser();
     test_model_parser();
     test_model_variable_catalog_loader();
     test_model_parameter_controls_loader();
+    test_model_execution_spec_loader();
+    test_model_display_spec_loader();
     return 0;
 }

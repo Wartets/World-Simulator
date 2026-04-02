@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 #include <string>
 
 namespace ws::gui {
@@ -66,12 +67,45 @@ float quantileFinite(const std::vector<float>& values, const float q) {
     return finite[idx];
 }
 
-int findFieldIndexByKeyword(const std::vector<StateStoreSnapshot::FieldPayload>& fields, const std::initializer_list<const char*> keywords) {
+std::string toLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+
+bool fieldHasTag(
+    const std::string& fieldName,
+    const std::initializer_list<const char*> desiredTags,
+    const std::unordered_map<std::string, std::vector<std::string>>& fieldDisplayTags) {
+    const auto it = fieldDisplayTags.find(fieldName);
+    if (it == fieldDisplayTags.end()) {
+        return false;
+    }
+
+    for (const auto& tag : it->second) {
+        const std::string tagLower = toLowerCopy(tag);
+        for (const char* desired : desiredTags) {
+            if (tagLower == desired || tagLower.find(desired) != std::string::npos) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+int findFieldIndexByTagOrKeyword(
+    const std::vector<StateStoreSnapshot::FieldPayload>& fields,
+    const std::unordered_map<std::string, std::vector<std::string>>& fieldDisplayTags,
+    const std::initializer_list<const char*> preferredTags,
+    const std::initializer_list<const char*> keywords) {
     for (int i = 0; i < static_cast<int>(fields.size()); ++i) {
         std::string name = fields[static_cast<std::size_t>(i)].spec.name;
-        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        const std::string nameLower = toLowerCopy(name);
+        if (fieldHasTag(name, preferredTags, fieldDisplayTags)) {
+            return i;
+        }
         for (const char* keyword : keywords) {
-            if (name.find(keyword) != std::string::npos) {
+            if (nameLower.find(keyword) != std::string::npos) {
                 return i;
             }
         }
@@ -217,7 +251,8 @@ DisplayBuffer buildDisplayBufferFromSnapshot(
     const int primaryFieldIndex,
     const DisplayType displayType,
     const bool includeSparseOverlay,
-    const DisplayManagerParams& params) {
+    const DisplayManagerParams& params,
+    const std::unordered_map<std::string, std::vector<std::string>>& fieldDisplayTags) {
     DisplayBuffer result;
     if (snapshot.fields.empty()) {
         result.label = "No data";
@@ -229,11 +264,31 @@ DisplayBuffer buildDisplayBufferFromSnapshot(
 
     const auto primary = mergedFieldValues(fields[static_cast<std::size_t>(clampedPrimary)], includeSparseOverlay);
 
-    const int terrainIdx = findFieldIndexByKeyword(fields, {"terrain_elevation", "elevation", "terrain", "height", "altitude"});
-    const int waterIdx = findFieldIndexByKeyword(fields, {"surface_water", "water", "hydro"});
-    const int humidityIdx = findFieldIndexByKeyword(fields, {"humidity_q", "humidity", "humid", "moisture"});
-    const int windUIdx = findFieldIndexByKeyword(fields, {"wind_u", "wind"});
-    const int windVIdx = findFieldIndexByKeyword(fields, {"wind_v"});
+    const int terrainIdx = findFieldIndexByTagOrKeyword(
+        fields,
+        fieldDisplayTags,
+        {"terrain", "elevation", "surface", "height", "altitude"},
+        {"terrain_elevation", "elevation", "terrain", "height", "altitude"});
+    const int waterIdx = findFieldIndexByTagOrKeyword(
+        fields,
+        fieldDisplayTags,
+        {"water", "moisture", "hydro", "water_depth"},
+        {"surface_water", "water", "hydro"});
+    const int humidityIdx = findFieldIndexByTagOrKeyword(
+        fields,
+        fieldDisplayTags,
+        {"moisture", "humidity", "humid"},
+        {"humidity_q", "humidity", "humid", "moisture"});
+    const int windUIdx = findFieldIndexByTagOrKeyword(
+        fields,
+        fieldDisplayTags,
+        {"vector_x", "wind_u", "wind"},
+        {"wind_u", "wind"});
+    const int windVIdx = findFieldIndexByTagOrKeyword(
+        fields,
+        fieldDisplayTags,
+        {"vector_y", "wind_v", "wind"},
+        {"wind_v"});
 
     const std::vector<float> terrain = (terrainIdx >= 0)
         ? mergedFieldValues(fields[static_cast<std::size_t>(terrainIdx)], includeSparseOverlay)

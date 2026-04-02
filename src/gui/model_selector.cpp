@@ -1,4 +1,5 @@
 #include "ws/gui/model_selector.hpp"
+#include "ws/core/model_parser.hpp"
 
 #include <imgui.h>
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <iomanip>
 #include <fstream>
 #include <sstream>
+#include <optional>
 #include <nlohmann/json.hpp>
 
 namespace fs = std::filesystem;
@@ -116,6 +118,122 @@ std::string jsonStringOr(const json& j, const char* key, std::string fallback = 
 }
 
 std::string compatibilityLabel(const std::string& minimumEngineVersion);
+
+struct TemplateDefinition {
+    std::string id;
+    fs::path source;
+};
+
+std::vector<TemplateDefinition> loadTemplateRegistry() {
+    const fs::path registryPath = modelsRoot() / "templates.json";
+    if (!fs::exists(registryPath)) {
+        return {};
+    }
+
+    try {
+        std::ifstream in(registryPath);
+        if (!in) {
+            return {};
+        }
+
+        json registry = json::parse(in);
+        if (!registry.contains("templates") || !registry["templates"].is_array()) {
+            return {};
+        }
+
+        std::vector<TemplateDefinition> templates;
+        for (const auto& entry : registry["templates"]) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            const std::string id = jsonStringOr(entry, "id");
+            const std::string sourceValue = jsonStringOr(entry, "source");
+            if (id.empty() || sourceValue.empty()) {
+                continue;
+            }
+
+            fs::path sourcePath = sourceValue;
+            if (sourcePath.is_relative()) {
+                sourcePath = modelsRoot() / sourcePath;
+            }
+            templates.push_back(TemplateDefinition{id, sourcePath});
+        }
+
+        return templates;
+    } catch (...) {
+        return {};
+    }
+}
+
+std::optional<fs::path> resolveTemplateSourceByRegistry(const std::string& templateName) {
+    const auto templates = loadTemplateRegistry();
+    for (const auto& candidate : templates) {
+        if (candidate.id == templateName && fs::exists(candidate.source)) {
+            return candidate.source;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<fs::path> resolveTemplateSourceByDiscovery(const std::string& templateName) {
+    std::vector<fs::path> candidates;
+    const fs::path root = modelsRoot();
+    if (fs::exists(root)) {
+        for (const auto& entry : fs::directory_iterator(root)) {
+            if ((entry.is_directory() || entry.is_regular_file()) && entry.path().extension() == ".simmodel") {
+                candidates.push_back(entry.path());
+            }
+        }
+    }
+
+    if (candidates.empty()) {
+        return std::nullopt;
+    }
+
+    std::sort(candidates.begin(), candidates.end());
+    if (templateName == "advection_diffusion" && candidates.size() > 1u) {
+        return candidates[1];
+    }
+    return candidates.front();
+}
+
+std::optional<fs::path> resolveTemplateSource(const std::string& templateName) {
+    if (auto byRegistry = resolveTemplateSourceByRegistry(templateName)) {
+        return byRegistry;
+    }
+    return resolveTemplateSourceByDiscovery(templateName);
+}
+
+bool materializeTemplateToModelPath(const fs::path& templateSource, const fs::path& modelPath) {
+    std::error_code ec;
+    if (fs::is_directory(templateSource, ec)) {
+        fs::copy(templateSource, modelPath, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+        return !ec;
+    }
+
+    try {
+        const ws::ModelContext templateContext = ws::ModelParser::load(templateSource);
+        if (!templateContext.metadata_json.empty()) {
+            std::ofstream metadataOut(modelPath / "metadata.json");
+            metadataOut << templateContext.metadata_json;
+        }
+        if (!templateContext.version_json.empty()) {
+            std::ofstream versionOut(modelPath / "version.json");
+            versionOut << templateContext.version_json;
+        }
+        if (!templateContext.model_json.empty()) {
+            std::ofstream modelOut(modelPath / "model.json");
+            modelOut << templateContext.model_json;
+        }
+        if (!templateContext.ir_logic_string.empty()) {
+            std::ofstream logicOut(modelPath / "logic.ir");
+            logicOut << templateContext.ir_logic_string;
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
 
 void parseMetadataInto(ModelInfo& info, const fs::path& metadataPath) {
     if (!fs::exists(metadataPath)) {
@@ -910,15 +1028,9 @@ void ws::gui::ModelSelector::createModelFromTemplate(const std::string& template
     }
     fs::create_directories(model_path, ec);
 
-    fs::path template_source = modelsRoot() / "environmental_model_2d.simmodel";
-    if (template_name == "advection_diffusion") {
-        template_source = modelsRoot() / "gray_scott_reaction_diffusion.simmodel";
-    }
-    if (!fs::exists(template_source)) {
-        template_source = resolveWorkspaceRoot() / "models" / "environmental_model_2d.simmodel";
-    }
-    if (fs::exists(template_source) && fs::is_directory(template_source)) {
-        fs::copy(template_source, model_path, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+    const auto templateSource = resolveTemplateSource(template_name);
+    if (templateSource.has_value()) {
+        materializeTemplateToModelPath(*templateSource, model_path);
     }
 
     // Preserve template metadata when present; only update identity fields.
@@ -976,7 +1088,7 @@ void ws::gui::ModelSelector::createModelFromTemplate(const std::string& template
     model["stages"] = json::array();
 
     try {
-        std::ifstream tmf(template_source / "model.json");
+        std::ifstream tmf(model_path / "model.json");
         if (tmf) {
             model = json::parse(tmf);
             model["id"] = safeName;

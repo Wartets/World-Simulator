@@ -218,13 +218,16 @@ ws_add_test(simulation_loop_test tests/simulation_loop.cpp)
 ws_add_test(subsystems_test tests/subsystems.cpp)
 ws_add_test(interactions_test tests/interactions.cpp)
 ws_add_test(model_parser_test tests/model_parser_test.cpp)
+ws_add_test(shell_support_test tests/shell_support.cpp)
 ws_add_test(live_patching_test tests/live_patching.cpp)
-ws_add_test(initialization_strategy_test tests/initialization_strategy.cpp)
 ws_add_test(profile_store_test tests/profile_store.cpp)
 ws_add_test(performance_optimization_test tests/performance_optimization.cpp)
 ws_add_test(advanced_features_test tests/advanced_features.cpp)
 target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
+)
+target_sources(shell_support_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
 )
 target_sources(profile_store_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp

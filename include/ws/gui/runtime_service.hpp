@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ws::gui {
@@ -79,6 +80,7 @@ public:
     bool summarizeField(const std::string& variableName, std::string& message) const;
     bool captureCheckpoint(RuntimeCheckpoint& checkpoint, std::string& message, bool computeHash = false) const;
     bool fieldNames(std::vector<std::string>& names, std::string& message) const;
+    bool fieldDisplayTags(std::unordered_map<std::string, std::vector<std::string>>& tags, std::string& message) const;
     bool parameterControls(std::vector<ParameterControl>& controls, std::string& message) const;
     bool addProbe(const ProbeDefinition& definition, std::string& message);
     bool removeProbe(const std::string& probeId, std::string& message);
@@ -138,6 +140,7 @@ private:
     app::CheckpointStorage checkpointStorage_{};
     float playbackSpeed_ = 1.0f;
     std::string activeWorldName_;
+    std::unordered_map<std::string, std::vector<std::string>> activeFieldDisplayTags_;
     mutable std::atomic<bool> cachedRunning_{false};
     mutable std::atomic<bool> cachedPaused_{false};
     mutable std::recursive_mutex mutex_;

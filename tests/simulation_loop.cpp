@@ -75,7 +75,7 @@ ws::ProfileResolverInput baselineProfileInput() {
     }
     input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::A;
     input.compatibilityAssumptions = {
-        "phase3_execution_test",
+        "execution_test",
         "deterministic_scheduler_order"
     };
     return input;

@@ -4,6 +4,7 @@
 #include "ws/core/runtime.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -24,6 +25,12 @@ struct LaunchPreset {
     std::string description;
 };
 
+struct ModelCatalogEntry {
+    std::string key;
+    std::filesystem::path path;
+    bool isDirectory = false;
+};
+
 struct FieldSummary {
     std::size_t validCount = 0;
     std::size_t invalidCount = 0;
@@ -42,6 +49,9 @@ struct FieldSummary {
 [[nodiscard]] std::optional<std::uint64_t> parseU64(const std::string& token);
 [[nodiscard]] std::optional<std::uint32_t> parseU32(const std::string& token);
 [[nodiscard]] std::optional<float> parseFloat(const std::string& token);
+[[nodiscard]] std::string normalizeModelKey(std::string value);
+[[nodiscard]] std::vector<ModelCatalogEntry> listAvailableModels(
+    const std::filesystem::path& modelsRoot = std::filesystem::path("models"));
 
 [[nodiscard]] ProfileResolverInput buildProfileInput(ModelTier tier);
 [[nodiscard]] RuntimeConfig makeRuntimeConfig(const LaunchConfig& launchConfig);

@@ -3,9 +3,48 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <filesystem>
 #include <limits>
 
 namespace ws::app {
+
+namespace {
+
+std::filesystem::path resolveWorkspaceRoot() {
+    std::error_code ec;
+    std::filesystem::path current = std::filesystem::current_path(ec);
+    if (ec) {
+        return std::filesystem::path{"."};
+    }
+
+    for (std::filesystem::path probe = current; !probe.empty(); probe = probe.parent_path()) {
+        if (std::filesystem::exists(probe / "CMakeLists.txt")) {
+            return probe;
+        }
+        if (probe == probe.parent_path()) {
+            break;
+        }
+    }
+
+    return current;
+}
+
+std::filesystem::path resolveModelsRoot(const std::filesystem::path& modelsRoot) {
+    std::error_code ec;
+    if (std::filesystem::exists(modelsRoot, ec)) {
+        return modelsRoot;
+    }
+
+    const auto workspaceRoot = resolveWorkspaceRoot();
+    const auto workspaceModels = workspaceRoot / modelsRoot;
+    if (std::filesystem::exists(workspaceModels, ec)) {
+        return workspaceModels;
+    }
+
+    return modelsRoot;
+}
+
+} // namespace
 
 std::string toLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char ch) {
@@ -128,6 +167,67 @@ std::optional<float> parseFloat(const std::string& token) {
     } catch (...) {
         return std::nullopt;
     }
+}
+
+std::string normalizeModelKey(std::string value) {
+    value = trim(std::move(value));
+    if (value.empty()) {
+        return {};
+    }
+
+    std::filesystem::path tokenPath(value);
+    std::string normalized = tokenPath.stem().string();
+    if (normalized.empty()) {
+        normalized = tokenPath.filename().string();
+    }
+
+    for (char& ch : normalized) {
+        const bool allowed =
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' || ch == '-';
+        if (!allowed) {
+            ch = '_';
+        }
+    }
+
+    return normalized;
+}
+
+std::vector<ModelCatalogEntry> listAvailableModels(const std::filesystem::path& modelsRoot) {
+    std::vector<ModelCatalogEntry> entries;
+    std::error_code ec;
+    const std::filesystem::path discoveredRoot = resolveModelsRoot(modelsRoot);
+    if (!std::filesystem::exists(discoveredRoot, ec)) {
+        return entries;
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(discoveredRoot, ec)) {
+        if (ec) {
+            break;
+        }
+
+        const auto& path = entry.path();
+        if ((entry.is_directory() || entry.is_regular_file()) && path.extension() == ".simmodel") {
+            ModelCatalogEntry catalogEntry;
+            catalogEntry.key = normalizeModelKey(path.stem().string());
+            catalogEntry.path = path;
+            catalogEntry.isDirectory = entry.is_directory();
+            if (!catalogEntry.key.empty()) {
+                entries.push_back(std::move(catalogEntry));
+            }
+        }
+    }
+
+    std::sort(entries.begin(), entries.end(), [](const ModelCatalogEntry& lhs, const ModelCatalogEntry& rhs) {
+        if (lhs.key != rhs.key) {
+            return lhs.key < rhs.key;
+        }
+        return lhs.path.string() < rhs.path.string();
+    });
+
+    return entries;
 }
 
 ProfileResolverInput buildProfileInput(const ModelTier tier) {

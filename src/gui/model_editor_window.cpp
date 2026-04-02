@@ -51,6 +51,60 @@ bool writeTextFile(const std::string& path, const std::string& contents) {
         return out.good();
 }
 
+std::filesystem::path resolveWorkspaceRoot() {
+    std::error_code ec;
+    std::filesystem::path current = std::filesystem::current_path(ec);
+    if (ec) {
+        return std::filesystem::path{"."};
+    }
+
+    for (std::filesystem::path probe = current; !probe.empty(); probe = probe.parent_path()) {
+        if (std::filesystem::exists(probe / "CMakeLists.txt")) {
+            return probe;
+        }
+        if (probe == probe.parent_path()) {
+            break;
+        }
+    }
+
+    return current;
+}
+
+std::filesystem::path modelsRoot() {
+    const std::filesystem::path root = resolveWorkspaceRoot() / "models";
+    std::error_code ec;
+    std::filesystem::create_directories(root, ec);
+    return root;
+}
+
+std::filesystem::path firstModelJsonPath() {
+    std::vector<std::filesystem::path> candidates;
+    const std::filesystem::path root = modelsRoot();
+    if (!std::filesystem::exists(root)) {
+        return {};
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+        if (entry.is_directory() && entry.path().extension() == ".simmodel") {
+            const std::filesystem::path modelJson = entry.path() / "model.json";
+            if (std::filesystem::exists(modelJson)) {
+                candidates.push_back(modelJson);
+            }
+        }
+    }
+
+    if (candidates.empty()) {
+        return {};
+    }
+
+    std::sort(candidates.begin(), candidates.end());
+    return candidates.front();
+}
+
+std::filesystem::path defaultEditorSavePath() {
+    return modelsRoot() / "model_editor_export.simmodel" / "model.json";
+}
+
 std::string defaultModelTemplateJson() {
         return R"({
     "domains": {
@@ -168,12 +222,36 @@ ModelEditorWindow::ModelEditorWindow(const std::string& window_title)
       show_validation_panel(true),
       last_validation_time(0.0),
       validation_debounce_ms(500.0) {
-        std::snprintf(open_model_path_buffer, sizeof(open_model_path_buffer), "%s", "models/environmental_model_2d.simmodel/model.json");
-        std::snprintf(save_model_path_buffer, sizeof(save_model_path_buffer), "%s", "checkpoints/worlds/model_editor_export.model.json");
+        const std::filesystem::path openDefault = firstModelJsonPath();
+        const std::filesystem::path saveDefault = defaultEditorSavePath();
+        std::snprintf(open_model_path_buffer, sizeof(open_model_path_buffer), "%s", openDefault.string().c_str());
+        std::snprintf(save_model_path_buffer, sizeof(save_model_path_buffer), "%s", saveDefault.string().c_str());
         status_details.push_back("ready=true");
 }
 
 ModelEditorWindow::~ModelEditorWindow() = default;
+
+void ModelEditorWindow::setActiveModelPath(const std::filesystem::path& modelPath) {
+    if (modelPath.empty()) {
+        return;
+    }
+
+    std::filesystem::path openPath;
+    std::filesystem::path savePath;
+
+    std::error_code ec;
+    if (std::filesystem::is_directory(modelPath, ec)) {
+        openPath = modelPath / "model.json";
+        savePath = openPath;
+    } else {
+        const std::filesystem::path materialized = modelsRoot() / (modelPath.stem().string() + ".simmodel") / "model.json";
+        openPath = materialized;
+        savePath = materialized;
+    }
+
+    std::snprintf(open_model_path_buffer, sizeof(open_model_path_buffer), "%s", openPath.string().c_str());
+    std::snprintf(save_model_path_buffer, sizeof(save_model_path_buffer), "%s", savePath.string().c_str());
+}
 
 void ModelEditorWindow::loadModel(const ModelContext& context) {
     window_open = true;
@@ -1186,7 +1264,11 @@ void ModelEditorWindow::exportModel() {
         return;
     }
 
-    const std::filesystem::path exportPath = std::filesystem::path("checkpoints/worlds") / "model_editor_export.json";
+    std::filesystem::path exportPath = std::filesystem::path(save_model_path_buffer);
+    if (exportPath.empty()) {
+        exportPath = defaultEditorSavePath();
+    }
+    exportPath = exportPath.parent_path() / "model_editor_export.json";
     std::error_code ec;
     std::filesystem::create_directories(exportPath.parent_path(), ec);
     if (writeTextFile(exportPath.string(), current_model.model_json)) {

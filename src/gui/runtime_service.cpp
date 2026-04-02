@@ -96,6 +96,30 @@ bool RuntimeService::start(std::string& message) {
     try {
         auto runtimeConfig = app::makeRuntimeConfig(config_);
         if (!modelScope_.modelPath.empty()) {
+            ModelExecutionSpec modelExecutionSpec;
+            std::string executionSpecMessage;
+            if (initialization::loadModelExecutionSpec(
+                    std::filesystem::path(modelScope_.modelPath),
+                    modelExecutionSpec,
+                    executionSpecMessage)) {
+                if (!modelExecutionSpec.conservedVariables.empty()) {
+                    runtimeConfig.profileInput.conservedVariables = modelExecutionSpec.conservedVariables;
+                }
+                runtimeConfig.modelExecutionSpec = std::move(modelExecutionSpec);
+            }
+
+                ModelDisplaySpec modelDisplaySpec;
+                std::string displaySpecMessage;
+                if (initialization::loadModelDisplaySpec(
+                        std::filesystem::path(modelScope_.modelPath),
+                        modelDisplaySpec,
+                        displaySpecMessage)) {
+                    runtimeConfig.modelDisplaySpec = modelDisplaySpec;
+                    activeFieldDisplayTags_ = std::move(modelDisplaySpec.fieldTags);
+                } else {
+                    activeFieldDisplayTags_.clear();
+                }
+
             std::vector<ParameterControl> modelParameterControls;
             std::string parameterControlMessage;
             if (initialization::loadModelParameterControls(
@@ -757,6 +781,20 @@ bool RuntimeService::fieldNames(std::vector<std::string>& names, std::string& me
         message = std::string("field_names_failed error=") + exception.what();
         return false;
     }
+}
+
+bool RuntimeService::fieldDisplayTags(
+    std::unordered_map<std::string, std::vector<std::string>>& tags,
+    std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!runtime_) {
+        message = "field_display_tags_failed runtime_not_active";
+        return false;
+    }
+
+    tags = activeFieldDisplayTags_;
+    message = "field_display_tags_ready count=" + std::to_string(tags.size());
+    return true;
 }
 
 bool RuntimeService::parameterControls(std::vector<ParameterControl>& controls, std::string& message) const {

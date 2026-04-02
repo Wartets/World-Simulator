@@ -3,6 +3,7 @@
 #include "ws/core/state_store.hpp"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ws::gui {
@@ -42,7 +43,8 @@ struct DisplayBuffer {
     int primaryFieldIndex,
     DisplayType displayType,
     bool includeSparseOverlay,
-    const DisplayManagerParams& params);
+    const DisplayManagerParams& params,
+    const std::unordered_map<std::string, std::vector<std::string>>& fieldDisplayTags = {});
 
 [[nodiscard]] DisplayBuffer buildDisplayBufferFromTerrain(
     const std::vector<float>& terrain,

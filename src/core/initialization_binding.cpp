@@ -444,6 +444,188 @@ bool loadModelParameterControls(
     }
 }
 
+bool loadModelExecutionSpec(
+    const std::filesystem::path& modelPath,
+    ModelExecutionSpec& executionSpec,
+    std::string& message) {
+    executionSpec = ModelExecutionSpec{};
+
+    try {
+        const auto ctx = ws::ModelParser::load(modelPath);
+        const json parsed = json::parse(ctx.model_json);
+
+        if (parsed.contains("variables") && parsed["variables"].is_array()) {
+            for (const auto& variable : parsed["variables"]) {
+                if (!variable.is_object()) {
+                    continue;
+                }
+                if (!variable.contains("id") || !variable["id"].is_string()) {
+                    continue;
+                }
+
+                const std::string support = variable.contains("support") && variable["support"].is_string()
+                    ? variable["support"].get<std::string>()
+                    : std::string{};
+                if (support != "cell") {
+                    continue;
+                }
+
+                const std::string type = variable.contains("type") && variable["type"].is_string()
+                    ? variable["type"].get<std::string>()
+                    : std::string{"f32"};
+                const bool scalarType =
+                    (type == "f32") || (type == "f64") ||
+                    (type == "i32") || (type == "u32") ||
+                    (type == "bool");
+                if (!scalarType) {
+                    continue;
+                }
+
+                executionSpec.cellScalarVariableIds.push_back(variable["id"].get<std::string>());
+            }
+        }
+
+        if (parsed.contains("stages") && parsed["stages"].is_array()) {
+            for (const auto& stage : parsed["stages"]) {
+                if (!stage.is_object() || !stage.contains("id") || !stage["id"].is_string()) {
+                    continue;
+                }
+                executionSpec.stageOrder.push_back(stage["id"].get<std::string>());
+            }
+        }
+
+        if (parsed.contains("diagnostics") && parsed["diagnostics"].is_object()) {
+            const auto& diagnostics = parsed["diagnostics"];
+            if (diagnostics.contains("conserved_variables") && diagnostics["conserved_variables"].is_array()) {
+                for (const auto& name : diagnostics["conserved_variables"]) {
+                    if (name.is_string()) {
+                        executionSpec.conservedVariables.push_back(name.get<std::string>());
+                    }
+                }
+            }
+            if (executionSpec.conservedVariables.empty() &&
+                diagnostics.contains("conservation") && diagnostics["conservation"].is_array()) {
+                for (const auto& name : diagnostics["conservation"]) {
+                    if (name.is_string()) {
+                        executionSpec.conservedVariables.push_back(name.get<std::string>());
+                    }
+                }
+            }
+        }
+
+        auto normalize = [](std::vector<std::string>& values) {
+            values.erase(
+                std::remove_if(values.begin(), values.end(), [](const std::string& value) { return value.empty(); }),
+                values.end());
+            std::sort(values.begin(), values.end());
+            values.erase(std::unique(values.begin(), values.end()), values.end());
+        };
+
+        normalize(executionSpec.cellScalarVariableIds);
+        normalize(executionSpec.conservedVariables);
+
+        executionSpec.stageOrder.erase(
+            std::remove_if(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end(), [](const std::string& stage) {
+                return stage.empty();
+            }),
+            executionSpec.stageOrder.end());
+        executionSpec.stageOrder.erase(
+            std::unique(executionSpec.stageOrder.begin(), executionSpec.stageOrder.end()),
+            executionSpec.stageOrder.end());
+
+        message = "model_execution_spec_ready variables=" + std::to_string(executionSpec.cellScalarVariableIds.size()) +
+            " stages=" + std::to_string(executionSpec.stageOrder.size()) +
+            " conserved=" + std::to_string(executionSpec.conservedVariables.size());
+        return true;
+    } catch (const std::exception& exception) {
+        executionSpec = ModelExecutionSpec{};
+        message = std::string("model_execution_spec_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool loadModelDisplaySpec(
+    const std::filesystem::path& modelPath,
+    ModelDisplaySpec& displaySpec,
+    std::string& message) {
+    displaySpec = ModelDisplaySpec{};
+
+    try {
+        const auto ctx = ws::ModelParser::load(modelPath);
+        const json parsed = json::parse(ctx.model_json);
+
+        auto normalizeTags = [](std::vector<std::string>& tags) {
+            tags.erase(
+                std::remove_if(tags.begin(), tags.end(), [](const std::string& tag) { return tag.empty(); }),
+                tags.end());
+            std::sort(tags.begin(), tags.end());
+            tags.erase(std::unique(tags.begin(), tags.end()), tags.end());
+        };
+
+        std::unordered_map<std::string, std::vector<std::string>> fieldTags;
+
+        if (parsed.contains("display_channels") && parsed["display_channels"].is_object()) {
+            for (const auto& [channelName, channelValue] : parsed["display_channels"].items()) {
+                if (channelName.empty()) {
+                    continue;
+                }
+                if (channelValue.is_array()) {
+                    for (const auto& fieldNameValue : channelValue) {
+                        if (!fieldNameValue.is_string()) {
+                            continue;
+                        }
+                        const std::string fieldName = fieldNameValue.get<std::string>();
+                        if (fieldName.empty()) {
+                            continue;
+                        }
+                        fieldTags[fieldName].push_back(channelName);
+                    }
+                }
+            }
+        }
+
+        if (parsed.contains("variables") && parsed["variables"].is_array()) {
+            for (const auto& variable : parsed["variables"]) {
+                if (!variable.is_object()) {
+                    continue;
+                }
+                if (!variable.contains("id") || !variable["id"].is_string()) {
+                    continue;
+                }
+
+                const std::string fieldId = variable["id"].get<std::string>();
+                if (fieldId.empty()) {
+                    continue;
+                }
+
+                if (variable.contains("display_tags") && variable["display_tags"].is_array()) {
+                    for (const auto& tagValue : variable["display_tags"]) {
+                        if (tagValue.is_string()) {
+                            fieldTags[fieldId].push_back(tagValue.get<std::string>());
+                        }
+                    }
+                }
+
+                if (variable.contains("display_channel") && variable["display_channel"].is_string()) {
+                    fieldTags[fieldId].push_back(variable["display_channel"].get<std::string>());
+                }
+            }
+        }
+
+        for (auto& [fieldId, tags] : fieldTags) {
+            normalizeTags(tags);
+        }
+
+        displaySpec.fieldTags = std::move(fieldTags);
+        message = "model_display_spec_ready fields=" + std::to_string(displaySpec.fieldTags.size());
+        return true;
+    } catch (const std::exception& exception) {
+        displaySpec = ModelDisplaySpec{};
+        message = std::string("model_display_spec_failed error=") + exception.what();
+        return false;
+    }
+}
+
 InitializationBindingPlan buildBindingPlan(
     const ModelVariableCatalog& catalog,
     const InitializationRequest& request) {

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <filesystem>
 
 namespace ws::gui {
 
@@ -21,6 +22,7 @@ public:
     void createNewModel();
     void saveModel();
     void exportModel();
+    void setActiveModelPath(const std::filesystem::path& modelPath);
     
     // Rendering
     void render(ImVec2 available_size);

@@ -1249,6 +1249,25 @@ void Runtime::allocateCanonicalFields() {
             stateStore_.allocateScalarField(spec);
         }
     }
+
+    if (config_.modelExecutionSpec.has_value()) {
+        std::vector<std::string> variableNames = config_.modelExecutionSpec->cellScalarVariableIds;
+        variableNames.erase(
+            std::remove_if(variableNames.begin(), variableNames.end(), [](const std::string& name) {
+                return name.empty();
+            }),
+            variableNames.end());
+        std::sort(variableNames.begin(), variableNames.end());
+        variableNames.erase(std::unique(variableNames.begin(), variableNames.end()), variableNames.end());
+
+        std::uint32_t nextRuntimeVariableId = 1000u;
+        for (const auto& variableName : variableNames) {
+            if (stateStore_.hasField(variableName)) {
+                continue;
+            }
+            stateStore_.allocateScalarField(VariableSpec{nextRuntimeVariableId++, variableName});
+        }
+    }
 }
 
 std::uint64_t Runtime::applyInputFrame(const RuntimeInputFrame& inputFrame) {

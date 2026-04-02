@@ -18,6 +18,47 @@ struct HistoryBounds {
     float maxValue = 1.0f;
 };
 
+static std::string toLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+static std::uint64_t fnv1a64(const std::string& value) {
+    std::uint64_t hash = 1469598103934665603ull;
+    for (unsigned char ch : value) {
+        hash ^= static_cast<std::uint64_t>(ch);
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+static std::uint64_t displayTagSignature(
+    const std::unordered_map<std::string, std::vector<std::string>>& fieldDisplayTags) {
+    std::uint64_t hash = 1469598103934665603ull;
+    const auto combine = [](std::uint64_t lhs, std::uint64_t rhs) {
+        return lhs ^ (rhs + 0x9e3779b97f4a7c15ull + (lhs << 6u) + (lhs >> 2u));
+    };
+    std::vector<std::string> fieldNames;
+    fieldNames.reserve(fieldDisplayTags.size());
+    for (const auto& [fieldName, _] : fieldDisplayTags) {
+        fieldNames.push_back(fieldName);
+    }
+    std::sort(fieldNames.begin(), fieldNames.end());
+    for (const auto& fieldName : fieldNames) {
+        hash = combine(hash, fnv1a64(fieldName));
+        const auto it = fieldDisplayTags.find(fieldName);
+        if (it == fieldDisplayTags.end()) {
+            continue;
+        }
+        for (const auto& tag : it->second) {
+            hash = combine(hash, fnv1a64(tag));
+        }
+    }
+    return hash;
+}
+
 void updateFieldHistory(const ws::StateStoreSnapshot& snapshot) {
     if (snapshot.header.stepIndex == lastHistoryStep_) return;
     lastHistoryStep_ = snapshot.header.stepIndex;
@@ -554,12 +595,13 @@ void drawSimulationCanvas() {
         dKey = hashCombine(dKey, hashFloat(viz_.displayManager.shallowWaterDepth));
         dKey = hashCombine(dKey, hashFloat(viz_.displayManager.highMoistureThreshold));
         dKey = hashCombine(dKey, static_cast<std::uint64_t>(vp.showWindMagnitudeBackground));
+        dKey = hashCombine(dKey, displayTagSignature(fieldDisplayTags_));
 
         auto it = snapshotDisplayCache_.find(dKey);
         if (it == snapshotDisplayCache_.end()) {
             DisplayBuffer buf = buildDisplayBufferFromSnapshot(
                 snapshot, vp.primaryFieldIndex, vp.displayType,
-                viz_.showSparseOverlay, viz_.displayManager);
+                viz_.showSparseOverlay, viz_.displayManager, fieldDisplayTags_);
             it = snapshotDisplayCache_.emplace(dKey, std::move(buf)).first;
         }
         const DisplayBuffer& db = it->second;
@@ -843,6 +885,14 @@ void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, 
     int windVIdx = -1;
     for (int i = 0; i < static_cast<int>(fields.size()); ++i) {
         const std::string& name = fields[static_cast<std::size_t>(i)].spec.name;
+        const auto tagIt = fieldDisplayTags_.find(name);
+        if (tagIt != fieldDisplayTags_.end()) {
+            for (const auto& tag : tagIt->second) {
+                const std::string tagLower = toLowerCopy(tag);
+                if (windUIdx < 0 && (tagLower == "vector_x" || tagLower.find("wind_u") != std::string::npos)) windUIdx = i;
+                if (windVIdx < 0 && (tagLower == "vector_y" || tagLower.find("wind_v") != std::string::npos)) windVIdx = i;
+            }
+        }
         if (windUIdx < 0 && name.find("wind_u") != std::string::npos) windUIdx = i;
         if (windVIdx < 0 && name.find("wind_v") != std::string::npos) windVIdx = i;
     }
@@ -927,6 +977,10 @@ void refreshFieldNames() {
     std::vector<std::string> names;
     if (runtime_.fieldNames(names, msg) && !names.empty()) {
         viz_.fieldNames = std::move(names);
+        std::string tagsMessage;
+        if (!runtime_.fieldDisplayTags(fieldDisplayTags_, tagsMessage)) {
+            fieldDisplayTags_.clear();
+        }
         for (auto& vp : viz_.viewports) vp.stickyRanges.clear();
         clampVisualizationIndices();
     } else if (!msg.empty()) {

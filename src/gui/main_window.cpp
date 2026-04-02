@@ -251,6 +251,8 @@ public:
                 return;
             }
 
+            modelEditor_.setActiveModelPath(modelPath);
+
             try {
                 const ModelContext context = ws::ModelParser::load(modelPath);
                 modelEditor_.loadModel(context);
@@ -433,6 +435,7 @@ private:
     ModelSelector      modelSelector_{};
     ModelEditorWindow  modelEditor_{"Model Editor"};
     AppState           appState_ = AppState::ModelSelector;
+    std::unordered_map<std::string, std::vector<std::string>> fieldDisplayTags_{};
 
 // inlined implementation files
 #define WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT 1
