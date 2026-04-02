@@ -283,13 +283,6 @@ Runtime::Runtime(RuntimeConfig config)
                 0} {
     config_.grid.validate();
     scheduler_.setExecutionPolicyMode(config_.executionPolicyMode);
-
-    parameterControls_.emplace(
-        "forcing.water_delta",
-        ParameterControl{"forcing.water_delta", "event_water_delta", 0.0f, -1.0f, 1.0f, 0.0f, "1"});
-    parameterControls_.emplace(
-        "forcing.temperature_delta",
-        ParameterControl{"forcing.temperature_delta", "event_temperature_delta", 0.0f, -1.0f, 1.0f, 0.0f, "1"});
 }
 
 void Runtime::registerSubsystem(std::shared_ptr<ISubsystem> subsystem) {
@@ -339,6 +332,7 @@ void Runtime::start() {
         scheduler_.setAdmissionReport(admissionReport_);
 
         allocateCanonicalFields();
+        initializeParameterControls();
 
         const std::vector<std::string> canonicalFields = {
             "terrain_elevation_h",
@@ -636,6 +630,36 @@ void Runtime::start() {
     }
 }
 
+void Runtime::initializeParameterControls() {
+    parameterControls_.clear();
+
+    for (const auto& control : config_.modelParameterControls) {
+        if (control.name.empty() || control.targetVariable.empty()) {
+            continue;
+        }
+        if (!stateStore_.hasField(control.targetVariable)) {
+            continue;
+        }
+
+        ParameterControl normalized = control;
+        if (normalized.minValue > normalized.maxValue) {
+            std::swap(normalized.minValue, normalized.maxValue);
+        }
+        normalized.defaultValue = std::clamp(normalized.defaultValue, normalized.minValue, normalized.maxValue);
+        normalized.value = std::clamp(normalized.value, normalized.minValue, normalized.maxValue);
+        parameterControls_.insert_or_assign(normalized.name, std::move(normalized));
+    }
+
+    if (parameterControls_.empty()) {
+        parameterControls_.emplace(
+            "forcing.water_delta",
+            ParameterControl{"forcing.water_delta", "event_water_delta", 0.0f, -1.0f, 1.0f, 0.0f, "1"});
+        parameterControls_.emplace(
+            "forcing.temperature_delta",
+            ParameterControl{"forcing.temperature_delta", "event_temperature_delta", 0.0f, -1.0f, 1.0f, 0.0f, "1"});
+    }
+}
+
 void Runtime::step() {
     if (status_ != RuntimeStatus::Running) {
         throw std::runtime_error("Runtime step requires Running state");
@@ -929,6 +953,10 @@ bool Runtime::setParameterValue(const std::string& parameterName, const float va
     }
 
     ParameterControl& control = it->second;
+    if (!stateStore_.hasField(control.targetVariable)) {
+        message = "parameter_set_failed reason=unknown_target_variable variable=" + control.targetVariable;
+        return false;
+    }
     const float clampedValue = std::clamp(value, control.minValue, control.maxValue);
 
     RuntimeInputFrame frame;

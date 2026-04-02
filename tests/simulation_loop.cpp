@@ -147,6 +147,7 @@ void verifyNumericalGuardrails() {
     ws::ModelProfile profile;
     profile.subsystemTiers["signal_writer"] = ws::ModelTier::A;
     profile.compatibilityAssumptions.insert("guardrail_test");
+    profile.conservedVariables = {"signal"};
 
     scheduler.initialize(stateStore, profile);
 
@@ -167,6 +168,8 @@ void verifyNumericalGuardrails() {
     assert(*value == 10.0f);
     assert(!diagnostics.constraintViolations.empty());
     assert(!diagnostics.stabilityAlerts.empty());
+    assert(!diagnostics.stability.conservationResiduals.empty());
+    assert(diagnostics.stability.conservationResiduals.front().variableName == "signal");
 }
 
 void verifyNaNFailFast() {

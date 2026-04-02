@@ -1,8 +1,16 @@
 #include "ws/core/model_parser.hpp"
+#include "ws/core/initialization_binding.hpp"
 #include "ws/core/unit_system.hpp"
+
+#include <miniz.h>
+
 #include <iostream>
 #include <cassert>
+#include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <cstring>
+#include <iterator>
 
 using namespace ws;
 
@@ -64,9 +72,97 @@ void test_model_parser() {
     }
 }
 
+static std::string read_text_file(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input.is_open()) {
+        return {};
+    }
+    return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+}
+
+static bool create_model_archive(
+    const std::filesystem::path& modelDir,
+    const std::filesystem::path& archivePath) {
+    const auto modelJson = read_text_file(modelDir / "model.json");
+    const auto logicIr = read_text_file(modelDir / "logic.ir");
+    if (modelJson.empty() || logicIr.empty()) {
+        return false;
+    }
+
+    mz_zip_archive zip{};
+    std::memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_writer_init_file(&zip, archivePath.string().c_str(), 0)) {
+        return false;
+    }
+
+    bool ok = true;
+    ok = ok && mz_zip_writer_add_mem(&zip, "model.json", modelJson.data(), modelJson.size(), MZ_BEST_COMPRESSION);
+    ok = ok && mz_zip_writer_add_mem(&zip, "logic.ir", logicIr.data(), logicIr.size(), MZ_BEST_COMPRESSION);
+    ok = ok && mz_zip_writer_finalize_archive(&zip);
+    ok = ok && mz_zip_writer_end(&zip);
+    return ok;
+}
+
+void test_model_variable_catalog_loader() {
+    const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping model catalog loader test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    initialization::ModelVariableCatalog directoryCatalog;
+    std::string directoryMessage;
+    const bool directoryOk = initialization::loadModelVariableCatalog(modelDir, directoryCatalog, directoryMessage);
+    assert(directoryOk);
+    assert(!directoryCatalog.variables.empty());
+    assert(directoryCatalog.modelId == "environmental_model_2d");
+
+    const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_model_catalog_test";
+    std::filesystem::create_directories(tempRoot);
+    const auto archivePath = tempRoot / "environmental_model_2d.simmodel";
+
+    if (!create_model_archive(modelDir, archivePath)) {
+        std::cerr << "Failed to create temporary model archive for catalog loading test.\n";
+        assert(false);
+    }
+
+    initialization::ModelVariableCatalog archiveCatalog;
+    std::string archiveMessage;
+    const bool archiveOk = initialization::loadModelVariableCatalog(archivePath, archiveCatalog, archiveMessage);
+    assert(archiveOk);
+    assert(!archiveCatalog.variables.empty());
+    assert(archiveCatalog.modelId == "environmental_model_2d");
+
+    std::filesystem::remove_all(tempRoot);
+    std::cout << "Model Variable Catalog loader tests passed for directory and archive inputs.\n";
+}
+
+void test_model_parameter_controls_loader() {
+    const std::filesystem::path modelDir = "models/environmental_model_2d.simmodel";
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping model parameter control loader test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    std::vector<ParameterControl> controls;
+    std::string message;
+    const bool ok = initialization::loadModelParameterControls(modelDir, controls, message);
+    assert(ok);
+    assert(!controls.empty());
+
+    const auto it = std::find_if(controls.begin(), controls.end(), [](const ParameterControl& control) {
+        return control.targetVariable == "soil_mineral_fraction";
+    });
+    assert(it != controls.end());
+    assert(it->minValue == 0.0f);
+    assert(it->maxValue == 1.0f);
+}
+
 int main() {
     test_unit_system();
     test_ir_parser();
     test_model_parser();
+    test_model_variable_catalog_loader();
+    test_model_parameter_controls_loader();
     return 0;
 }

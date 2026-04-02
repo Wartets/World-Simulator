@@ -14,6 +14,25 @@ namespace ws::app {
 
 namespace {
 
+std::string sanitizeScopeKey(std::string key) {
+    key = trim(std::move(key));
+    if (key.empty()) {
+        return {};
+    }
+
+    for (char& ch : key) {
+        const bool allowed =
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' || ch == '-';
+        if (!allowed) {
+            ch = '_';
+        }
+    }
+    return key;
+}
+
 bool writeStringBlob(std::ostream& output, const std::string& value) {
     const std::uint64_t size = static_cast<std::uint64_t>(value.size());
     output.write(reinterpret_cast<const char*>(&size), sizeof(size));
@@ -43,12 +62,41 @@ std::optional<std::string> readStringBlob(std::istream& input) {
     return value;
 }
 
+std::string trimCopy(std::string value) {
+    return trim(std::move(value));
+}
+
+bool hasModelCompatibilityConflict(
+    const WorldModelMetadata& source,
+    const WorldModelMetadata& target,
+    std::string& reason) {
+    const auto sourceIdentity = trimCopy(source.modelIdentityHash);
+    const auto targetIdentity = trimCopy(target.modelIdentityHash);
+    if (!sourceIdentity.empty() && !targetIdentity.empty() && sourceIdentity != targetIdentity) {
+        reason = "identity_hash_mismatch";
+        return true;
+    }
+
+    const auto sourceId = trimCopy(source.modelId);
+    const auto targetId = trimCopy(target.modelId);
+    if (!sourceId.empty() && !targetId.empty() && sourceId != targetId) {
+        reason = "model_id_mismatch";
+        return true;
+    }
+
+    return false;
+}
+
 } // namespace
 
 WorldStore::WorldStore(std::filesystem::path worldProfileRoot, std::filesystem::path worldCheckpointRoot)
     : profileRoot_(std::move(worldProfileRoot)),
       checkpointRoot_(std::move(worldCheckpointRoot)),
       worldProfileStore_(profileRoot_) {}
+
+std::string WorldStore::normalizeScopeKey(std::string key) {
+    return sanitizeScopeKey(std::move(key));
+}
 
 std::string WorldStore::normalizeWorldName(std::string worldName) {
     worldName = trim(std::move(worldName));
@@ -67,6 +115,28 @@ std::string WorldStore::normalizeWorldName(std::string worldName) {
         }
     }
     return worldName;
+}
+
+std::filesystem::path WorldStore::scopedProfileRoot(const std::string& modelKey) const {
+    const auto normalized = normalizeScopeKey(modelKey);
+    return normalized.empty() ? profileRoot_ : (profileRoot_ / normalized);
+}
+
+std::filesystem::path WorldStore::scopedCheckpointRoot(const std::string& modelKey) const {
+    const auto normalized = normalizeScopeKey(modelKey);
+    return normalized.empty() ? checkpointRoot_ : (checkpointRoot_ / normalized);
+}
+
+std::filesystem::path resolveWithLegacyFallback(
+    const std::filesystem::path& scopedPath,
+    const std::filesystem::path& legacyPath) {
+    if (std::filesystem::exists(scopedPath)) {
+        return scopedPath;
+    }
+    if (std::filesystem::exists(legacyPath)) {
+        return legacyPath;
+    }
+    return scopedPath;
 }
 
 std::string WorldStore::normalizeNameForUi(std::string worldName) const {
@@ -91,49 +161,62 @@ bool WorldStore::isDefaultWorldName(const std::string& name, int& outIndex) {
     return true;
 }
 
-std::filesystem::path WorldStore::profilePathFor(const std::string& worldName) const {
+std::filesystem::path WorldStore::profilePathFor(const std::string& worldName, const std::string& modelKey) const {
     const auto normalized = normalizeWorldName(worldName);
     if (normalized.empty()) {
         return {};
     }
-    return worldProfileStore_.pathFor(normalized);
+    return resolveWithLegacyFallback(
+        worldProfileStore_.pathFor(normalized, modelKey),
+        worldProfileStore_.pathFor(normalized));
 }
 
-std::filesystem::path WorldStore::checkpointPathFor(const std::string& worldName) const {
+std::filesystem::path WorldStore::checkpointPathFor(const std::string& worldName, const std::string& modelKey) const {
     const auto normalized = normalizeWorldName(worldName);
     if (normalized.empty()) {
         return {};
     }
-    return checkpointRoot_ / (normalized + ".wscp");
+    return resolveWithLegacyFallback(
+        scopedCheckpointRoot(modelKey) / (normalized + ".wscp"),
+        checkpointRoot_ / (normalized + ".wscp"));
 }
 
-std::filesystem::path WorldStore::displayPrefsPathFor(const std::string& worldName) const {
+std::filesystem::path WorldStore::displayPrefsPathFor(const std::string& worldName, const std::string& modelKey) const {
     const auto normalized = normalizeWorldName(worldName);
     if (normalized.empty()) {
         return {};
     }
-    return checkpointRoot_ / (normalized + ".displayprefs");
+    return resolveWithLegacyFallback(
+        scopedCheckpointRoot(modelKey) / (normalized + ".displayprefs"),
+        checkpointRoot_ / (normalized + ".displayprefs"));
 }
 
-bool WorldStore::worldExists(const std::string& worldName) const {
-    const auto profilePath = profilePathFor(worldName);
-    const auto checkpointPath = checkpointPathFor(worldName);
+bool WorldStore::worldExists(const std::string& worldName, const std::string& modelKey) const {
+    const auto profilePath = profilePathFor(worldName, modelKey);
+    const auto checkpointPath = checkpointPathFor(worldName, modelKey);
     return (!profilePath.empty() && std::filesystem::exists(profilePath)) ||
            (!checkpointPath.empty() && std::filesystem::exists(checkpointPath));
 }
 
-std::vector<StoredWorldRecord> WorldStore::list(std::string& message) const {
+std::vector<StoredWorldRecord> WorldStore::list(const std::string& modelKey, std::string& message) const {
     std::vector<StoredWorldRecord> worlds;
 
     try {
-        const auto names = worldProfileStore_.list();
+        auto names = worldProfileStore_.list(modelKey);
+        if (names.empty() && !normalizeScopeKey(modelKey).empty()) {
+            names = worldProfileStore_.list();
+        }
         worlds.reserve(names.size());
 
         for (const auto& worldName : names) {
             StoredWorldRecord record;
+            record.modelKey = normalizeScopeKey(modelKey);
+            if (record.modelKey.empty()) {
+                record.modelKey = "legacy";
+            }
             record.worldName = worldName;
-            record.profilePath = profilePathFor(worldName);
-            record.checkpointPath = checkpointPathFor(worldName);
+            record.profilePath = profilePathFor(worldName, modelKey);
+            record.checkpointPath = checkpointPathFor(worldName, modelKey);
             record.hasProfile = std::filesystem::exists(record.profilePath);
             record.hasCheckpoint = std::filesystem::exists(record.checkpointPath);
 
@@ -142,7 +225,7 @@ std::vector<StoredWorldRecord> WorldStore::list(std::string& message) const {
                 record.profileLastWrite = std::filesystem::last_write_time(record.profilePath);
                 record.hasProfileTimestamp = true;
                 try {
-                    const auto launch = worldProfileStore_.load(worldName);
+                    const auto launch = worldProfileStore_.load(worldName, modelKey);
                     record.gridWidth = launch.grid.width;
                     record.gridHeight = launch.grid.height;
                     record.seed = launch.seed;
@@ -191,8 +274,8 @@ std::vector<StoredWorldRecord> WorldStore::list(std::string& message) const {
     return worlds;
 }
 
-std::string WorldStore::suggestNextWorldName() const {
-    const auto names = worldProfileStore_.list();
+std::string WorldStore::suggestNextWorldName(const std::string& modelKey) const {
+    const auto names = worldProfileStore_.list(modelKey);
     int maxIndex = 0;
     for (const auto& name : names) {
         int value = 0;
@@ -205,7 +288,7 @@ std::string WorldStore::suggestNextWorldName() const {
         std::ostringstream out;
         out << "world_" << std::setw(4) << std::setfill('0') << i;
         const std::string candidate = out.str();
-        if (!worldExists(candidate)) {
+        if (!worldExists(candidate, modelKey)) {
             return candidate;
         }
     }
@@ -213,17 +296,17 @@ std::string WorldStore::suggestNextWorldName() const {
     return "world_99999";
 }
 
-std::string WorldStore::suggestWorldNameFromHint(const std::string& hint) const {
+std::string WorldStore::suggestWorldNameFromHint(const std::string& hint, const std::string& modelKey) const {
     std::string base = normalizeWorldName(hint);
     if (base.empty()) {
-        return suggestNextWorldName();
+        return suggestNextWorldName(modelKey);
     }
 
     while (!base.empty() && base.back() == '_') {
         base.pop_back();
     }
     if (base.empty()) {
-        return suggestNextWorldName();
+        return suggestNextWorldName(modelKey);
     }
 
     std::string lower = base;
@@ -232,7 +315,7 @@ std::string WorldStore::suggestWorldNameFromHint(const std::string& hint) const 
     });
 
     if (lower == "world" || lower == "new_world") {
-        return suggestNextWorldName();
+        return suggestNextWorldName(modelKey);
     }
 
     auto trimNumericSuffix = [](std::string value) {
@@ -247,21 +330,21 @@ std::string WorldStore::suggestWorldNameFromHint(const std::string& hint) const 
 
     base = trimNumericSuffix(base);
     if (base.empty()) {
-        return suggestNextWorldName();
+        return suggestNextWorldName(modelKey);
     }
 
-    if (!worldExists(base)) {
+    if (!worldExists(base, modelKey)) {
         return base;
     }
 
     for (int i = 2; i < 100000; ++i) {
         const std::string candidate = base + "_" + std::to_string(i);
-        if (!worldExists(candidate)) {
+        if (!worldExists(candidate, modelKey)) {
             return candidate;
         }
     }
 
-    return suggestNextWorldName();
+    return suggestNextWorldName(modelKey);
 }
 
 bool WorldStore::copyFileIfExists(const std::filesystem::path& source, const std::filesystem::path& target, std::string& message) const {
@@ -285,7 +368,7 @@ bool WorldStore::copyFileIfExists(const std::filesystem::path& source, const std
     return true;
 }
 
-bool WorldStore::erase(const std::string& worldName, std::string& message) const {
+bool WorldStore::erase(const std::string& worldName, const std::string& modelKey, std::string& message) const {
     const auto normalized = normalizeWorldName(worldName);
     if (normalized.empty()) {
         message = "world_delete_failed error=invalid_world_name";
@@ -294,9 +377,9 @@ bool WorldStore::erase(const std::string& worldName, std::string& message) const
 
     bool removedAny = false;
     try {
-        const auto profilePath = profilePathFor(normalized);
-        const auto checkpointPath = checkpointPathFor(normalized);
-        const auto displayPath = displayPrefsPathFor(normalized);
+        const auto profilePath = profilePathFor(normalized, modelKey);
+        const auto checkpointPath = checkpointPathFor(normalized, modelKey);
+        const auto displayPath = displayPrefsPathFor(normalized, modelKey);
 
         if (!profilePath.empty() && std::filesystem::exists(profilePath)) {
             removedAny = std::filesystem::remove(profilePath) || removedAny;
@@ -321,30 +404,30 @@ bool WorldStore::erase(const std::string& worldName, std::string& message) const
     }
 }
 
-bool WorldStore::rename(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) const {
+bool WorldStore::rename(const std::string& fromWorldName, const std::string& toWorldName, const std::string& modelKey, std::string& message) const {
     const auto from = normalizeWorldName(fromWorldName);
     const auto to = normalizeWorldName(toWorldName);
     if (from.empty() || to.empty() || from == to) {
         message = "world_rename_failed error=invalid_name";
         return false;
     }
-    if (!worldExists(from)) {
+    if (!worldExists(from, modelKey)) {
         message = "world_rename_failed error=source_missing";
         return false;
     }
-    if (worldExists(to)) {
+    if (worldExists(to, modelKey)) {
         message = "world_rename_failed error=target_exists";
         return false;
     }
 
     std::string copyMessage;
-    if (!duplicate(from, to, copyMessage)) {
+    if (!duplicate(from, to, modelKey, copyMessage)) {
         message = copyMessage;
         return false;
     }
 
     std::string deleteMessage;
-    if (!erase(from, deleteMessage)) {
+    if (!erase(from, modelKey, deleteMessage)) {
         message = "world_rename_partial source=" + from + " target=" + to + " detail=" + deleteMessage;
         return false;
     }
@@ -353,29 +436,29 @@ bool WorldStore::rename(const std::string& fromWorldName, const std::string& toW
     return true;
 }
 
-bool WorldStore::duplicate(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) const {
+bool WorldStore::duplicate(const std::string& fromWorldName, const std::string& toWorldName, const std::string& modelKey, std::string& message) const {
     const auto from = normalizeWorldName(fromWorldName);
     const auto to = normalizeWorldName(toWorldName);
     if (from.empty() || to.empty() || from == to) {
         message = "world_duplicate_failed error=invalid_name";
         return false;
     }
-    if (!worldExists(from)) {
+    if (!worldExists(from, modelKey)) {
         message = "world_duplicate_failed error=source_missing";
         return false;
     }
-    if (worldExists(to)) {
+    if (worldExists(to, modelKey)) {
         message = "world_duplicate_failed error=target_exists";
         return false;
     }
 
-    const auto fromProfile = profilePathFor(from);
-    const auto fromCheckpoint = checkpointPathFor(from);
-    const auto fromDisplay = displayPrefsPathFor(from);
+    const auto fromProfile = profilePathFor(from, modelKey);
+    const auto fromCheckpoint = checkpointPathFor(from, modelKey);
+    const auto fromDisplay = displayPrefsPathFor(from, modelKey);
 
-    const auto toProfile = profilePathFor(to);
-    const auto toCheckpoint = checkpointPathFor(to);
-    const auto toDisplay = displayPrefsPathFor(to);
+    const auto toProfile = profilePathFor(to, modelKey);
+    const auto toCheckpoint = checkpointPathFor(to, modelKey);
+    const auto toDisplay = displayPrefsPathFor(to, modelKey);
 
     if (!copyFileIfExists(fromProfile, toProfile, message) ||
         !copyFileIfExists(fromCheckpoint, toCheckpoint, message) ||
@@ -387,15 +470,20 @@ bool WorldStore::duplicate(const std::string& fromWorldName, const std::string& 
     return true;
 }
 
-bool WorldStore::exportWorld(const std::string& worldName, const std::filesystem::path& outputPath, std::string& message) const {
+bool WorldStore::exportWorld(
+    const std::string& worldName,
+    const std::filesystem::path& outputPath,
+    const std::string& modelKey,
+    const WorldModelMetadata& modelMetadata,
+    std::string& message) const {
     const auto normalized = normalizeWorldName(worldName);
     if (normalized.empty()) {
         message = "world_export_failed error=invalid_world_name";
         return false;
     }
 
-    const auto profilePath = profilePathFor(normalized);
-    const auto checkpointPath = checkpointPathFor(normalized);
+    const auto profilePath = profilePathFor(normalized, modelKey);
+    const auto checkpointPath = checkpointPathFor(normalized, modelKey);
     if (!std::filesystem::exists(profilePath)) {
         message = "world_export_failed error=missing_profile";
         return false;
@@ -435,9 +523,17 @@ bool WorldStore::exportWorld(const std::string& worldName, const std::filesystem
     }
 
     const std::uint64_t magic = 0x315850455753ull; // "WSEXP1"
-    const std::uint32_t version = 1;
+    const std::uint32_t version = 3;
     output.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
     output.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    if (!writeStringBlob(output, normalizeScopeKey(modelKey)) ||
+        !writeStringBlob(output, trimCopy(modelMetadata.modelId)) ||
+        !writeStringBlob(output, trimCopy(modelMetadata.modelName)) ||
+        !writeStringBlob(output, trimCopy(modelMetadata.modelPath)) ||
+        !writeStringBlob(output, trimCopy(modelMetadata.modelIdentityHash))) {
+        message = "world_export_failed error=write_failed";
+        return false;
+    }
     if (!writeStringBlob(output, normalized) ||
         !writeStringBlob(output, profileText) ||
         !writeStringBlob(output, checkpointBinary)) {
@@ -449,7 +545,12 @@ bool WorldStore::exportWorld(const std::string& worldName, const std::filesystem
     return true;
 }
 
-bool WorldStore::importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message) const {
+bool WorldStore::importWorld(
+    const std::filesystem::path& inputPath,
+    const std::string& modelKey,
+    const WorldModelMetadata& expectedModelMetadata,
+    std::string& importedWorldName,
+    std::string& message) const {
     std::ifstream input(inputPath, std::ios::binary);
     if (!input.is_open()) {
         message = "world_import_failed error=input_open_failed";
@@ -460,12 +561,47 @@ bool WorldStore::importWorld(const std::filesystem::path& inputPath, std::string
     std::uint32_t version = 0;
     input.read(reinterpret_cast<char*>(&magic), sizeof(magic));
     input.read(reinterpret_cast<char*>(&version), sizeof(version));
-    if (!input.good() || magic != 0x315850455753ull || version != 1) {
+    if (!input.good() || magic != 0x315850455753ull || version < 1u || version > 3u) {
         message = "world_import_failed error=format_mismatch";
         return false;
     }
 
-    const auto storedName = readStringBlob(input);
+    WorldModelMetadata sourceMetadata;
+    std::optional<std::string> storedName;
+    if (version >= 3u) {
+        const auto storedModelKey = readStringBlob(input);
+        const auto storedModelId = readStringBlob(input);
+        const auto storedModelName = readStringBlob(input);
+        const auto storedModelPath = readStringBlob(input);
+        const auto storedModelIdentityHash = readStringBlob(input);
+        storedName = readStringBlob(input);
+
+        if (!storedModelKey.has_value() ||
+            !storedModelId.has_value() ||
+            !storedModelName.has_value() ||
+            !storedModelPath.has_value() ||
+            !storedModelIdentityHash.has_value() ||
+            !storedName.has_value()) {
+            message = "world_import_failed error=payload_read_failed";
+            return false;
+        }
+
+        sourceMetadata.modelKey = *storedModelKey;
+        sourceMetadata.modelId = *storedModelId;
+        sourceMetadata.modelName = *storedModelName;
+        sourceMetadata.modelPath = *storedModelPath;
+        sourceMetadata.modelIdentityHash = *storedModelIdentityHash;
+    } else if (version >= 2u) {
+        const auto storedModelKey = readStringBlob(input);
+        storedName = readStringBlob(input);
+        if (!storedModelKey.has_value() || !storedName.has_value()) {
+            message = "world_import_failed error=payload_read_failed";
+            return false;
+        }
+        sourceMetadata.modelKey = *storedModelKey;
+    } else {
+        storedName = readStringBlob(input);
+    }
     const auto profileText = readStringBlob(input);
     const auto checkpointBinary = readStringBlob(input);
     if (!storedName.has_value() || !profileText.has_value() || !checkpointBinary.has_value()) {
@@ -475,14 +611,29 @@ bool WorldStore::importWorld(const std::filesystem::path& inputPath, std::string
 
     auto candidate = normalizeWorldName(*storedName);
     if (candidate.empty()) {
-        candidate = suggestNextWorldName();
+        candidate = suggestNextWorldName(modelKey);
     }
-    if (worldExists(candidate)) {
-        candidate = suggestNextWorldName();
+    if (worldExists(candidate, modelKey)) {
+        candidate = suggestNextWorldName(modelKey);
     }
 
-    const auto profilePath = profilePathFor(candidate);
-    const auto checkpointPath = checkpointPathFor(candidate);
+    const std::string sourceModelKey = normalizeScopeKey(sourceMetadata.modelKey);
+    const std::string targetModelKey = normalizeScopeKey(modelKey);
+
+    std::string compatibilityReason;
+    if (hasModelCompatibilityConflict(sourceMetadata, expectedModelMetadata, compatibilityReason)) {
+        std::ostringstream error;
+        error << "world_import_failed error=model_incompatible reason=" << compatibilityReason
+              << " source_model_id=" << trimCopy(sourceMetadata.modelId)
+              << " source_model_identity_hash=" << trimCopy(sourceMetadata.modelIdentityHash)
+              << " target_model_id=" << trimCopy(expectedModelMetadata.modelId)
+              << " target_model_identity_hash=" << trimCopy(expectedModelMetadata.modelIdentityHash);
+        message = error.str();
+        return false;
+    }
+
+    const auto profilePath = profilePathFor(candidate, modelKey);
+    const auto checkpointPath = checkpointPathFor(candidate, modelKey);
 
     std::error_code ec;
     std::filesystem::create_directories(profilePath.parent_path(), ec);
@@ -519,7 +670,10 @@ bool WorldStore::importWorld(const std::filesystem::path& inputPath, std::string
     }
 
     importedWorldName = candidate;
-    message = "world_imported name=" + candidate + " source=" + inputPath.string();
+    message = "world_imported name=" + candidate + " source=" + inputPath.string() + " model=" + targetModelKey;
+    if (!sourceModelKey.empty() && sourceModelKey != targetModelKey) {
+        message += " source_model=" + sourceModelKey;
+    }
     return true;
 }
 

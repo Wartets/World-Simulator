@@ -68,6 +68,11 @@ struct InitializationBindingPlan {
     ModelVariableCatalog& outCatalog,
     std::string& message);
 
+[[nodiscard]] bool loadModelParameterControls(
+    const std::filesystem::path& modelPath,
+    std::vector<ParameterControl>& controls,
+    std::string& message);
+
 [[nodiscard]] InitializationBindingPlan buildBindingPlan(
     const ModelVariableCatalog& catalog,
     const InitializationRequest& request);

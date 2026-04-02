@@ -1,6 +1,7 @@
 ﻿#include "ws/gui/runtime_service.hpp"
 
 #include "ws/app/checkpoint_io.hpp"
+#include "ws/core/initialization_binding.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
 
 #include <algorithm>
@@ -14,12 +15,53 @@ namespace ws::gui {
 
 RuntimeService::RuntimeService() = default;
 
+void RuntimeService::setModelScope(ModelScopeContext context) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    modelScope_ = std::move(context);
+}
+
 std::filesystem::path RuntimeService::worldProfileRoot() {
     return std::filesystem::path("checkpoints") / "world_profiles";
 }
 
 std::filesystem::path RuntimeService::worldCheckpointRoot() {
     return std::filesystem::path("checkpoints") / "worlds";
+}
+
+std::string RuntimeService::currentModelKey() const {
+    const auto pick = [](const std::string& value) -> std::string {
+        const auto trimmed = app::trim(value);
+        return trimmed;
+    };
+
+    if (!pick(modelScope_.modelId).empty()) {
+        return pick(modelScope_.modelId);
+    }
+    if (!pick(modelScope_.modelIdentityHash).empty()) {
+        return pick(modelScope_.modelIdentityHash);
+    }
+    if (!pick(modelScope_.modelName).empty()) {
+        return pick(modelScope_.modelName);
+    }
+    if (!pick(modelScope_.modelPath).empty()) {
+        return pick(modelScope_.modelPath);
+    }
+    return "legacy";
+}
+
+std::string RuntimeService::activeModelKey() const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return currentModelKey();
+}
+
+app::WorldModelMetadata RuntimeService::currentWorldModelMetadata() const {
+    app::WorldModelMetadata metadata;
+    metadata.modelKey = currentModelKey();
+    metadata.modelId = app::trim(modelScope_.modelId);
+    metadata.modelName = app::trim(modelScope_.modelName);
+    metadata.modelPath = app::trim(modelScope_.modelPath);
+    metadata.modelIdentityHash = app::trim(modelScope_.modelIdentityHash);
+    return metadata;
 }
 
 void RuntimeService::refreshCachedStateNoLock() const {
@@ -52,7 +94,19 @@ bool RuntimeService::start(std::string& message) {
     checkpoints_.clear();
 
     try {
-        auto runtime = std::make_unique<Runtime>(app::makeRuntimeConfig(config_));
+        auto runtimeConfig = app::makeRuntimeConfig(config_);
+        if (!modelScope_.modelPath.empty()) {
+            std::vector<ParameterControl> modelParameterControls;
+            std::string parameterControlMessage;
+            if (initialization::loadModelParameterControls(
+                    std::filesystem::path(modelScope_.modelPath),
+                    modelParameterControls,
+                    parameterControlMessage)) {
+                runtimeConfig.modelParameterControls = std::move(modelParameterControls);
+            }
+        }
+
+        auto runtime = std::make_unique<Runtime>(std::move(runtimeConfig));
         for (const auto& subsystem : makePhase4Subsystems()) {
             runtime->registerSubsystem(subsystem);
         }
@@ -139,10 +193,11 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<StoredWorldInfo> worlds;
 
-    const auto records = worldStore_.list(message);
+    const auto records = worldStore_.list(currentModelKey(), message);
     worlds.reserve(records.size());
     for (const auto& record : records) {
         StoredWorldInfo info;
+        info.modelKey = record.modelKey;
         info.worldName = record.worldName;
         info.profilePath = record.profilePath;
         info.checkpointPath = record.checkpointPath;
@@ -169,12 +224,12 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
 
 std::string RuntimeService::suggestNextWorldName() const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return worldStore_.suggestNextWorldName();
+    return worldStore_.suggestNextWorldName(currentModelKey());
 }
 
 std::string RuntimeService::suggestWorldNameFromHint(const std::string& hint) const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return worldStore_.suggestWorldNameFromHint(hint);
+    return worldStore_.suggestWorldNameFromHint(hint, currentModelKey());
 }
 
 std::string RuntimeService::normalizeWorldNameForUi(const std::string& worldName) const {
@@ -197,6 +252,7 @@ bool RuntimeService::createWorld(const std::string& worldName, const app::Launch
     }
 
     activeWorldName_ = normalized;
+    const std::string modelKey = currentModelKey();
     if (!saveActiveWorld(message)) {
         return false;
     }
@@ -219,7 +275,7 @@ bool RuntimeService::openWorld(const std::string& worldName, std::string& messag
     }
 
     try {
-        config_ = worldProfileStore_.load(normalized);
+        config_ = worldProfileStore_.load(normalized, currentModelKey());
     } catch (const std::exception& exception) {
         message = std::string("world_open_failed error=") + exception.what();
         return false;
@@ -229,7 +285,7 @@ bool RuntimeService::openWorld(const std::string& worldName, std::string& messag
         return false;
     }
 
-    const auto checkpointPath = worldStore_.checkpointPathFor(normalized);
+    const auto checkpointPath = worldStore_.checkpointPathFor(normalized, currentModelKey());
     if (std::filesystem::exists(checkpointPath)) {
         try {
             const auto checkpoint = app::readCheckpointFile(checkpointPath);
@@ -274,9 +330,10 @@ bool RuntimeService::saveActiveWorld(std::string& message) {
     }
 
     try {
-        worldProfileStore_.save(activeWorldName_, config_);
+        const std::string modelKey = currentModelKey();
+        worldProfileStore_.save(activeWorldName_, config_, modelKey);
         const auto checkpoint = runtime_->createCheckpoint(activeWorldName_, true /* computeHash */);
-        const auto checkpointPath = worldStore_.checkpointPathFor(activeWorldName_);
+        const auto checkpointPath = worldStore_.checkpointPathFor(activeWorldName_, modelKey);
         app::writeCheckpointFile(checkpoint, checkpointPath);
         std::ostringstream output;
         output << "world_saved name=" << activeWorldName_
@@ -292,7 +349,7 @@ bool RuntimeService::saveActiveWorld(std::string& message) {
 bool RuntimeService::deleteWorld(const std::string& worldName, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-    const bool ok = worldStore_.erase(worldName, message);
+    const bool ok = worldStore_.erase(worldName, currentModelKey(), message);
     if (ok && activeWorldName_ == app::trim(worldName)) {
         activeWorldName_.clear();
     }
@@ -301,7 +358,7 @@ bool RuntimeService::deleteWorld(const std::string& worldName, std::string& mess
 
 bool RuntimeService::renameWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    const bool ok = worldStore_.rename(fromWorldName, toWorldName, message);
+    const bool ok = worldStore_.rename(fromWorldName, toWorldName, currentModelKey(), message);
     if (ok && activeWorldName_ == app::trim(fromWorldName)) {
         activeWorldName_ = app::trim(toWorldName);
     }
@@ -310,17 +367,19 @@ bool RuntimeService::renameWorld(const std::string& fromWorldName, const std::st
 
 bool RuntimeService::duplicateWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return worldStore_.duplicate(fromWorldName, toWorldName, message);
+    return worldStore_.duplicate(fromWorldName, toWorldName, currentModelKey(), message);
 }
 
 bool RuntimeService::exportWorld(const std::string& worldName, const std::filesystem::path& outputPath, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return worldStore_.exportWorld(worldName, outputPath, message);
+    const auto modelMetadata = currentWorldModelMetadata();
+    return worldStore_.exportWorld(worldName, outputPath, modelMetadata.modelKey, modelMetadata, message);
 }
 
 bool RuntimeService::importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    return worldStore_.importWorld(inputPath, importedWorldName, message);
+    const auto modelMetadata = currentWorldModelMetadata();
+    return worldStore_.importWorld(inputPath, modelMetadata.modelKey, modelMetadata, importedWorldName, message);
 }
 
 bool RuntimeService::step(const std::uint32_t count, std::string& message) {

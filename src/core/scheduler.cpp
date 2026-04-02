@@ -5,6 +5,7 @@
 #include <cmath>
 #include <future>
 #include <limits>
+#include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -509,6 +510,18 @@ StepDiagnostics Scheduler::step(
 
     const auto ordered = orderedSubsystems();
 
+    std::vector<std::string> conservedVariables = profile.conservedVariables;
+    conservedVariables.erase(
+        std::remove_if(conservedVariables.begin(), conservedVariables.end(), [](const std::string& variableName) {
+            return variableName.empty();
+        }),
+        conservedVariables.end());
+    std::sort(conservedVariables.begin(), conservedVariables.end());
+    conservedVariables.erase(std::unique(conservedVariables.begin(), conservedVariables.end()), conservedVariables.end());
+    if (conservedVariables.empty()) {
+        conservedVariables = {"resource_stock_r", "surface_water_w"};
+    }
+
     for (const auto& subsystem : ordered) {
         subsystem->preStep(profile, stepIndex);
     }
@@ -717,8 +730,12 @@ StepDiagnostics Scheduler::step(
         }
     };
 
-    const double preWaterMass = stateStore.hasField("surface_water_w") ? computeTotal(stateStore, "surface_water_w") : 0.0;
-    const double preResourceMass = stateStore.hasField("resource_stock_r") ? computeTotal(stateStore, "resource_stock_r") : 0.0;
+    std::map<std::string, double, std::less<>> preConservationMass;
+    for (const auto& variableName : conservedVariables) {
+        if (stateStore.hasField(variableName)) {
+            preConservationMass.insert_or_assign(variableName, computeTotal(stateStore, variableName));
+        }
+    }
 
     if (temporalPolicy == TemporalPolicy::UniformA) {
         runUniformPass();
@@ -876,10 +893,23 @@ StepDiagnostics Scheduler::step(
         subsystem->postStep(profile, stepIndex);
     }
 
-    const double postWaterMass = stateStore.hasField("surface_water_w") ? computeTotal(stateStore, "surface_water_w") : preWaterMass;
-    const double postResourceMass = stateStore.hasField("resource_stock_r") ? computeTotal(stateStore, "resource_stock_r") : preResourceMass;
-    diagnostics.stability.conservationResidualWater = postWaterMass - preWaterMass;
-    diagnostics.stability.conservationResidualResources = postResourceMass - preResourceMass;
+    diagnostics.stability.conservationResiduals.clear();
+    diagnostics.stability.conservationResiduals.reserve(preConservationMass.size());
+    for (const auto& [variableName, preMass] : preConservationMass) {
+        const double postMass = stateStore.hasField(variableName) ? computeTotal(stateStore, variableName) : preMass;
+        diagnostics.stability.conservationResiduals.push_back(
+            StabilityDiagnostics::ConservationResidual{variableName, postMass - preMass});
+    }
+
+    diagnostics.stability.conservationResidualWater = 0.0;
+    diagnostics.stability.conservationResidualResources = 0.0;
+    for (const auto& residual : diagnostics.stability.conservationResiduals) {
+        if (residual.variableName == "surface_water_w") {
+            diagnostics.stability.conservationResidualWater = residual.residual;
+        } else if (residual.variableName == "resource_stock_r") {
+            diagnostics.stability.conservationResidualResources = residual.residual;
+        }
+    }
 
     return diagnostics;
 }

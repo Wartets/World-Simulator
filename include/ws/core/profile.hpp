@@ -13,6 +13,7 @@ namespace ws {
 struct ModelProfile {
     std::map<std::string, ModelTier, std::less<>> subsystemTiers;
     std::set<std::string, std::less<>> compatibilityAssumptions;
+    std::vector<std::string> conservedVariables;
 
     [[nodiscard]] std::uint64_t fingerprint() const noexcept;
 };
@@ -20,6 +21,7 @@ struct ModelProfile {
 struct ProfileResolverInput {
     std::map<std::string, ModelTier, std::less<>> requestedSubsystemTiers;
     std::set<std::string, std::less<>> compatibilityAssumptions;
+    std::vector<std::string> conservedVariables;
 };
 
 class ProfileResolver {

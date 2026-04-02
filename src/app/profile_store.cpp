@@ -11,6 +11,25 @@ namespace ws::app {
 
 namespace {
 
+std::string sanitizeScopeKey(std::string key) {
+    key = trim(std::move(key));
+    if (key.empty()) {
+        return {};
+    }
+
+    for (char& ch : key) {
+        const bool allowed =
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' || ch == '-';
+        if (!allowed) {
+            ch = '_';
+        }
+    }
+    return key;
+}
+
 void validateProfileName(const std::string& profileName) {
     if (profileName.empty()) {
         throw std::invalid_argument("profile name must not be empty");
@@ -32,18 +51,38 @@ void validateProfileName(const std::string& profileName) {
 ProfileStore::ProfileStore(std::filesystem::path rootDirectory)
     : rootDirectory_(std::move(rootDirectory)) {}
 
-std::filesystem::path ProfileStore::pathFor(const std::string& profileName) const {
-    validateProfileName(profileName);
-    return rootDirectory_ / (profileName + ".wsprofile");
+std::string ProfileStore::normalizeScopeKey(std::string modelKey) {
+    return sanitizeScopeKey(std::move(modelKey));
 }
 
-void ProfileStore::save(const std::string& profileName, const LaunchConfig& config) const {
-    const auto path = pathFor(profileName);
+std::filesystem::path ProfileStore::pathFor(const std::string& profileName, const std::string& modelKey) const {
+    validateProfileName(profileName);
+
+    const auto scopedModelKey = normalizeScopeKey(modelKey);
+    if (scopedModelKey.empty()) {
+        return rootDirectory_ / (profileName + ".wsprofile");
+    }
+
+    const auto scopedPath = rootDirectory_ / scopedModelKey / (profileName + ".wsprofile");
+    if (std::filesystem::exists(scopedPath)) {
+        return scopedPath;
+    }
+
+    const auto legacyPath = rootDirectory_ / (profileName + ".wsprofile");
+    if (std::filesystem::exists(legacyPath)) {
+        return legacyPath;
+    }
+
+    return scopedPath;
+}
+
+void ProfileStore::save(const std::string& profileName, const LaunchConfig& config, const std::string& modelKey) const {
+    const auto path = pathFor(profileName, modelKey);
 
     std::error_code ec;
-    std::filesystem::create_directories(rootDirectory_, ec);
+    std::filesystem::create_directories(path.parent_path(), ec);
     if (ec) {
-        throw std::runtime_error("failed to create profile directory: " + rootDirectory_.string());
+        throw std::runtime_error("failed to create profile directory: " + path.parent_path().string());
     }
 
     std::ofstream output(path, std::ios::trunc);
@@ -99,8 +138,8 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "gen.waves.ring_frequency=" << config.initialConditions.waves.ringFrequency << '\n';
 }
 
-LaunchConfig ProfileStore::load(const std::string& profileName) const {
-    const auto path = pathFor(profileName);
+LaunchConfig ProfileStore::load(const std::string& profileName, const std::string& modelKey) const {
+    const auto path = pathFor(profileName, modelKey);
     std::ifstream input(path);
     if (!input.is_open()) {
         throw std::runtime_error("failed to open profile for read: " + path.string());
@@ -244,14 +283,39 @@ LaunchConfig ProfileStore::load(const std::string& profileName) const {
     return config;
 }
 
-std::vector<std::string> ProfileStore::list() const {
+std::vector<std::string> ProfileStore::list(const std::string& modelKey) const {
     std::vector<std::string> names;
 
-    if (!std::filesystem::exists(rootDirectory_)) {
+    const auto scopedModelKey = normalizeScopeKey(modelKey);
+    const std::filesystem::path base = scopedModelKey.empty() ? rootDirectory_ : (rootDirectory_ / scopedModelKey);
+
+    if (!std::filesystem::exists(base)) {
+        if (scopedModelKey.empty()) {
+            return names;
+        }
+
+        if (!std::filesystem::exists(rootDirectory_)) {
+            return names;
+        }
+
+        for (const auto& entry : std::filesystem::directory_iterator(rootDirectory_)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+
+            const auto extension = entry.path().extension().string();
+            if (extension != ".wsprofile") {
+                continue;
+            }
+
+            names.push_back(entry.path().stem().string());
+        }
+
+        std::sort(names.begin(), names.end());
         return names;
     }
 
-    for (const auto& entry : std::filesystem::directory_iterator(rootDirectory_)) {
+    for (const auto& entry : std::filesystem::directory_iterator(base)) {
         if (!entry.is_regular_file()) {
             continue;
         }

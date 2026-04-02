@@ -1,5 +1,6 @@
 #include "ws/core/profile.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace ws {
@@ -14,6 +15,15 @@ std::uint64_t ModelProfile::fingerprint() const noexcept {
 
     for (const auto& assumption : compatibilityAssumptions) {
         value = DeterministicHash::combine(value, DeterministicHash::hashString(assumption));
+    }
+
+    std::vector<std::string> normalizedConservedVariables = conservedVariables;
+    std::sort(normalizedConservedVariables.begin(), normalizedConservedVariables.end());
+    normalizedConservedVariables.erase(
+        std::unique(normalizedConservedVariables.begin(), normalizedConservedVariables.end()),
+        normalizedConservedVariables.end());
+    for (const auto& variable : normalizedConservedVariables) {
+        value = DeterministicHash::combine(value, DeterministicHash::hashString(variable));
     }
 
     return value;
@@ -46,6 +56,21 @@ ModelProfile ProfileResolver::resolve(const ProfileResolverInput& input) const {
     ModelProfile profile;
     profile.subsystemTiers = input.requestedSubsystemTiers;
     profile.compatibilityAssumptions = input.compatibilityAssumptions;
+    profile.conservedVariables = input.conservedVariables;
+
+    profile.conservedVariables.erase(
+        std::remove_if(profile.conservedVariables.begin(), profile.conservedVariables.end(), [](const std::string& variable) {
+            return variable.empty();
+        }),
+        profile.conservedVariables.end());
+    std::sort(profile.conservedVariables.begin(), profile.conservedVariables.end());
+    profile.conservedVariables.erase(
+        std::unique(profile.conservedVariables.begin(), profile.conservedVariables.end()),
+        profile.conservedVariables.end());
+
+    if (profile.conservedVariables.empty()) {
+        profile.conservedVariables = {"resource_stock_r", "surface_water_w"};
+    }
 
     if (profile.compatibilityAssumptions.empty()) {
         throw std::invalid_argument("ProfileResolver requires at least one explicit compatibility assumption");

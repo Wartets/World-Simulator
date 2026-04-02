@@ -44,10 +44,16 @@ struct NumericGuardrailPolicy {
 };
 
 struct StabilityDiagnostics {
+    struct ConservationResidual {
+        std::string variableName;
+        double residual = 0.0;
+    };
+
     double driftMetric = 0.0;
     double amplificationIndicator = 1.0;
     double conservationResidualWater = 0.0;
     double conservationResidualResources = 0.0;
+    std::vector<ConservationResidual> conservationResiduals;
     std::uint32_t microStepsExecuted = 0;
     std::uint32_t adaptiveSubIterations = 0;
     std::uint32_t dampingApplications = 0;

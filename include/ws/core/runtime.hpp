@@ -87,6 +87,16 @@ struct InitialConditionConfig {
     WaveParams waves;
 };
 
+struct ParameterControl {
+    std::string name;
+    std::string targetVariable;
+    float value = 0.0f;
+    float minValue = -1.0f;
+    float maxValue = 1.0f;
+    float defaultValue = 0.0f;
+    std::string units = "1";
+};
+
 struct RuntimeConfig {
     std::uint64_t seed = 1;
     GridSpec grid{16, 16};
@@ -99,16 +109,7 @@ struct RuntimeConfig {
     NumericGuardrailPolicy guardrailPolicy{};
     ProfileResolverInput profileInput{};
     InitialConditionConfig initialConditions{};
-};
-
-struct ParameterControl {
-    std::string name;
-    std::string targetVariable;
-    float value = 0.0f;
-    float minValue = -1.0f;
-    float maxValue = 1.0f;
-    float defaultValue = 0.0f;
-    std::string units = "1";
+    std::vector<ParameterControl> modelParameterControls{};
 };
 
 enum class PerturbationType : std::uint8_t {
@@ -205,6 +206,7 @@ public:
 
 private:
     void allocateCanonicalFields();
+    void initializeParameterControls();
     void stepImpl(bool controlledByRuntimeControl);
     void trace(
         TraceChannel channel,

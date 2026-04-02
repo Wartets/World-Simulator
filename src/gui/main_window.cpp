@@ -282,6 +282,11 @@ public:
         modelSelector_.on_load_model = [this](const ModelInfo& model) {
             modelSelector_.close();
             modelEditor_.close();
+            runtime_.setModelScope(ModelScopeContext{
+                model.model_id.empty() ? model.name : model.model_id,
+                model.name,
+                model.path,
+                model.identity_hash});
             sessionUi_.needsRefresh = true;
             std::snprintf(sessionUi_.selectedModelName, sizeof(sessionUi_.selectedModelName), "%s", model.name.c_str());
             std::snprintf(

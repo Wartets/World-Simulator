@@ -139,6 +139,10 @@ ProfileResolverInput buildProfileInput(const ModelTier tier) {
         "interactive_shell",
         "runtime_manual_control"
     };
+    input.conservedVariables = {
+        "surface_water_w",
+        "resource_stock_r"
+    };
     return input;
 }
 

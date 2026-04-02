@@ -18,7 +18,15 @@
 
 namespace ws::gui {
 
+struct ModelScopeContext {
+    std::string modelId;
+    std::string modelName;
+    std::string modelPath;
+    std::string modelIdentityHash;
+};
+
 struct StoredWorldInfo {
+    std::string modelKey;
     std::string worldName;
     std::filesystem::path profilePath;
     std::filesystem::path checkpointPath;
@@ -45,6 +53,8 @@ public:
 
     [[nodiscard]] const app::LaunchConfig& config() const noexcept { return config_; }
     void setConfig(const app::LaunchConfig& config) { config_ = config; }
+    void setModelScope(ModelScopeContext context);
+    [[nodiscard]] const ModelScopeContext& modelScope() const noexcept { return modelScope_; }
 
     [[nodiscard]] bool isRunning() const;
     [[nodiscard]] bool isPaused() const;
@@ -104,17 +114,21 @@ public:
     bool importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message);
 
     [[nodiscard]] const std::string& activeWorldName() const noexcept { return activeWorldName_; }
+    [[nodiscard]] std::string activeModelKey() const;
 
     bool applySettings(std::string& message);
 
 private:
+    [[nodiscard]] app::WorldModelMetadata currentWorldModelMetadata() const;
     void refreshCachedStateNoLock() const;
     bool requireRuntime(const char* operation, std::string& message) const;
     bool captureTimelineCheckpointNoLock(const char* context, std::string& message);
     [[nodiscard]] static std::filesystem::path worldProfileRoot();
     [[nodiscard]] static std::filesystem::path worldCheckpointRoot();
+    [[nodiscard]] std::string currentModelKey() const;
 
     app::LaunchConfig config_{};
+    ModelScopeContext modelScope_{};
     std::unique_ptr<Runtime> runtime_;
     std::map<std::string, RuntimeCheckpoint, std::less<>> checkpoints_;
     app::ProfileStore profileStore_{};

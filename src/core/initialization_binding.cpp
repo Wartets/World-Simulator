@@ -1,10 +1,13 @@
 #include "ws/core/initialization_binding.hpp"
 
+#include "ws/core/model_parser.hpp"
+
 #include "ws/core/determinism.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -31,6 +34,70 @@ std::optional<float> readDomainBound(const json& domain, const char* key) {
         return value.get<float>();
     }
     return std::nullopt;
+}
+
+bool populateCatalogFromModelJson(
+    const std::filesystem::path& modelPath,
+    const std::string& modelJson,
+    ModelVariableCatalog& outCatalog,
+    std::string& message) {
+    try {
+        const json parsed = json::parse(modelJson);
+        if (parsed.contains("id") && parsed["id"].is_string()) {
+            outCatalog.modelId = parsed["id"].get<std::string>();
+        }
+
+        if (!parsed.contains("variables") || !parsed["variables"].is_array()) {
+            message = "model_catalog_load_failed reason=variables_missing";
+            return false;
+        }
+
+        for (const auto& variable : parsed["variables"]) {
+            if (!variable.is_object()) {
+                continue;
+            }
+            if (!variable.contains("id") || !variable["id"].is_string()) {
+                continue;
+            }
+
+            VariableDescriptor descriptor;
+            descriptor.id = variable["id"].get<std::string>();
+            descriptor.role = variable.contains("role") && variable["role"].is_string() ? variable["role"].get<std::string>() : std::string();
+            descriptor.support = variable.contains("support") && variable["support"].is_string() ? variable["support"].get<std::string>() : std::string();
+            descriptor.type = variable.contains("type") && variable["type"].is_string() ? variable["type"].get<std::string>() : std::string();
+            descriptor.units = variable.contains("units") && variable["units"].is_string() ? variable["units"].get<std::string>() : std::string();
+
+            const auto minBound = readDomainBound(variable, "min");
+            const auto maxBound = readDomainBound(variable, "max");
+            if (minBound.has_value()) {
+                descriptor.hasDomainMin = true;
+                descriptor.domainMin = *minBound;
+            }
+            if (maxBound.has_value()) {
+                descriptor.hasDomainMax = true;
+                descriptor.domainMax = *maxBound;
+            }
+
+            outCatalog.variables.push_back(std::move(descriptor));
+        }
+
+        std::sort(outCatalog.variables.begin(), outCatalog.variables.end(), [](const VariableDescriptor& lhs, const VariableDescriptor& rhs) {
+            return lhs.id < rhs.id;
+        });
+        outCatalog.variables.erase(
+            std::unique(outCatalog.variables.begin(), outCatalog.variables.end(), [](const VariableDescriptor& lhs, const VariableDescriptor& rhs) {
+                return lhs.id == rhs.id;
+            }),
+            outCatalog.variables.end());
+
+        message = "model_catalog_ready variables=" + std::to_string(outCatalog.variables.size());
+        return true;
+    } catch (const std::exception& exception) {
+        outCatalog = ModelVariableCatalog{};
+        outCatalog.sourceModelPath = modelPath;
+        message = std::string("model_catalog_load_failed error=") + exception.what();
+        return false;
+    }
 }
 
 std::optional<std::size_t> findVariableIndexById(const ModelVariableCatalog& catalog, const std::string& id) {
@@ -223,31 +290,81 @@ bool loadModelVariableCatalog(
     std::string& message) {
     outCatalog = ModelVariableCatalog{};
     outCatalog.sourceModelPath = modelPath;
-
-    std::filesystem::path modelJsonPath = modelPath;
-    if (std::filesystem::is_directory(modelJsonPath)) {
-        modelJsonPath /= "model.json";
-    }
-
-    if (!std::filesystem::exists(modelJsonPath)) {
-        message = "model_catalog_load_failed reason=model_json_missing path=" + modelJsonPath.string();
-        return false;
-    }
-
     try {
-        std::ifstream in(modelJsonPath);
-        if (!in) {
-            message = "model_catalog_load_failed reason=file_open_failed path=" + modelJsonPath.string();
-            return false;
+        const auto ctx = ws::ModelParser::load(modelPath);
+        if (populateCatalogFromModelJson(modelPath, ctx.model_json, outCatalog, message)) {
+            return true;
         }
 
-        json parsed = json::parse(in);
-        if (parsed.contains("id") && parsed["id"].is_string()) {
-            outCatalog.modelId = parsed["id"].get<std::string>();
+        // Preserve the legacy loader behavior as a fallback for incomplete model packages.
+        if (std::filesystem::is_directory(modelPath)) {
+            const auto legacyJsonPath = modelPath / "model.json";
+            if (std::filesystem::exists(legacyJsonPath)) {
+                std::ifstream in(legacyJsonPath);
+                if (!in) {
+                    message = "model_catalog_load_failed reason=file_open_failed path=" + legacyJsonPath.string();
+                    return false;
+                }
+                const std::string modelJson((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                return populateCatalogFromModelJson(legacyJsonPath, modelJson, outCatalog, message);
+            }
+        }
+
+        message = "model_catalog_load_failed reason=unsupported_model_package path=" + modelPath.string();
+        return false;
+    } catch (const std::exception& exception) {
+        if (std::filesystem::is_directory(modelPath)) {
+            const std::filesystem::path modelJsonPath = modelPath / "model.json";
+            if (std::filesystem::exists(modelJsonPath)) {
+                try {
+                    std::ifstream in(modelJsonPath);
+                    if (!in) {
+                        message = "model_catalog_load_failed reason=file_open_failed path=" + modelJsonPath.string();
+                        return false;
+                    }
+
+                    const std::string modelJson((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                    return populateCatalogFromModelJson(modelJsonPath, modelJson, outCatalog, message);
+                } catch (const std::exception& fallbackException) {
+                    outCatalog = ModelVariableCatalog{};
+                    outCatalog.sourceModelPath = modelPath;
+                    message = std::string("model_catalog_load_failed error=") + fallbackException.what();
+                    return false;
+                }
+            }
+        }
+
+        outCatalog = ModelVariableCatalog{};
+        outCatalog.sourceModelPath = modelPath;
+        message = std::string("model_catalog_load_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool loadModelParameterControls(
+    const std::filesystem::path& modelPath,
+    std::vector<ParameterControl>& controls,
+    std::string& message) {
+    controls.clear();
+
+    try {
+        const auto ctx = ws::ModelParser::load(modelPath);
+        const json parsed = json::parse(ctx.model_json);
+
+        std::map<std::string, std::pair<std::optional<float>, std::optional<float>>, std::less<>> domainBounds;
+        if (parsed.contains("domains") && parsed["domains"].is_object()) {
+            for (auto it = parsed["domains"].begin(); it != parsed["domains"].end(); ++it) {
+                if (!it.value().is_object()) {
+                    continue;
+                }
+                domainBounds.insert_or_assign(it.key(), std::make_pair(
+                    readDomainBound(it.value(), "min"),
+                    readDomainBound(it.value(), "max")));
+            }
         }
 
         if (!parsed.contains("variables") || !parsed["variables"].is_array()) {
-            message = "model_catalog_load_failed reason=variables_missing";
+            message = "model_parameter_controls_failed reason=variables_missing";
             return false;
         }
 
@@ -259,41 +376,70 @@ bool loadModelVariableCatalog(
                 continue;
             }
 
-            VariableDescriptor descriptor;
-            descriptor.id = variable["id"].get<std::string>();
-            descriptor.role = variable.contains("role") && variable["role"].is_string() ? variable["role"].get<std::string>() : std::string();
-            descriptor.support = variable.contains("support") && variable["support"].is_string() ? variable["support"].get<std::string>() : std::string();
-            descriptor.type = variable.contains("type") && variable["type"].is_string() ? variable["type"].get<std::string>() : std::string();
-            descriptor.units = variable.contains("units") && variable["units"].is_string() ? variable["units"].get<std::string>() : std::string();
+            const std::string id = variable["id"].get<std::string>();
+            const std::string role = variable.contains("role") && variable["role"].is_string()
+                ? variable["role"].get<std::string>()
+                : std::string{};
+            const std::string support = variable.contains("support") && variable["support"].is_string()
+                ? variable["support"].get<std::string>()
+                : std::string{};
 
-            const auto minBound = readDomainBound(variable, "min");
-            const auto maxBound = readDomainBound(variable, "max");
+            if (role != "parameter" || support != "cell") {
+                continue;
+            }
+
+            ParameterControl control;
+            control.name = "model.parameter." + id;
+            control.targetVariable = id;
+            control.units = variable.contains("units") && variable["units"].is_string()
+                ? variable["units"].get<std::string>()
+                : std::string{"1"};
+
+            if (variable.contains("initial_value") &&
+                (variable["initial_value"].is_number_float() || variable["initial_value"].is_number_integer() || variable["initial_value"].is_number_unsigned())) {
+                control.defaultValue = variable["initial_value"].get<float>();
+                control.value = control.defaultValue;
+            }
+
+            auto minBound = readDomainBound(variable, "min");
+            auto maxBound = readDomainBound(variable, "max");
+
+            if (variable.contains("domain") && variable["domain"].is_string()) {
+                const auto domainIt = domainBounds.find(variable["domain"].get<std::string>());
+                if (domainIt != domainBounds.end()) {
+                    if (!minBound.has_value()) {
+                        minBound = domainIt->second.first;
+                    }
+                    if (!maxBound.has_value()) {
+                        maxBound = domainIt->second.second;
+                    }
+                }
+            }
+
             if (minBound.has_value()) {
-                descriptor.hasDomainMin = true;
-                descriptor.domainMin = *minBound;
+                control.minValue = *minBound;
             }
             if (maxBound.has_value()) {
-                descriptor.hasDomainMax = true;
-                descriptor.domainMax = *maxBound;
+                control.maxValue = *maxBound;
             }
+            if (control.minValue > control.maxValue) {
+                std::swap(control.minValue, control.maxValue);
+            }
+            control.defaultValue = std::clamp(control.defaultValue, control.minValue, control.maxValue);
+            control.value = std::clamp(control.value, control.minValue, control.maxValue);
 
-            outCatalog.variables.push_back(std::move(descriptor));
+            controls.push_back(std::move(control));
         }
 
-        std::sort(outCatalog.variables.begin(), outCatalog.variables.end(), [](const VariableDescriptor& lhs, const VariableDescriptor& rhs) {
-            return lhs.id < rhs.id;
+        std::sort(controls.begin(), controls.end(), [](const ParameterControl& lhs, const ParameterControl& rhs) {
+            return lhs.name < rhs.name;
         });
-        outCatalog.variables.erase(
-            std::unique(outCatalog.variables.begin(), outCatalog.variables.end(), [](const VariableDescriptor& lhs, const VariableDescriptor& rhs) {
-                return lhs.id == rhs.id;
-            }),
-            outCatalog.variables.end());
 
-        message = "model_catalog_ready variables=" + std::to_string(outCatalog.variables.size());
+        message = "model_parameter_controls_ready count=" + std::to_string(controls.size());
         return true;
     } catch (const std::exception& exception) {
-        outCatalog = ModelVariableCatalog{};
-        message = std::string("model_catalog_load_failed error=") + exception.what();
+        controls.clear();
+        message = std::string("model_parameter_controls_failed error=") + exception.what();
         return false;
     }
 }

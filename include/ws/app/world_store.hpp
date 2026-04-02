@@ -10,7 +10,21 @@
 
 namespace ws::app {
 
+struct WorldScopeKey {
+    std::string modelKey;
+    std::string worldName;
+};
+
+struct WorldModelMetadata {
+    std::string modelKey;
+    std::string modelId;
+    std::string modelName;
+    std::string modelPath;
+    std::string modelIdentityHash;
+};
+
 struct StoredWorldRecord {
+    std::string modelKey;
     std::string worldName;
     std::filesystem::path profilePath;
     std::filesystem::path checkpointPath;
@@ -38,27 +52,41 @@ public:
         std::filesystem::path worldProfileRoot = std::filesystem::path("checkpoints") / "world_profiles",
         std::filesystem::path worldCheckpointRoot = std::filesystem::path("checkpoints") / "worlds");
 
-    [[nodiscard]] std::vector<StoredWorldRecord> list(std::string& message) const;
-    [[nodiscard]] std::string suggestNextWorldName() const;
-    [[nodiscard]] std::string suggestWorldNameFromHint(const std::string& hint) const;
+    [[nodiscard]] std::vector<StoredWorldRecord> list(const std::string& modelKey, std::string& message) const;
+    [[nodiscard]] std::string suggestNextWorldName(const std::string& modelKey) const;
+    [[nodiscard]] std::string suggestWorldNameFromHint(const std::string& hint, const std::string& modelKey) const;
     [[nodiscard]] std::string normalizeNameForUi(std::string worldName) const;
 
-    bool erase(const std::string& worldName, std::string& message) const;
-    bool rename(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) const;
-    bool duplicate(const std::string& fromWorldName, const std::string& toWorldName, std::string& message) const;
+    bool erase(const std::string& worldName, const std::string& modelKey, std::string& message) const;
+    bool rename(const std::string& fromWorldName, const std::string& toWorldName, const std::string& modelKey, std::string& message) const;
+    bool duplicate(const std::string& fromWorldName, const std::string& toWorldName, const std::string& modelKey, std::string& message) const;
 
-    bool exportWorld(const std::string& worldName, const std::filesystem::path& outputPath, std::string& message) const;
-    bool importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message) const;
+    bool exportWorld(
+        const std::string& worldName,
+        const std::filesystem::path& outputPath,
+        const std::string& modelKey,
+        const WorldModelMetadata& modelMetadata,
+        std::string& message) const;
+    bool importWorld(
+        const std::filesystem::path& inputPath,
+        const std::string& modelKey,
+        const WorldModelMetadata& expectedModelMetadata,
+        std::string& importedWorldName,
+        std::string& message) const;
 
-    [[nodiscard]] std::filesystem::path profilePathFor(const std::string& worldName) const;
-    [[nodiscard]] std::filesystem::path checkpointPathFor(const std::string& worldName) const;
-    [[nodiscard]] std::filesystem::path displayPrefsPathFor(const std::string& worldName) const;
+    [[nodiscard]] std::filesystem::path profilePathFor(const std::string& worldName, const std::string& modelKey) const;
+    [[nodiscard]] std::filesystem::path checkpointPathFor(const std::string& worldName, const std::string& modelKey) const;
+    [[nodiscard]] std::filesystem::path displayPrefsPathFor(const std::string& worldName, const std::string& modelKey) const;
 
-    [[nodiscard]] bool worldExists(const std::string& worldName) const;
+    [[nodiscard]] bool worldExists(const std::string& worldName, const std::string& modelKey) const;
 
 private:
+    [[nodiscard]] static std::string normalizeScopeKey(std::string key);
     [[nodiscard]] static std::string normalizeWorldName(std::string worldName);
     [[nodiscard]] static bool isDefaultWorldName(const std::string& name, int& outIndex);
+
+    [[nodiscard]] std::filesystem::path scopedProfileRoot(const std::string& modelKey) const;
+    [[nodiscard]] std::filesystem::path scopedCheckpointRoot(const std::string& modelKey) const;
 
     bool copyFileIfExists(
         const std::filesystem::path& source,
