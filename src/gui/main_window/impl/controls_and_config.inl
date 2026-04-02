@@ -1979,72 +1979,102 @@ void drawGridSetupSection() {
 
 // World generation section (used by System tab & New World Wizard)
 void drawWorldGenerationSection() {
-    ImGui::TextUnformatted("Terrain Spectrum");
-    sliderFloatWithHint("Base frequency",   &panel_.terrainBaseFrequency,   0.1f, 12.0f, "%.2f",
-        "Controls the scale of major terrain features (continents, large hills).\n"
-        "Low = few large features. High = many smaller features.");
-    sliderFloatWithHint("Detail frequency", &panel_.terrainDetailFrequency, 0.2f, 24.0f, "%.2f",
-        "Scale of fine surface detail layered on top of base terrain.\n"
-        "Higher = more granular coastlines and ridge detail.");
-    sliderFloatWithHint("Warp strength",    &panel_.terrainWarpStrength,    0.0f,  2.0f, "%.2f",
-        "Domain warp amount - bends noise coordinates to create more organic shapes.\n"
-        "0 = no warp (geometric). 1-2 = naturalistic distortion.");
-    sliderFloatWithHint("Amplitude",        &panel_.terrainAmplitude,       0.1f,  3.0f, "%.2f",
-        "Vertical elevation contrast. Higher = more dramatic peaks and valleys.");
-    sliderFloatWithHint("Ridge mix",        &panel_.terrainRidgeMix,        0.0f,  1.0f, "%.2f",
-        "Blend of ridge/mountain noise into the terrain.\n"
-        "0 = smooth rolling hills. 1 = sharp ridgelines.");
+    const char* genTypes[] = { "Procedural Terrain", "Uniform Value", "Random Field", "Pattern Spots", "Radial Drop" };
+    ImGui::Combo("Generation Mode", &panel_.initialConditionTypeIndex, genTypes, IM_ARRAYSIZE(genTypes));
     ImGui::Separator();
-    ImGui::TextUnformatted("Fractal Parameters");
-    {
-        int oct = panel_.terrainOctaves;
-        if (NumericSliderPairInt("Octaves", &oct, 1, 8, "%d", 55.0f)) panel_.terrainOctaves = oct;
+
+    if (panel_.initialConditionTypeIndex != 0) {
+        ImGui::InputText("Target Variable", panel_.genTargetVariable, IM_ARRAYSIZE(panel_.genTargetVariable));
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            ImGui::SetTooltip("Number of layered noise frequencies summed together.\n"
-                "More octaves = more surface detail but slower generation preview.");
+            ImGui::SetTooltip("The exact name of the simulation variable to write into (e.g. vegetation_v, surface_water_w).");
+        ImGui::Separator();
     }
-    sliderFloatWithHint("Lacunarity",       &panel_.terrainLacunarity, 1.0f, 4.0f, "%.2f",
-        "Frequency multiplier between octaves. 2.0 = standard fBm.");
-    sliderFloatWithHint("Gain (persistence",&panel_.terrainGain,       0.1f, 0.9f, "%.2f",
-        "Amplitude multiplier between octaves. 0.5 = standard fBm.\n"
-        "Lower = high frequencies contribute less (smoother).");
-    ImGui::Separator();
-    ImGui::TextUnformatted("Climate & Hydrology");
-    sliderFloatWithHint("Sea level",          &panel_.seaLevel,           0.0f, 1.0f, "%.3f",
-        "Elevation threshold that separates land from ocean at initialization.\n"
-        "0.5 = roughly half ocean. Lower = more land.");
-    sliderFloatWithHint("Polar cooling",      &panel_.polarCooling,       0.0f, 1.5f, "%.2f",
-        "Strength of temperature reduction toward the poles (top/bottom edges).\n"
-        "Higher = colder poles, stronger latitudinal climate bands.");
-    sliderFloatWithHint("Latitude banding",   &panel_.latitudeBanding,    0.0f, 2.0f, "%.2f",
-        "Intensity of equatorial-to-polar climate gradients.\n"
-        "0 = uniform temperature. 2 = strong equator-to-pole difference.");
-    sliderFloatWithHint("Humidity from water",&panel_.humidityFromWater,  0.0f, 1.5f, "%.2f",
-        "How strongly initial water coverage drives humidity seeding.\n"
-        "Higher = coastal and oceanic areas start much more humid.");
-    sliderFloatWithHint("Biome noise",        &panel_.biomeNoiseStrength, 0.0f, 1.0f, "%.2f",
-        "Additional spatial noise added to temperature/humidity for biome diversity.\n"
-        "0 = purely latitudinal. 1 = maximum regional variation.");
-    ImGui::Separator();
-    ImGui::TextUnformatted("Island Morphology");
-    sliderFloatWithHint("Island density",     &panel_.islandDensity,      0.05f, 0.95f, "%.3f",
-        "Probability that any grid cell is part of an island cluster.\n"
-        "Low = sparse archipelago. High = dense continent coverage.");
-    sliderFloatWithHint("Island falloff",     &panel_.islandFalloff,      0.35f,  4.5f, "%.2f",
-        "Sharpness of island edge falloff from center to coast.\n"
-        "Low = gentle slopes. High = steep cliffs at coast.");
-    sliderFloatWithHint("Coastline sharpness",&panel_.coastlineSharpness, 0.25f,  4.0f, "%.2f",
-        "Controls how abruptly terrain drops to sea level at coastlines.\n"
-        "Higher = crisper, more defined coasts.");
-    sliderFloatWithHint("Archipelago jitter", &panel_.archipelagoJitter,  0.0f,   1.5f, "%.2f",
-        "Random offset applied to island center positions.\n"
-        "0 = regular spacing. 1.5 = chaotic, irregular archipelago.");
-    sliderFloatWithHint("Erosion strength",   &panel_.erosionStrength,    0.0f,   1.0f, "%.2f",
-        "Post-processing erosion modulation applied to terrain.\n"
-        "Higher = softer, more weathered-looking terrain.");
-    sliderFloatWithHint("Shelf depth",        &panel_.shelfDepth,         0.0f,   0.8f, "%.2f",
-        "Depth of the continental shelf zone around islands.\n"
-        "Higher = wider shallow-water shelf gradient around coasts.");
+
+    if (panel_.initialConditionTypeIndex == 0) {
+        ImGui::TextUnformatted("Terrain Spectrum");
+        sliderFloatWithHint("Base frequency",   &panel_.terrainBaseFrequency,   0.1f, 12.0f, "%.2f",
+            "Controls the scale of major terrain features (continents, large hills).\n"
+            "Low = few large features. High = many smaller features.");
+        sliderFloatWithHint("Detail frequency", &panel_.terrainDetailFrequency, 0.2f, 24.0f, "%.2f",
+            "Scale of fine surface detail layered on top of base terrain.\n"
+            "Higher = more granular coastlines and ridge detail.");
+        sliderFloatWithHint("Warp strength",    &panel_.terrainWarpStrength,    0.0f,  2.0f, "%.2f",
+            "Domain warp amount - bends noise coordinates to create more organic shapes.\n"
+            "0 = no warp (geometric). 1-2 = naturalistic distortion.");
+        sliderFloatWithHint("Amplitude",        &panel_.terrainAmplitude,       0.1f,  3.0f, "%.2f",
+            "Vertical elevation contrast. Higher = more dramatic peaks and valleys.");
+        sliderFloatWithHint("Ridge mix",        &panel_.terrainRidgeMix,        0.0f,  1.0f, "%.2f",
+            "Blend of ridge/mountain noise into the terrain.\n"
+            "0 = smooth rolling hills. 1 = sharp ridgelines.");
+        ImGui::Separator();
+        ImGui::TextUnformatted("Fractal Parameters");
+        {
+            int oct = panel_.terrainOctaves;
+            if (NumericSliderPairInt("Octaves", &oct, 1, 8, "%d", 55.0f)) panel_.terrainOctaves = oct;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGui::SetTooltip("Number of layered noise frequencies summed together.\n"
+                    "More octaves = more surface detail but slower generation preview.");
+        }
+        sliderFloatWithHint("Lacunarity",       &panel_.terrainLacunarity, 1.0f, 4.0f, "%.2f",
+            "Frequency multiplier between octaves. 2.0 = standard fBm.");
+        sliderFloatWithHint("Gain (persistence",&panel_.terrainGain,       0.1f, 0.9f, "%.2f",
+            "Amplitude multiplier between octaves. 0.5 = standard fBm.\n"
+            "Lower = high frequencies contribute less (smoother).");
+        ImGui::Separator();
+        ImGui::TextUnformatted("Climate & Hydrology");
+        sliderFloatWithHint("Sea level",          &panel_.seaLevel,           0.0f, 1.0f, "%.3f",
+            "Elevation threshold that separates land from ocean at initialization.\n"
+            "0.5 = roughly half ocean. Lower = more land.");
+        sliderFloatWithHint("Polar cooling",      &panel_.polarCooling,       0.0f, 1.5f, "%.2f",
+            "Strength of temperature reduction toward the poles (top/bottom edges).\n"
+            "Higher = colder poles, stronger latitudinal climate bands.");
+        sliderFloatWithHint("Latitude banding",   &panel_.latitudeBanding,    0.0f, 2.0f, "%.2f",
+            "Intensity of equatorial-to-polar climate gradients.\n"
+            "0 = uniform temperature. 2 = strong equator-to-pole difference.");
+        sliderFloatWithHint("Humidity from water",&panel_.humidityFromWater,  0.0f, 1.5f, "%.2f",
+            "How strongly initial water coverage drives humidity seeding.\n"
+            "Higher = coastal and oceanic areas start much more humid.");
+        sliderFloatWithHint("Biome noise",        &panel_.biomeNoiseStrength, 0.0f, 1.0f, "%.2f",
+            "Additional spatial noise added to temperature/humidity for biome diversity.\n"
+            "0 = purely latitudinal. 1 = maximum regional variation.");
+        ImGui::Separator();
+        ImGui::TextUnformatted("Island Morphology");
+        sliderFloatWithHint("Island density",     &panel_.islandDensity,      0.05f, 0.95f, "%.3f",
+            "Probability that any grid cell is part of an island cluster.\n"
+            "Low = sparse archipelago. High = dense continent coverage.");
+        sliderFloatWithHint("Island falloff",     &panel_.islandFalloff,      0.35f,  4.5f, "%.2f",
+            "Sharpness of island edge falloff from center to coast.\n"
+            "Low = gentle slopes. High = steep cliffs at coast.");
+        sliderFloatWithHint("Coastline sharpness",&panel_.coastlineSharpness, 0.25f,  4.0f, "%.2f",
+            "Controls how abruptly terrain drops to sea level at coastlines.\n"
+            "Higher = crisper, more defined coasts.");
+        sliderFloatWithHint("Archipelago jitter", &panel_.archipelagoJitter,  0.0f,   1.5f, "%.2f",
+            "Random offset applied to island center positions.\n"
+            "0 = regular spacing. 1.5 = chaotic, irregular archipelago.");
+        sliderFloatWithHint("Erosion strength",   &panel_.erosionStrength,    0.0f,   1.0f, "%.2f",
+            "Post-processing erosion modulation applied to terrain.\n"
+            "Higher = softer, more weathered-looking terrain.");
+        sliderFloatWithHint("Shelf depth",        &panel_.shelfDepth,         0.0f,   0.8f, "%.2f",
+            "Depth of the continental shelf zone around islands.\n"
+            "Higher = wider shallow-water shelf gradient around coasts.");
+    } else if (panel_.initialConditionTypeIndex == 1) { // Uniform
+        sliderFloatWithHint("Uniform Value", &panel_.genUniformValue, -10.0f, 10.0f, "%.3f",
+            "The constant value to set everywhere.");
+    } else if (panel_.initialConditionTypeIndex == 2) { // Random Field
+        sliderFloatWithHint("Alive Probability", &panel_.genRandomAliveProbability, 0.0f, 1.0f, "%.3f",
+            "Chance to roll the max value instead of min. Use ~0.5 for Conway life noise.");
+        sliderFloatWithHint("Min Value", &panel_.genRandomMin, -10.0f, 10.0f, "%.3f", "The floor value.");
+        sliderFloatWithHint("Max Value", &panel_.genRandomMax, -10.0f, 10.0f, "%.3f", "The peak value.");
+    } else if (panel_.initialConditionTypeIndex == 3) { // Pattern Spots
+        sliderFloatWithHint("Background Value", &panel_.genSpotBackground, -1.0f, 1.0f, "%.3f", "Value outside spots.");
+        sliderFloatWithHint("Spot Value", &panel_.genSpotValue, -1.0f, 1.0f, "%.3f", "Value inside spots.");
+        if (NumericSliderPairInt("Spot Count", &panel_.genSpotCount, 1, 50, "%d", 110.0f)) {}
+        sliderFloatWithHint("Spot Radius", &panel_.genSpotRadius, 0.1f, 50.0f, "%.1f", "Radius of each spot.");
+    } else if (panel_.initialConditionTypeIndex == 4) { // Radial Drop
+        sliderFloatWithHint("Background Value", &panel_.genRadialBackground, -1.0f, 1.0f, "%.3f", "Value outside drop.");
+        sliderFloatWithHint("Drop Value", &panel_.genRadialDropValue, -1.0f, 1.0f, "%.3f", "Value at center peak.");
+        sliderFloatWithHint("Drop Radius", &panel_.genRadialDropRadius, 0.1f, 100.0f, "%.1f", "Radius of the droplet.");
+    }
 }
 
 // Accessibility
@@ -2084,25 +2114,43 @@ void syncPanelFromConfig() {
     const std::string tmp = app::temporalPolicyToString(c.temporalPolicy);
     panel_.temporalIndex  = (tmp == "uniform") ? 0 : (tmp == "phased") ? 1 : 2;
 
-    panel_.terrainBaseFrequency   = c.worldGen.terrainBaseFrequency;
-    panel_.terrainDetailFrequency = c.worldGen.terrainDetailFrequency;
-    panel_.terrainWarpStrength    = c.worldGen.terrainWarpStrength;
-    panel_.terrainAmplitude       = c.worldGen.terrainAmplitude;
-    panel_.terrainRidgeMix        = c.worldGen.terrainRidgeMix;
-    panel_.terrainOctaves         = c.worldGen.terrainOctaves;
-    panel_.terrainLacunarity      = c.worldGen.terrainLacunarity;
-    panel_.terrainGain            = c.worldGen.terrainGain;
-    panel_.seaLevel               = c.worldGen.seaLevel;
-    panel_.polarCooling           = c.worldGen.polarCooling;
-    panel_.latitudeBanding        = c.worldGen.latitudeBanding;
-    panel_.humidityFromWater      = c.worldGen.humidityFromWater;
-    panel_.biomeNoiseStrength     = c.worldGen.biomeNoiseStrength;
-    panel_.islandDensity          = c.worldGen.islandDensity;
-    panel_.islandFalloff          = c.worldGen.islandFalloff;
-    panel_.coastlineSharpness     = c.worldGen.coastlineSharpness;
-    panel_.archipelagoJitter      = c.worldGen.archipelagoJitter;
-    panel_.erosionStrength        = c.worldGen.erosionStrength;
-    panel_.shelfDepth             = c.worldGen.shelfDepth;
+    panel_.initialConditionTypeIndex = static_cast<int>(c.initialConditions.type);
+
+    // Sync terrain
+    panel_.terrainBaseFrequency   = c.initialConditions.terrain.terrainBaseFrequency;
+    panel_.terrainDetailFrequency = c.initialConditions.terrain.terrainDetailFrequency;
+    panel_.terrainWarpStrength    = c.initialConditions.terrain.terrainWarpStrength;
+    panel_.terrainAmplitude       = c.initialConditions.terrain.terrainAmplitude;
+    panel_.terrainRidgeMix        = c.initialConditions.terrain.terrainRidgeMix;
+    panel_.terrainOctaves         = c.initialConditions.terrain.terrainOctaves;
+    panel_.terrainLacunarity      = c.initialConditions.terrain.terrainLacunarity;
+    panel_.terrainGain            = c.initialConditions.terrain.terrainGain;
+    panel_.seaLevel               = c.initialConditions.terrain.seaLevel;
+    panel_.polarCooling           = c.initialConditions.terrain.polarCooling;
+    panel_.latitudeBanding        = c.initialConditions.terrain.latitudeBanding;
+    panel_.humidityFromWater      = c.initialConditions.terrain.humidityFromWater;
+    panel_.biomeNoiseStrength     = c.initialConditions.terrain.biomeNoiseStrength;
+    panel_.islandDensity          = c.initialConditions.terrain.islandDensity;
+    panel_.islandFalloff          = c.initialConditions.terrain.islandFalloff;
+    panel_.coastlineSharpness     = c.initialConditions.terrain.coastlineSharpness;
+    panel_.archipelagoJitter      = c.initialConditions.terrain.archipelagoJitter;
+    panel_.erosionStrength        = c.initialConditions.terrain.erosionStrength;
+    panel_.shelfDepth             = c.initialConditions.terrain.shelfDepth;
+
+    // We can't trivially sync the strings/targetVariable back perfectly if they differ, 
+    // but we can try syncing the first one we find or just leave the UI to set them.
+    // For simplicity, we sync the parameters assuming the target variable stays whatever it is.
+    panel_.genUniformValue = c.initialConditions.uniform.value;
+    panel_.genRandomMin = c.initialConditions.random.minValue;
+    panel_.genRandomMax = c.initialConditions.random.maxValue;
+    panel_.genRandomAliveProbability = c.initialConditions.random.aliveProbability;
+    panel_.genSpotBackground = c.initialConditions.spots.backgroundValue;
+    panel_.genSpotValue = c.initialConditions.spots.spotValue;
+    panel_.genSpotCount = c.initialConditions.spots.spotCount;
+    panel_.genSpotRadius = c.initialConditions.spots.spotRadius;
+    panel_.genRadialBackground = c.initialConditions.radialDrop.backgroundValue;
+    panel_.genRadialDropValue = c.initialConditions.radialDrop.dropValue;
+    panel_.genRadialDropRadius = c.initialConditions.radialDrop.dropRadius;
 }
 
 void applyConfigFromPanel() {
@@ -2116,25 +2164,48 @@ void applyConfigFromPanel() {
     auto tp = app::parseTemporalPolicy(kTemporalOptions[panel_.temporalIndex]);
     if (tp.has_value()) cfg.temporalPolicy = *tp;
 
-    cfg.worldGen.terrainBaseFrequency   = panel_.terrainBaseFrequency;
-    cfg.worldGen.terrainDetailFrequency = panel_.terrainDetailFrequency;
-    cfg.worldGen.terrainWarpStrength    = panel_.terrainWarpStrength;
-    cfg.worldGen.terrainAmplitude       = panel_.terrainAmplitude;
-    cfg.worldGen.terrainRidgeMix        = panel_.terrainRidgeMix;
-    cfg.worldGen.terrainOctaves         = panel_.terrainOctaves;
-    cfg.worldGen.terrainLacunarity      = panel_.terrainLacunarity;
-    cfg.worldGen.terrainGain            = panel_.terrainGain;
-    cfg.worldGen.seaLevel               = panel_.seaLevel;
-    cfg.worldGen.polarCooling           = panel_.polarCooling;
-    cfg.worldGen.latitudeBanding        = panel_.latitudeBanding;
-    cfg.worldGen.humidityFromWater      = panel_.humidityFromWater;
-    cfg.worldGen.biomeNoiseStrength     = panel_.biomeNoiseStrength;
-    cfg.worldGen.islandDensity          = panel_.islandDensity;
-    cfg.worldGen.islandFalloff          = panel_.islandFalloff;
-    cfg.worldGen.coastlineSharpness     = panel_.coastlineSharpness;
-    cfg.worldGen.archipelagoJitter      = panel_.archipelagoJitter;
-    cfg.worldGen.erosionStrength        = panel_.erosionStrength;
-    cfg.worldGen.shelfDepth             = panel_.shelfDepth;
+    cfg.initialConditions.type = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+
+    cfg.initialConditions.terrain.terrainBaseFrequency   = panel_.terrainBaseFrequency;
+    cfg.initialConditions.terrain.terrainDetailFrequency = panel_.terrainDetailFrequency;
+    cfg.initialConditions.terrain.terrainWarpStrength    = panel_.terrainWarpStrength;
+    cfg.initialConditions.terrain.terrainAmplitude       = panel_.terrainAmplitude;
+    cfg.initialConditions.terrain.terrainRidgeMix        = panel_.terrainRidgeMix;
+    cfg.initialConditions.terrain.terrainOctaves         = panel_.terrainOctaves;
+    cfg.initialConditions.terrain.terrainLacunarity      = panel_.terrainLacunarity;
+    cfg.initialConditions.terrain.terrainGain            = panel_.terrainGain;
+    cfg.initialConditions.terrain.seaLevel               = panel_.seaLevel;
+    cfg.initialConditions.terrain.polarCooling           = panel_.polarCooling;
+    cfg.initialConditions.terrain.latitudeBanding        = panel_.latitudeBanding;
+    cfg.initialConditions.terrain.humidityFromWater      = panel_.humidityFromWater;
+    cfg.initialConditions.terrain.biomeNoiseStrength     = panel_.biomeNoiseStrength;
+    cfg.initialConditions.terrain.islandDensity          = panel_.islandDensity;
+    cfg.initialConditions.terrain.islandFalloff          = panel_.islandFalloff;
+    cfg.initialConditions.terrain.coastlineSharpness     = panel_.coastlineSharpness;
+    cfg.initialConditions.terrain.archipelagoJitter      = panel_.archipelagoJitter;
+    cfg.initialConditions.terrain.erosionStrength        = panel_.erosionStrength;
+    cfg.initialConditions.terrain.shelfDepth             = panel_.shelfDepth;
+
+    std::string targetVar(panel_.genTargetVariable);
+    
+    cfg.initialConditions.uniform.targetVariable = targetVar;
+    cfg.initialConditions.uniform.value = panel_.genUniformValue;
+
+    cfg.initialConditions.random.targetVariable = targetVar;
+    cfg.initialConditions.random.minValue = panel_.genRandomMin;
+    cfg.initialConditions.random.maxValue = panel_.genRandomMax;
+    cfg.initialConditions.random.aliveProbability = panel_.genRandomAliveProbability;
+
+    cfg.initialConditions.spots.targetVariable = targetVar;
+    cfg.initialConditions.spots.backgroundValue = panel_.genSpotBackground;
+    cfg.initialConditions.spots.spotValue = panel_.genSpotValue;
+    cfg.initialConditions.spots.spotCount = panel_.genSpotCount;
+    cfg.initialConditions.spots.spotRadius = panel_.genSpotRadius;
+
+    cfg.initialConditions.radialDrop.targetVariable = targetVar;
+    cfg.initialConditions.radialDrop.backgroundValue = panel_.genRadialBackground;
+    cfg.initialConditions.radialDrop.dropValue = panel_.genRadialDropValue;
+    cfg.initialConditions.radialDrop.dropRadius = panel_.genRadialDropRadius;
 
     runtime_.setConfig(cfg);
 
@@ -2159,6 +2230,22 @@ void enterSimulationPaused() {
         runtime_.pause(msg);
         if (!msg.empty()) appendLog(msg);
     }
+    
+    // Ensure field names are populated before visualizing
+    refreshFieldNames();
+    
+    // Force an immediate snapshot capture for visualization
+    RuntimeCheckpoint checkpoint;
+    std::string msg;
+    if (runtime_.captureCheckpoint(checkpoint, msg, false)) {
+        viz_.cachedCheckpoint = std::move(checkpoint);
+        viz_.hasCachedCheckpoint = true;
+        viz_.snapshotDirty = false;
+        viz_.lastSnapshotTimeSec = glfwGetTime();
+    } else if (!msg.empty()) {
+        appendLog("snapshot_capture_failed: " + msg);
+    }
+    
     requestSnapshotRefresh();
     appState_ = AppState::Simulation;
     triggerOverlay(OverlayIcon::Pause);

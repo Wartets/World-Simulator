@@ -119,7 +119,7 @@ RuntimeConfig makeRuntimeConfig(const LaunchConfig& launchConfig) {
     config.unitRegime = UnitRegime::Normalized;
     config.temporalPolicy = launchConfig.temporalPolicy;
     config.profileInput = buildProfileInput(launchConfig.tier);
-    config.worldGen = launchConfig.worldGen;
+    config.initialConditions = launchConfig.initialConditions;
     return config;
 }
 

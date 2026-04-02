@@ -4,43 +4,91 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <limits>
+
+namespace {
+
+ImU32 brighten(ImU32 color, float factor) {
+    ImVec4 rgba = ImGui::ColorConvertU32ToFloat4(color);
+    rgba.x = std::clamp(rgba.x * factor, 0.0f, 1.0f);
+    rgba.y = std::clamp(rgba.y * factor, 0.0f, 1.0f);
+    rgba.z = std::clamp(rgba.z * factor, 0.0f, 1.0f);
+    return ImGui::GetColorU32(rgba);
+}
+
+ImVec2 lerp(const ImVec2& a, const ImVec2& b, float t) {
+    return ImVec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+}
+
+ImVec2 clampLength(const ImVec2& v, float maxLen) {
+    const float lenSq = v.x * v.x + v.y * v.y;
+    if (lenSq <= maxLen * maxLen || lenSq <= 0.000001f) {
+        return v;
+    }
+    const float len = std::sqrt(lenSq);
+    const float scale = maxLen / len;
+    return ImVec2(v.x * scale, v.y * scale);
+}
+
+ImVec2 normalizedOr(const ImVec2& v, const ImVec2& fallback) {
+    const float lenSq = v.x * v.x + v.y * v.y;
+    if (lenSq <= 0.000001f) {
+        return fallback;
+    }
+    const float invLen = 1.0f / std::sqrt(lenSq);
+    return ImVec2(v.x * invLen, v.y * invLen);
+}
+
+void drawArrowHead(ImDrawList* draw_list, const ImVec2& from, const ImVec2& to, ImU32 color, float size) {
+    const ImVec2 dir(to.x - from.x, to.y - from.y);
+    const float len = std::max(1.0f, std::sqrt(dir.x * dir.x + dir.y * dir.y));
+    const ImVec2 n(dir.x / len, dir.y / len);
+    const ImVec2 p(-n.y, n.x);
+    const ImVec2 tip = to;
+    const ImVec2 base(to.x - n.x * size, to.y - n.y * size);
+    const ImVec2 left(base.x + p.x * (size * 0.45f), base.y + p.y * (size * 0.45f));
+    const ImVec2 right(base.x - p.x * (size * 0.45f), base.y - p.y * (size * 0.45f));
+    draw_list->AddTriangleFilled(tip, left, right, color);
+}
+
+} // namespace
 
 namespace ws::gui {
 
 // === Node Implementation ===
 
 ImU32 Node::getColorU32() const {
-    ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // Default white
+    ImVec4 color = ImVec4(0.82f, 0.86f, 0.95f, 1.0f);
     
     switch (type) {
         case NodeType::GlobalVariable:
-            color = ImVec4(0.3f, 0.5f, 0.9f, 1.0f); // Blue
+            color = ImVec4(0.27f, 0.49f, 0.90f, 1.0f);
             break;
         case NodeType::CellVariable:
-            color = ImVec4(0.4f, 0.8f, 0.4f, 1.0f); // Green
+            color = ImVec4(0.30f, 0.76f, 0.50f, 1.0f);
             break;
         case NodeType::Parameter:
-            color = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); // Gray
+            color = ImVec4(0.55f, 0.58f, 0.67f, 1.0f);
             break;
         case NodeType::Derived:
-            color = ImVec4(0.7f, 0.4f, 0.8f, 1.0f); // Purple
+            color = ImVec4(0.70f, 0.45f, 0.88f, 1.0f);
             break;
         case NodeType::Equation:
         case NodeType::Operator:
-            color = ImVec4(0.9f, 0.6f, 0.3f, 1.0f); // Orange
+            color = ImVec4(0.93f, 0.66f, 0.32f, 1.0f);
             break;
         case NodeType::Stage:
-            color = ImVec4(0.8f, 0.8f, 0.6f, 1.0f); // Light yellow
+            color = ImVec4(0.80f, 0.76f, 0.45f, 1.0f);
             break;
         case NodeType::Domain:
-            color = ImVec4(0.5f, 0.7f, 0.9f, 1.0f); // Light blue
+            color = ImVec4(0.45f, 0.72f, 0.90f, 1.0f);
             break;
     }
     
     if (is_selected) {
-        color.x = std::min(1.0f, color.x + 0.2f);
-        color.y = std::min(1.0f, color.y + 0.2f);
-        color.z = std::min(1.0f, color.z + 0.2f);
+        color.x = std::min(1.0f, color.x + 0.14f);
+        color.y = std::min(1.0f, color.y + 0.14f);
+        color.z = std::min(1.0f, color.z + 0.14f);
     }
     
     return ImGui::GetColorU32(color);
@@ -48,50 +96,90 @@ ImU32 Node::getColorU32() const {
 
 
 bool Node::contains(ImVec2 point) const {
-    return point.x >= position.x && point.x <= position.x + size.x &&
-           point.y >= position.y && point.y <= position.y + size.y;
+    const ImVec2 center(position.x + size.x * 0.5f, position.y + size.y * 0.5f);
+    const float rx = std::max(18.0f, size.x * 0.5f);
+    const float ry = std::max(18.0f, size.y * 0.5f);
+    const float dx = (point.x - center.x) / rx;
+    const float dy = (point.y - center.y) / ry;
+    return (dx * dx + dy * dy) <= 1.0f;
 }
 
-void Node::render(ImDrawList* draw_list, bool is_hovered_node) {
+void Node::render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is_hovered_node) {
     ImU32 bg_color = getColorU32();
-    ImU32 border_color = is_hovered_node 
-        ? ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 0.0f, 1.0f))
-        : ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-    float border_thickness = is_hovered_node ? 2.5f : 1.5f;
-    
-    ImVec2 min_pos = position;
-    ImVec2 max_pos = ImVec2(position.x + size.x, position.y + size.y);
-    
-    // Draw background
-    draw_list->AddRectFilled(min_pos, max_pos, bg_color, 4.0f);
-    
-    // Draw border
-    draw_list->AddRect(min_pos, max_pos, border_color, 4.0f, 0, border_thickness);
-    
-    // Draw label
-    ImVec2 text_pos = ImVec2(position.x + 6.0f, position.y + 8.0f);
-    ImU32 text_color = ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
-    
-    // Truncate long labels
-    std::string display_label = label;
-    if (display_label.length() > 14) {
-        display_label = display_label.substr(0, 11) + "...";
+    ImU32 border_color = is_hovered_node
+        ? brighten(bg_color, 1.40f)
+        : brighten(bg_color, 0.55f);
+    const float border_thickness = (is_hovered_node ? 3.0f : 1.8f) * scale;
+
+    const ImVec2 scaled_size(size.x * scale, size.y * scale);
+    const ImVec2 min_pos = screen_pos;
+    const ImVec2 max_pos(screen_pos.x + scaled_size.x, screen_pos.y + scaled_size.y);
+    const float rounding = std::max(18.0f * scale, std::min(scaled_size.x, scaled_size.y) * 0.24f);
+
+    draw_list->AddRectFilled(min_pos, max_pos, bg_color, rounding);
+    draw_list->AddRect(min_pos, max_pos, border_color, rounding, 0, border_thickness);
+    draw_list->AddRectFilled(ImVec2(min_pos.x + 2.0f * scale, min_pos.y + 2.0f * scale),
+                             ImVec2(max_pos.x - 2.0f * scale, max_pos.y - 2.0f * scale),
+                             ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.03f)),
+                             rounding * 0.75f);
+
+    const ImVec2 center(screen_pos.x + scaled_size.x * 0.5f, screen_pos.y + scaled_size.y * 0.5f);
+    const float radius = std::max(20.0f, std::min(scaled_size.x, scaled_size.y) * 0.5f - 3.0f);
+
+    // Draw label (hide when zoomed out too far)
+    if (scale > 0.35f) {
+        ImU32 text_color = ImGui::GetColorU32(ImVec4(0.05f, 0.06f, 0.08f, 1.0f));
+        
+        // Truncate long labels
+        std::string display_label = label;
+        if (display_label.length() > 14) {
+            display_label = display_label.substr(0, 11) + "...";
+        }
+        
+        // Scale font for zoom (use SetFontSize temporarily)
+        float original_font_size = ImGui::GetFont()->FontSize;
+        float scaled_font_size = original_font_size * std::max(0.95f, scale * 1.15f);
+        scaled_font_size = std::max(scaled_font_size, 12.0f); // Minimum readable size
+
+        const ImVec2 text_size = ImGui::CalcTextSize(display_label.c_str());
+        const ImVec2 text_pos(center.x - text_size.x * 0.5f, center.y - text_size.y * 0.7f);
+        draw_list->AddText(ImGui::GetFont(), scaled_font_size, text_pos, text_color, display_label.c_str());
+
+        if (!description.empty()) {
+            const std::string subtitle = (type == NodeType::Stage) ? "Stage" :
+                                         (type == NodeType::Domain) ? "Domain" :
+                                         (type == NodeType::GlobalVariable || type == NodeType::CellVariable) ? variable_name :
+                                         formula_logic;
+            if (!subtitle.empty()) {
+                ImVec2 sub_pos(center.x - ImGui::CalcTextSize(subtitle.c_str()).x * 0.5f,
+                               center.y + radius * 0.18f);
+                draw_list->AddText(ImGui::GetFont(), std::max(10.0f, scaled_font_size * 0.72f), sub_pos,
+                                   ImGui::GetColorU32(ImVec4(0.12f, 0.14f, 0.18f, 1.0f)), subtitle.c_str());
+            }
+        }
     }
     
-    draw_list->AddText(text_pos, text_color, display_label.c_str());
-    
     // Draw input ports (left side)
+    float port_radius = 4.0f * scale;
     for (const auto& port : input_ports) {
-        ImVec2 port_pos = getPortWorldPosition(port);
-        ImU32 port_color = ImGui::GetColorU32(ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
-        draw_list->AddCircleFilled(port_pos, 4.0f, port_color);
+        ImVec2 port_world = getPortWorldPosition(port);
+        ImVec2 port_screen = ImVec2(
+            screen_pos.x + (port_world.x - position.x) * scale,
+            screen_pos.y + (port_world.y - position.y) * scale
+        );
+        ImU32 port_color = ImGui::GetColorU32(ImVec4(0.18f, 0.82f, 0.70f, 1.0f));
+        draw_list->AddCircleFilled(port_screen, port_radius, port_color);
     }
     
     // Draw output ports (right side)
     for (const auto& port : output_ports) {
-        ImVec2 port_pos = getPortWorldPosition(port);
-        ImU32 port_color = ImGui::GetColorU32(ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        draw_list->AddCircleFilled(port_pos, 4.0f, port_color);
+        ImVec2 port_world = getPortWorldPosition(port);
+        ImVec2 port_screen = ImVec2(
+            screen_pos.x + (port_world.x - position.x) * scale,
+            screen_pos.y + (port_world.y - position.y) * scale
+        );
+        ImU32 port_color = ImGui::GetColorU32(ImVec4(1.0f, 0.36f, 0.30f, 1.0f));
+        draw_list->AddCircleFilled(port_screen, port_radius, port_color);
     }
 }
 
@@ -104,10 +192,29 @@ NodeEditor::NodeEditor()
 
 NodeEditor::~NodeEditor() = default;
 
+// === Coordinate Transforms ===
+
+ImVec2 NodeEditor::worldToScreen(ImVec2 world) const {
+    return ImVec2(
+        canvas_origin.x + (world.x + view_offset.x) * zoom,
+        canvas_origin.y + (world.y + view_offset.y) * zoom
+    );
+}
+
+ImVec2 NodeEditor::screenToWorld(ImVec2 screen) const {
+    return ImVec2(
+        (screen.x - canvas_origin.x) / zoom - view_offset.x,
+        (screen.y - canvas_origin.y) / zoom - view_offset.y
+    );
+}
+
+// === Node Management ===
+
 std::string NodeEditor::addNode(const Node& node) {
     auto new_node = std::make_unique<Node>(node);
     std::string node_id = node.id;
     nodes.push_back(std::move(new_node));
+    needs_fit = true;
     return node_id;
 }
 
@@ -197,32 +304,61 @@ void NodeEditor::clearSelection() {
     selected_nodes.clear();
 }
 
-void NodeEditor::render(ImVec2 canvas_size) {
+// === Main Render ===
+
+void NodeEditor::render(ImVec2 avail_size) {
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+    canvas_origin = ImGui::GetCursorScreenPos();
+    canvas_size = avail_size;
     
-    // Create a canvas region for clipping
+    // Auto-fit on first render with content
+    if (needs_fit && !nodes.empty()) {
+        fitAllNodes(canvas_size);
+        needs_fit = false;
+    }
+    
+    // Create a canvas region for interaction
     ImGui::InvisibleButton("canvas", canvas_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    bool canvas_hovered = ImGui::IsItemHovered();
     
-    if (ImGui::IsItemHovered()) {
-        handleMouseInput(ImGui::GetMousePos(), ImGui::IsMouseDown(ImGuiMouseButton_Left), 
+    if (canvas_hovered) {
+        ImVec2 mouse_pos = ImGui::GetMousePos();
+        
+        // Handle node interaction (left mouse button)
+        handleMouseInput(mouse_pos, ImGui::IsMouseDown(ImGuiMouseButton_Left), 
                         ImGui::IsMouseDown(ImGuiMouseButton_Right));
+
+        if (panning && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
+            handlePanning(delta);
+            ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+        }
+        
+        // Handle panning (right mouse drag)
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f)) {
+            ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right, 0.0f);
+            handlePanning(delta);
+            ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
+        }
+        
+        // Handle zoom with mouse wheel (centered on cursor)
+        if (ImGui::GetIO().MouseWheel != 0.0f) {
+            handleZoom(ImGui::GetIO().MouseWheel, mouse_pos);
+        }
+    } else {
+        // Release drag if mouse leaves canvas
+        if (!dragging_node_id.empty()) {
+            dragging_node_id.clear();
+        }
+        panning = false;
     }
-    
-    // Handle panning
-    if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f)) {
-        ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right, 0.0f);
-        handlePanning(delta);
-        ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
-    }
-    
-    // Handle zoom with mouse wheel
-    if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
-        handleZoom(ImGui::GetIO().MouseWheel);
+
+    if (!nodes.empty()) {
+        relaxCircularLayout();
     }
     
     // Set up clipping region
-    draw_list->PushClipRect(canvas_pos, ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y), true);
+    draw_list->PushClipRect(canvas_origin, ImVec2(canvas_origin.x + canvas_size.x, canvas_origin.y + canvas_size.y), true);
     
     // Render grid
     renderGrid(draw_list, canvas_size);
@@ -239,65 +375,250 @@ void NodeEditor::render(ImVec2 canvas_size) {
     draw_list->PopClipRect();
 }
 
+// === Input Handling ===
+
 void NodeEditor::handleMouseInput(ImVec2 mouse_pos, bool lmb_down, bool rmb_down) {
+    // Convert mouse to world space for hit testing
+    ImVec2 world_mouse = screenToWorld(mouse_pos);
+    
     if (!lmb_down && !dragging_node_id.empty()) {
         dragging_node_id.clear();
     }
+
+    if (!lmb_down) {
+        panning = false;
+    }
     
-    if (lmb_down && dragging_node_id.empty()) {
-        Node* node = getNodeAtPosition(mouse_pos);
-        if (node) {
-            dragging_node_id = node->id;
-            drag_offset = ImVec2(node->position.x - mouse_pos.x, node->position.y - mouse_pos.y);
+    if (lmb_down && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // Check for node click
+        Node* clicked_node = nullptr;
+        for (auto& node : nodes) {
+            if (node->contains(world_mouse)) {
+                clicked_node = node.get();
+            }
+        }
+        
+        if (clicked_node) {
+            dragging_node_id = clicked_node->id;
+            drag_offset = ImVec2(clicked_node->position.x - world_mouse.x, 
+                                 clicked_node->position.y - world_mouse.y);
+            
+            // Select the node
+            bool multi = ImGui::GetIO().KeyCtrl;
+            selectNode(clicked_node->id, multi);
+            panning = false;
+        } else {
+            // Clicked empty space — deselect and pan by grabbing the background
+            clearSelection();
+            panning = true;
+            pan_start = mouse_pos;
         }
     }
     
-    if (!dragging_node_id.empty()) {
+    if (!dragging_node_id.empty() && lmb_down) {
         Node* node = getNode(dragging_node_id);
         if (node) {
-            node->position = ImVec2(mouse_pos.x + drag_offset.x, mouse_pos.y + drag_offset.y);
+            node->position = ImVec2(world_mouse.x + drag_offset.x, world_mouse.y + drag_offset.y);
         }
+    }
+
+    if (rmb_down && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        panning = true;
+        pan_start = mouse_pos;
     }
 }
 
 void NodeEditor::handlePanning(ImVec2 delta) {
-    view_offset = ImVec2(view_offset.x + delta.x, view_offset.y + delta.y);
+    // Delta is in screen pixels; convert to world offset change
+    view_offset = ImVec2(view_offset.x + delta.x / zoom, view_offset.y + delta.y / zoom);
 }
 
-void NodeEditor::handleZoom(float delta) {
-    float zoom_factor = delta > 0.0f ? 1.1f : 0.9f;
+void NodeEditor::handleZoom(float delta, ImVec2 mouse_screen_pos) {
+    // Zoom centered on the mouse cursor position
+    ImVec2 world_before = screenToWorld(mouse_screen_pos);
+    
+    float zoom_factor = delta > 0.0f ? 1.12f : (1.0f / 1.12f);
     setZoom(zoom * zoom_factor);
+    
+    // After zoom, the same world point should be under the cursor
+    // world_before = (mouse_screen_pos - canvas_origin) / zoom_new - view_offset_new
+    // => view_offset_new = (mouse_screen_pos - canvas_origin) / zoom_new - world_before
+    ImVec2 new_view_offset = ImVec2(
+        (mouse_screen_pos.x - canvas_origin.x) / zoom - world_before.x,
+        (mouse_screen_pos.y - canvas_origin.y) / zoom - world_before.y
+    );
+    view_offset = new_view_offset;
 }
+
+// === Layout ===
 
 void NodeEditor::autoLayout() {
-    // Simple hierarchical layout (depth-first)
-    int columns = static_cast<int>(std::ceil(std::sqrt(nodes.size())));
-    int row = 0, col = 0;
-    
-    for (auto& node : nodes) {
-        node->position = ImVec2(col * 160.0f, row * 100.0f);
-        
-        col++;
-        if (col >= columns) {
-            col = 0;
-            row++;
+    if (nodes.empty()) {
+        return;
+    }
+    const float baseRadius = std::max(260.0f, 118.0f * std::sqrt(static_cast<float>(nodes.size())));
+    const ImVec2 center(0.5f * baseRadius, 0.5f * baseRadius);
+
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const std::size_t h = std::hash<std::string>{}(nodes[i]->id);
+        const float angle = static_cast<float>((h % 1000u) / 1000.0) * 6.28318530718f;
+        const float radius = baseRadius * (0.45f + 0.72f * static_cast<float>(((h >> 10) % 1000u) / 1000.0));
+        const float x = center.x + std::cos(angle) * radius;
+        const float y = center.y + std::sin(angle) * radius;
+        nodes[i]->position = ImVec2(x - nodes[i]->size.x * 0.5f, y - nodes[i]->size.y * 0.5f);
+    }
+
+    if (canvas_size.x > 0.0f && canvas_size.y > 0.0f) {
+        fitAllNodes(canvas_size);
+    }
+}
+
+void NodeEditor::relaxCircularLayout() {
+    if (nodes.size() < 2 || !dragging_node_id.empty() || panning) {
+        return;
+    }
+
+    std::vector<ImVec2> forces(nodes.size(), ImVec2(0.0f, 0.0f));
+    std::vector<ImVec2> centers(nodes.size());
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        centers[i] = ImVec2(nodes[i]->position.x + nodes[i]->size.x * 0.5f,
+                            nodes[i]->position.y + nodes[i]->size.y * 0.5f);
+    }
+
+    const float repulsion = 128000.0f;
+    const float idealEdgeLength = 320.0f;
+    const float centerPull = 0.006f;
+
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        for (std::size_t j = i + 1; j < nodes.size(); ++j) {
+            ImVec2 delta(centers[i].x - centers[j].x, centers[i].y - centers[j].y);
+            float distSq = delta.x * delta.x + delta.y * delta.y + 0.01f;
+            float dist = std::sqrt(distSq);
+            ImVec2 dir(delta.x / dist, delta.y / dist);
+            float push = repulsion / distSq;
+            forces[i].x += dir.x * push;
+            forces[i].y += dir.y * push;
+            forces[j].x -= dir.x * push;
+            forces[j].y -= dir.y * push;
         }
+    }
+
+    for (const auto& conn : connections) {
+        Node* from = getNode(conn.from_node_id);
+        Node* to = getNode(conn.to_node_id);
+        if (!from || !to) continue;
+
+        const std::size_t fi = static_cast<std::size_t>(std::distance(nodes.begin(), std::find_if(nodes.begin(), nodes.end(), [&](const auto& ptr) { return ptr.get() == from; })));
+        const std::size_t ti = static_cast<std::size_t>(std::distance(nodes.begin(), std::find_if(nodes.begin(), nodes.end(), [&](const auto& ptr) { return ptr.get() == to; })));
+        if (fi >= nodes.size() || ti >= nodes.size()) continue;
+
+        ImVec2 delta(centers[ti].x - centers[fi].x, centers[ti].y - centers[fi].y);
+        float dist = std::sqrt(delta.x * delta.x + delta.y * delta.y) + 0.01f;
+        ImVec2 dir(delta.x / dist, delta.y / dist);
+        float pull = (dist - idealEdgeLength) * 0.062f;
+        forces[fi].x += dir.x * pull;
+        forces[fi].y += dir.y * pull;
+        forces[ti].x -= dir.x * pull;
+        forces[ti].y -= dir.y * pull;
+    }
+
+    ImVec2 centerOfMass(0.0f, 0.0f);
+    for (const auto& c : centers) {
+        centerOfMass.x += c.x;
+        centerOfMass.y += c.y;
+    }
+    centerOfMass.x /= static_cast<float>(nodes.size());
+    centerOfMass.y /= static_cast<float>(nodes.size());
+
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        ImVec2 toCenter(centerOfMass.x - centers[i].x, centerOfMass.y - centers[i].y);
+        forces[i].x += toCenter.x * centerPull;
+        forces[i].y += toCenter.y * centerPull;
+
+        ImVec2 step = clampLength(forces[i], 62.0f);
+        nodes[i]->position.x += step.x * 0.090f;
+        nodes[i]->position.y += step.y * 0.090f;
     }
 }
 
 void NodeEditor::resetView() {
-    view_offset = ImVec2(0.0f, 0.0f);
-    zoom = 1.0f;
+    if (!nodes.empty() && canvas_size.x > 0.0f && canvas_size.y > 0.0f) {
+        fitAllNodes(canvas_size);
+    } else {
+        view_offset = ImVec2(0.0f, 0.0f);
+        zoom = 1.0f;
+    }
 }
 
+void NodeEditor::fitAllNodes(ImVec2 fit_canvas_size) {
+    if (nodes.empty()) {
+        view_offset = ImVec2(0.0f, 0.0f);
+        zoom = 1.0f;
+        return;
+    }
+    
+    // Compute bounding box in world space
+    float min_x = nodes[0]->position.x;
+    float min_y = nodes[0]->position.y;
+    float max_x = nodes[0]->position.x + nodes[0]->size.x;
+    float max_y = nodes[0]->position.y + nodes[0]->size.y;
+    
+    for (const auto& node : nodes) {
+        min_x = std::min(min_x, node->position.x);
+        min_y = std::min(min_y, node->position.y);
+        max_x = std::max(max_x, node->position.x + node->size.x);
+        max_y = std::max(max_y, node->position.y + node->size.y);
+    }
+    
+    float world_width = max_x - min_x;
+    float world_height = max_y - min_y;
+    
+    // Add padding (10% on each side)
+    float pad_x = std::max(world_width * 0.1f, 40.0f);
+    float pad_y = std::max(world_height * 0.1f, 40.0f);
+    min_x -= pad_x;
+    min_y -= pad_y;
+    world_width += 2.0f * pad_x;
+    world_height += 2.0f * pad_y;
+    
+    if (world_width <= 0.0f) world_width = 1.0f;
+    if (world_height <= 0.0f) world_height = 1.0f;
+    
+    // Compute zoom to fit
+    float zoom_x = fit_canvas_size.x / world_width;
+    float zoom_y = fit_canvas_size.y / world_height;
+    zoom = std::min(zoom_x, zoom_y);
+    zoom = std::max(0.1f, std::min(zoom, 3.0f)); // Clamp
+    
+    // Center the content: view_offset is such that the center of the AABB maps to the center of the canvas
+    float center_world_x = min_x + world_width * 0.5f;
+    float center_world_y = min_y + world_height * 0.5f;
+    float center_canvas_x = fit_canvas_size.x * 0.5f;
+    float center_canvas_y = fit_canvas_size.y * 0.5f;
+    
+    // worldToScreen: screen = canvas_origin + (world + view_offset) * zoom
+    // We want center_world to map to center_canvas (relative to canvas_origin):
+    // center_canvas = (center_world + view_offset) * zoom
+    // => view_offset = center_canvas / zoom - center_world
+    view_offset = ImVec2(
+        center_canvas_x / zoom - center_world_x,
+        center_canvas_y / zoom - center_world_y
+    );
+}
+
+// === Queries ===
+
 Node* NodeEditor::getNodeAtPosition(ImVec2 pos) {
+    // pos is in world space
     for (auto& node : nodes) {
-            if (node->contains(pos)) {
+        if (node->contains(pos)) {
             return node.get();
         }
     }
     return nullptr;
 }
+
+// === Rendering ===
 
 void NodeEditor::renderNodes(ImDrawList* draw_list) {
     // Clear hovered state
@@ -305,22 +626,24 @@ void NodeEditor::renderNodes(ImDrawList* draw_list) {
         node->is_hovered = false;
     }
     
-    // Update hovered state
+    // Update hovered state (convert mouse to world space)
     ImVec2 mouse_pos = ImGui::GetMousePos();
+    ImVec2 world_mouse = screenToWorld(mouse_pos);
     for (auto& node : nodes) {
-            if (node->contains(mouse_pos)) {
+        if (node->contains(world_mouse)) {
             node->is_hovered = true;
         }
     }
     
-    // Render all nodes
+    // Render all nodes at their screen-space positions
     for (auto& node : nodes) {
-        node->render(draw_list, node->is_hovered);
+        ImVec2 screen_pos = worldToScreen(node->position);
+        node->render(draw_list, screen_pos, zoom, node->is_hovered);
     }
 }
 
 void NodeEditor::renderConnections(ImDrawList* draw_list) {
-    ImU32 line_color = ImGui::GetColorU32(ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    const float line_width = std::max(1.6f, 2.6f * std::sqrt(std::max(0.15f, zoom)));
     
     for (const auto& conn : connections) {
         Node* from_node = getNode(conn.from_node_id);
@@ -347,14 +670,48 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
         }
         
         if (from_port && to_port) {
-            ImVec2 from_pos = from_node->getPortWorldPosition(*from_port);
-            ImVec2 to_pos = to_node->getPortWorldPosition(*to_port);
+            // Attach edges to actual perimeter ports for fully distributed arrival points.
+            const ImVec2 from_center_world(from_node->position.x + from_node->size.x * 0.5f,
+                                           from_node->position.y + from_node->size.y * 0.5f);
+            const ImVec2 to_center_world(to_node->position.x + to_node->size.x * 0.5f,
+                                         to_node->position.y + to_node->size.y * 0.5f);
+
+            const ImVec2 from_world = from_node->getPortWorldPosition(*from_port);
+            const ImVec2 to_world = to_node->getPortWorldPosition(*to_port);
+
+            const ImVec2 from_screen = worldToScreen(from_world);
+            const ImVec2 to_screen = worldToScreen(to_world);
+            const ImVec2 from_center_screen = worldToScreen(from_center_world);
+            const ImVec2 to_center_screen = worldToScreen(to_center_world);
+
+            const ImVec2 from_dir = normalizedOr(
+                ImVec2(from_screen.x - from_center_screen.x, from_screen.y - from_center_screen.y),
+                ImVec2(1.0f, 0.0f));
+            const ImVec2 to_dir = normalizedOr(
+                ImVec2(to_screen.x - to_center_screen.x, to_screen.y - to_center_screen.y),
+                ImVec2(-1.0f, 0.0f));
             
-            // Draw Bezier curve
-            ImVec2 control1 = ImVec2(from_pos.x + 50.0f, from_pos.y);
-            ImVec2 control2 = ImVec2(to_pos.x - 50.0f, to_pos.y);
-            
-            draw_list->AddBezierCubic(from_pos, control1, control2, to_pos, line_color, 2.0f, 20);
+            ImU32 line_color = ImGui::GetColorU32(ImVec4(0.68f, 0.76f, 0.90f, 0.85f));
+            const float direct = std::sqrt((to_screen.x - from_screen.x) * (to_screen.x - from_screen.x) +
+                                           (to_screen.y - from_screen.y) * (to_screen.y - from_screen.y));
+            const float handle = std::clamp(direct * 0.42f, 40.0f * zoom, 220.0f * zoom);
+            ImVec2 control1 = ImVec2(from_screen.x + from_dir.x * handle,
+                                     from_screen.y + from_dir.y * handle);
+            ImVec2 control2 = ImVec2(to_screen.x - to_dir.x * handle,
+                                     to_screen.y - to_dir.y * handle);
+
+            if (from_node->type == NodeType::Stage || to_node->type == NodeType::Stage) {
+                line_color = ImGui::GetColorU32(ImVec4(0.88f, 0.80f, 0.34f, 0.92f));
+            } else if (from_node->type == NodeType::Domain || to_node->type == NodeType::Domain) {
+                line_color = ImGui::GetColorU32(ImVec4(0.47f, 0.73f, 0.94f, 0.88f));
+            } else if (from_port->is_input || to_port->is_input) {
+                line_color = ImGui::GetColorU32(ImVec4(0.36f, 0.90f, 0.64f, 0.88f));
+            }
+
+            draw_list->AddBezierCubic(from_screen, control1, control2, to_screen, line_color, line_width, 42);
+
+            const ImVec2 tail = lerp(control2, to_screen, 0.90f);
+            drawArrowHead(draw_list, tail, to_screen, brighten(line_color, 1.08f), std::max(8.0f, 8.0f * zoom));
         }
     }
 }
@@ -367,25 +724,44 @@ void NodeEditor::renderConnectionPreview(ImDrawList* draw_list) {
     }
 }
 
-void NodeEditor::renderGrid(ImDrawList* draw_list, ImVec2 canvas_size) {
-    ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
-    ImU32 grid_color = ImGui::GetColorU32(ImVec4(0.4f, 0.4f, 0.4f, 0.2f));
-    const float grid_size = 16.0f;
+void NodeEditor::renderGrid(ImDrawList* draw_list, ImVec2 grid_canvas_size) {
+    ImU32 grid_color = ImGui::GetColorU32(ImVec4(0.4f, 0.4f, 0.4f, 0.15f));
+    ImU32 grid_color_major = ImGui::GetColorU32(ImVec4(0.4f, 0.4f, 0.4f, 0.3f));
     
-    for (float x = fmodf(view_offset.x, grid_size); x < canvas_size.x; x += grid_size) {
+    const float base_grid_size = 32.0f;
+    float scaled_grid = base_grid_size * zoom;
+    
+    // Don't draw grid lines if they'd be too dense
+    if (scaled_grid < 4.0f) return;
+    
+    // Grid offset accounts for panning
+    float offset_x = fmodf(view_offset.x * zoom, scaled_grid);
+    float offset_y = fmodf(view_offset.y * zoom, scaled_grid);
+    
+    // Ensure positive modulus
+    if (offset_x < 0.0f) offset_x += scaled_grid;
+    if (offset_y < 0.0f) offset_y += scaled_grid;
+    
+    int line_index = 0;
+    for (float x = offset_x; x < grid_canvas_size.x; x += scaled_grid) {
+        bool major = (line_index % 4 == 0);
         draw_list->AddLine(
-            ImVec2(canvas_pos.x + x, canvas_pos.y),
-            ImVec2(canvas_pos.x + x, canvas_pos.y + canvas_size.y),
-            grid_color, 0.5f
+            ImVec2(canvas_origin.x + x, canvas_origin.y),
+            ImVec2(canvas_origin.x + x, canvas_origin.y + grid_canvas_size.y),
+            major ? grid_color_major : grid_color, major ? 1.0f : 0.5f
         );
+        ++line_index;
     }
     
-    for (float y = fmodf(view_offset.y, grid_size); y < canvas_size.y; y += grid_size) {
+    line_index = 0;
+    for (float y = offset_y; y < grid_canvas_size.y; y += scaled_grid) {
+        bool major = (line_index % 4 == 0);
         draw_list->AddLine(
-            ImVec2(canvas_pos.x, canvas_pos.y + y),
-            ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + y),
-            grid_color, 0.5f
+            ImVec2(canvas_origin.x, canvas_origin.y + y),
+            ImVec2(canvas_origin.x + grid_canvas_size.x, canvas_origin.y + y),
+            major ? grid_color_major : grid_color, major ? 1.0f : 0.5f
         );
+        ++line_index;
     }
 }
 

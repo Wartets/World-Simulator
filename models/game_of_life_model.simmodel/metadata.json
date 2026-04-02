@@ -1,6 +1,6 @@
 {
   "id": "game_of_life_model",
-  "name": "Symbiose Game of Life Model",
+  "name": "Game of Life Model",
   "description": "Cellular automaton model based on Conway's rules. Demonstrates how to handle boolean states and direct neighbor querying in the .simmodel architecture.",
   "author": "Colin Bossu Reaubourg",
   "creation_date": "2026-04-01",

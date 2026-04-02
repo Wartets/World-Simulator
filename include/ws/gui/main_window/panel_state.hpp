@@ -48,6 +48,20 @@ struct PanelState {
     float erosionStrength = 0.32f;
     float shelfDepth = 0.20f;
 
+    int initialConditionTypeIndex = 0;
+    char genTargetVariable[128] = "vegetation_v";
+    float genUniformValue = 0.0f;
+    float genRandomMin = 0.0f;
+    float genRandomMax = 1.0f;
+    float genRandomAliveProbability = 0.5f;
+    float genSpotBackground = 0.0f;
+    float genSpotValue = 1.0f;
+    int genSpotCount = 4;
+    float genSpotRadius = 15.0f;
+    float genRadialBackground = 0.0f;
+    float genRadialDropValue = 1.0f;
+    float genRadialDropRadius = 5.0f;
+
     char profileName[128] = "baseline";
     char summaryVariable[128] = "temperature_T";
     char checkpointLabel[128] = "quick";

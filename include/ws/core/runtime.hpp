@@ -19,7 +19,15 @@
 
 namespace ws {
 
-struct WorldGenerationParams {
+enum class InitialConditionType : std::uint8_t {
+    Terrain = 0,
+    Uniform = 1,
+    Random = 2,
+    Spots = 3,
+    RadialDrop = 4
+};
+
+struct TerrainGenerationParams {
     float terrainBaseFrequency = 2.2f;
     float terrainDetailFrequency = 7.5f;
     float terrainWarpStrength = 0.55f;
@@ -41,6 +49,43 @@ struct WorldGenerationParams {
     float shelfDepth = 0.20f;
 };
 
+struct UniformGenerationParams {
+    std::string targetVariable = "vegetation_v";
+    float value = 0.0f;
+};
+
+struct RandomGenerationParams {
+    std::string targetVariable = "vegetation_v";
+    float minValue = 0.0f;
+    float maxValue = 1.0f;
+    float aliveProbability = 0.5f;
+};
+
+struct SpotsGenerationParams {
+    std::string targetVariable = "vegetation_v";
+    float backgroundValue = 0.0f;
+    float spotValue = 1.0f;
+    int spotCount = 4;
+    float spotRadius = 15.0f;
+    float spotJitter = 0.5f;
+};
+
+struct RadialDropGenerationParams {
+    std::string targetVariable = "surface_water_w";
+    float backgroundValue = 0.0f;
+    float dropValue = 1.0f;
+    float dropRadius = 5.0f;
+};
+
+struct InitialConditionConfig {
+    InitialConditionType type = InitialConditionType::Terrain;
+    TerrainGenerationParams terrain;
+    UniformGenerationParams uniform;
+    RandomGenerationParams random;
+    SpotsGenerationParams spots;
+    RadialDropGenerationParams radialDrop;
+};
+
 struct RuntimeConfig {
     std::uint64_t seed = 1;
     GridSpec grid{16, 16};
@@ -52,7 +97,7 @@ struct RuntimeConfig {
     ExecutionPolicyMode executionPolicyMode = ExecutionPolicyMode::StrictDeterministic;
     NumericGuardrailPolicy guardrailPolicy{};
     ProfileResolverInput profileInput{};
-    WorldGenerationParams worldGen{};
+    InitialConditionConfig initialConditions{};
 };
 
 struct ParameterControl {

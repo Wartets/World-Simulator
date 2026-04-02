@@ -15,7 +15,7 @@ struct LaunchConfig {
     GridSpec grid{128, 128};
     ModelTier tier = ModelTier::A;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
-    WorldGenerationParams worldGen{};
+    InitialConditionConfig initialConditions{};
 };
 
 struct LaunchPreset {

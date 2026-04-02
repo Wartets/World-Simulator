@@ -4,6 +4,8 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <functional>
+#include <cmath>
 #include <imgui.h>
 
 namespace ws::gui {
@@ -64,7 +66,7 @@ struct Node {
     NodeType type;
     std::string label;
     ImVec2 position;
-    ImVec2 size{120.0f, 60.0f};
+    ImVec2 size{132.0f, 66.0f};
     
     // Variable node properties
     std::string variable_name;
@@ -94,18 +96,33 @@ struct Node {
     // Get color based on node type and role
     ImU32 getColorU32() const;
     
-    // Render this node using ImGui draw list
-    void render(ImDrawList* draw_list, bool is_hovered_node = false);
+    // Render this node at the given screen position and scale
+    void render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is_hovered_node = false);
     
-    // Check if point is inside this node
+    // Check if point (world space) is inside this node
     bool contains(ImVec2 point) const;
     
     // Get port position in world space
     ImVec2 getPortWorldPosition(const Port& port) const {
-        ImVec2 port_offset = port.is_input 
-            ? ImVec2(-8.0f, size.y * 0.5f) 
-            : ImVec2(size.x + 8.0f, size.y * 0.5f);
-        return ImVec2(position.x + port_offset.x, position.y + port_offset.y);
+        const ImVec2 center(position.x + size.x * 0.5f, position.y + size.y * 0.5f);
+        const float radius = std::max(24.0f, 0.5f * std::min(size.x, size.y) - 8.0f);
+        const std::size_t hash = std::hash<std::string>{}(port.name + "|" + port.variable_id + (port.is_input ? "|in" : "|out"));
+        const float hash01 = static_cast<float>(hash & 0xFFFFu) / 65535.0f;
+        const float angle = hash01 * 6.28318530718f;
+        return ImVec2(center.x + std::cos(angle) * radius,
+                      center.y + std::sin(angle) * radius);
+    }
+
+    ImVec2 getConnectionAnchorWorldPosition(const ImVec2& other_center) const {
+        const ImVec2 center(position.x + size.x * 0.5f, position.y + size.y * 0.5f);
+        const float dx = other_center.x - center.x;
+        const float dy = other_center.y - center.y;
+        const float rx = std::max(20.0f, size.x * 0.5f - 4.0f);
+        const float ry = std::max(20.0f, size.y * 0.5f - 4.0f);
+        const float sx = std::max(0.001f, std::fabs(dx) / rx);
+        const float sy = std::max(0.001f, std::fabs(dy) / ry);
+        const float scale = 1.0f / std::max(sx, sy);
+        return ImVec2(center.x + dx * scale, center.y + dy * scale);
     }
 };
 
@@ -155,14 +172,20 @@ public:
     // Interaction (called by parent window)
     void handleMouseInput(ImVec2 mouse_pos, bool lmb_down, bool rmb_down);
     void handlePanning(ImVec2 delta);
-    void handleZoom(float delta);
+    void handleZoom(float delta, ImVec2 mouse_screen_pos);
     
     // Layout
     void autoLayout();
+    void relaxCircularLayout();
     void resetView();
+    void fitAllNodes(ImVec2 canvas_size);
     
     // Queries
     Node* getNodeAtPosition(ImVec2 pos);
+    
+    // Coordinate transforms
+    ImVec2 worldToScreen(ImVec2 world) const;
+    ImVec2 screenToWorld(ImVec2 screen) const;
     
     // State accessors
     ImVec2 getViewOffset() const { return view_offset; }
@@ -175,8 +198,11 @@ private:
     std::vector<Connection> connections;
     std::vector<std::string> selected_nodes;
     
+    ImVec2 canvas_origin{0.0f, 0.0f};
+    ImVec2 canvas_size{0.0f, 0.0f};
     ImVec2 view_offset{0.0f, 0.0f};
     float zoom{1.0f};
+    bool needs_fit{true};
     
     // Interaction state
     std::string dragging_node_id;

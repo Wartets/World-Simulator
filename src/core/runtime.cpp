@@ -1,4 +1,4 @@
-﻿#include "ws/core/runtime.hpp"
+#include "ws/core/runtime.hpp"
 
 #include "ws/core/determinism.hpp"
 
@@ -271,7 +271,7 @@ void Runtime::start() {
 
         allocateCanonicalFields();
 
-        {
+        if (config_.initialConditions.type == InitialConditionType::Terrain) {
             StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {
                 "terrain_elevation_h",
                 "surface_water_w",
@@ -292,25 +292,25 @@ void Runtime::start() {
             const float invW = 1.0f / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.width - 1));
             const float invH = 1.0f / static_cast<float>(std::max<std::uint32_t>(1, config_.grid.height - 1));
 
-            const float baseFreq = std::max(0.15f, config_.worldGen.terrainBaseFrequency);
-            const float detailFreq = std::max(0.25f, config_.worldGen.terrainDetailFrequency);
-            const float warpStrength = std::clamp(config_.worldGen.terrainWarpStrength, 0.0f, 2.0f);
-            const float terrainAmplitude = std::clamp(config_.worldGen.terrainAmplitude, 0.1f, 3.0f);
-            const float ridgeMix = std::clamp(config_.worldGen.terrainRidgeMix, 0.0f, 1.0f);
-            const int octaves = std::clamp(config_.worldGen.terrainOctaves, 1, 8);
-            const float lacunarity = std::max(1.0f, config_.worldGen.terrainLacunarity);
-            const float gain = std::clamp(config_.worldGen.terrainGain, 0.0f, 1.0f);
-            const float seaLevel = std::clamp(config_.worldGen.seaLevel, 0.0f, 1.0f);
-            const float polarCooling = std::clamp(config_.worldGen.polarCooling, 0.0f, 1.5f);
-            const float banding = std::clamp(config_.worldGen.latitudeBanding, 0.0f, 2.0f);
-            const float humidityFromWater = std::clamp(config_.worldGen.humidityFromWater, 0.0f, 1.5f);
-            const float biomeNoiseStrength = std::clamp(config_.worldGen.biomeNoiseStrength, 0.0f, 1.0f);
-            const float islandDensity = std::clamp(config_.worldGen.islandDensity, 0.05f, 0.95f);
-            const float islandFalloff = std::clamp(config_.worldGen.islandFalloff, 0.35f, 4.5f);
-            const float coastlineSharpness = std::clamp(config_.worldGen.coastlineSharpness, 0.25f, 4.0f);
-            const float archipelagoJitter = std::clamp(config_.worldGen.archipelagoJitter, 0.0f, 1.5f);
-            const float erosionStrength = std::clamp(config_.worldGen.erosionStrength, 0.0f, 1.0f);
-            const float shelfDepth = std::clamp(config_.worldGen.shelfDepth, 0.0f, 0.8f);
+            const float baseFreq = std::max(0.15f, config_.initialConditions.terrain.terrainBaseFrequency);
+            const float detailFreq = std::max(0.25f, config_.initialConditions.terrain.terrainDetailFrequency);
+            const float warpStrength = std::clamp(config_.initialConditions.terrain.terrainWarpStrength, 0.0f, 2.0f);
+            const float terrainAmplitude = std::clamp(config_.initialConditions.terrain.terrainAmplitude, 0.1f, 3.0f);
+            const float ridgeMix = std::clamp(config_.initialConditions.terrain.terrainRidgeMix, 0.0f, 1.0f);
+            const int octaves = std::clamp(config_.initialConditions.terrain.terrainOctaves, 1, 8);
+            const float lacunarity = std::max(1.0f, config_.initialConditions.terrain.terrainLacunarity);
+            const float gain = std::clamp(config_.initialConditions.terrain.terrainGain, 0.0f, 1.0f);
+            const float seaLevel = std::clamp(config_.initialConditions.terrain.seaLevel, 0.0f, 1.0f);
+            const float polarCooling = std::clamp(config_.initialConditions.terrain.polarCooling, 0.0f, 1.5f);
+            const float banding = std::clamp(config_.initialConditions.terrain.latitudeBanding, 0.0f, 2.0f);
+            const float humidityFromWater = std::clamp(config_.initialConditions.terrain.humidityFromWater, 0.0f, 1.5f);
+            const float biomeNoiseStrength = std::clamp(config_.initialConditions.terrain.biomeNoiseStrength, 0.0f, 1.0f);
+            const float islandDensity = std::clamp(config_.initialConditions.terrain.islandDensity, 0.05f, 0.95f);
+            const float islandFalloff = std::clamp(config_.initialConditions.terrain.islandFalloff, 0.35f, 4.5f);
+            const float coastlineSharpness = std::clamp(config_.initialConditions.terrain.coastlineSharpness, 0.25f, 4.0f);
+            const float archipelagoJitter = std::clamp(config_.initialConditions.terrain.archipelagoJitter, 0.0f, 1.5f);
+            const float erosionStrength = std::clamp(config_.initialConditions.terrain.erosionStrength, 0.0f, 1.0f);
+            const float shelfDepth = std::clamp(config_.initialConditions.terrain.shelfDepth, 0.0f, 0.8f);
 
             const std::uint64_t noiseSeedA = DeterministicHash::combine(config_.seed, 0xA1C31A5DULL);
             const std::uint64_t noiseSeedB = DeterministicHash::combine(config_.seed, 0xB73F42D1ULL);
@@ -465,6 +465,66 @@ void Runtime::start() {
                     seedWriter.setScalar("event_temperature_delta", Cell{x, y}, 0.0f);
                     seedWriter.setScalar("bootstrap_marker", Cell{x, y}, biomeNoise);
                     seedWriter.setScalar("seed_probe", Cell{x, y}, continental);
+                }
+            }
+        } else if (config_.initialConditions.type == InitialConditionType::Uniform) {
+            const auto& p = config_.initialConditions.uniform;
+            StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {p.targetVariable});
+            for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                    seedWriter.setScalar(p.targetVariable, Cell{x, y}, p.value);
+                }
+            }
+        } else if (config_.initialConditions.type == InitialConditionType::Random) {
+            const auto& p = config_.initialConditions.random;
+            StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {p.targetVariable});
+            for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                    const float r = hash01(DeterministicHash::combine(config_.seed, 0x1234ULL), x, y);
+                    const float val = (r < p.aliveProbability) ? p.maxValue : p.minValue;
+                    seedWriter.setScalar(p.targetVariable, Cell{x, y}, val);
+                }
+            }
+        } else if (config_.initialConditions.type == InitialConditionType::Spots) {
+            const auto& p = config_.initialConditions.spots;
+            StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {p.targetVariable});
+            for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                    seedWriter.setScalar(p.targetVariable, Cell{x, y}, p.backgroundValue);
+                }
+            }
+            // Generate spots
+            for (int i = 0; i < p.spotCount; ++i) {
+                const float cx = hash01(DeterministicHash::combine(config_.seed, 0x555ULL + i), i, 0) * static_cast<float>(config_.grid.width);
+                const float cy = hash01(DeterministicHash::combine(config_.seed, 0x666ULL + i), i, 0) * static_cast<float>(config_.grid.height);
+                const float rSq = p.spotRadius * p.spotRadius;
+                for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                    for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                        const float dx = static_cast<float>(x) - cx;
+                        const float dy = static_cast<float>(y) - cy;
+                        const float distSq = dx * dx + dy * dy;
+                        if (distSq <= rSq) {
+                            seedWriter.setScalar(p.targetVariable, Cell{x, y}, p.spotValue);
+                        }
+                    }
+                }
+            }
+        } else if (config_.initialConditions.type == InitialConditionType::RadialDrop) {
+            const auto& p = config_.initialConditions.radialDrop;
+            StateStore::WriteSession seedWriter(stateStore_, "runtime_seed_pipeline", {p.targetVariable});
+            const float cx = static_cast<float>(config_.grid.width) * 0.5f;
+            const float cy = static_cast<float>(config_.grid.height) * 0.5f;
+            for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
+                for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
+                    const float dx = static_cast<float>(x) - cx;
+                    const float dy = static_cast<float>(y) - cy;
+                    const float d = std::sqrt(dx * dx + dy * dy);
+                    float val = p.backgroundValue;
+                    if (d < p.dropRadius) {
+                        const float t = d / std::max(0.001f, p.dropRadius);
+                        val = p.backgroundValue + (p.dropValue - p.backgroundValue) * (0.5f + 0.5f * std::cos(t * 3.14159265f));
+                    }
+                    seedWriter.setScalar(p.targetVariable, Cell{x, y}, val);
                 }
             }
         }

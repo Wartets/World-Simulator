@@ -56,25 +56,25 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "height=" << config.grid.height << '\n';
     output << "tier=" << toString(config.tier) << '\n';
     output << "temporal=" << temporalPolicyToString(config.temporalPolicy) << '\n';
-    output << "gen.terrain_base_frequency=" << config.worldGen.terrainBaseFrequency << '\n';
-    output << "gen.terrain_detail_frequency=" << config.worldGen.terrainDetailFrequency << '\n';
-    output << "gen.terrain_warp_strength=" << config.worldGen.terrainWarpStrength << '\n';
-    output << "gen.terrain_amplitude=" << config.worldGen.terrainAmplitude << '\n';
-    output << "gen.terrain_ridge_mix=" << config.worldGen.terrainRidgeMix << '\n';
-    output << "gen.terrain_octaves=" << config.worldGen.terrainOctaves << '\n';
-    output << "gen.terrain_lacunarity=" << config.worldGen.terrainLacunarity << '\n';
-    output << "gen.terrain_gain=" << config.worldGen.terrainGain << '\n';
-    output << "gen.sea_level=" << config.worldGen.seaLevel << '\n';
-    output << "gen.polar_cooling=" << config.worldGen.polarCooling << '\n';
-    output << "gen.latitude_banding=" << config.worldGen.latitudeBanding << '\n';
-    output << "gen.humidity_from_water=" << config.worldGen.humidityFromWater << '\n';
-    output << "gen.biome_noise_strength=" << config.worldGen.biomeNoiseStrength << '\n';
-    output << "gen.island_density=" << config.worldGen.islandDensity << '\n';
-    output << "gen.island_falloff=" << config.worldGen.islandFalloff << '\n';
-    output << "gen.coastline_sharpness=" << config.worldGen.coastlineSharpness << '\n';
-    output << "gen.archipelago_jitter=" << config.worldGen.archipelagoJitter << '\n';
-    output << "gen.erosion_strength=" << config.worldGen.erosionStrength << '\n';
-    output << "gen.shelf_depth=" << config.worldGen.shelfDepth << '\n';
+    output << "gen.terrain_base_frequency=" << config.initialConditions.terrain.terrainBaseFrequency << '\n';
+    output << "gen.terrain_detail_frequency=" << config.initialConditions.terrain.terrainDetailFrequency << '\n';
+    output << "gen.terrain_warp_strength=" << config.initialConditions.terrain.terrainWarpStrength << '\n';
+    output << "gen.terrain_amplitude=" << config.initialConditions.terrain.terrainAmplitude << '\n';
+    output << "gen.terrain_ridge_mix=" << config.initialConditions.terrain.terrainRidgeMix << '\n';
+    output << "gen.terrain_octaves=" << config.initialConditions.terrain.terrainOctaves << '\n';
+    output << "gen.terrain_lacunarity=" << config.initialConditions.terrain.terrainLacunarity << '\n';
+    output << "gen.terrain_gain=" << config.initialConditions.terrain.terrainGain << '\n';
+    output << "gen.sea_level=" << config.initialConditions.terrain.seaLevel << '\n';
+    output << "gen.polar_cooling=" << config.initialConditions.terrain.polarCooling << '\n';
+    output << "gen.latitude_banding=" << config.initialConditions.terrain.latitudeBanding << '\n';
+    output << "gen.humidity_from_water=" << config.initialConditions.terrain.humidityFromWater << '\n';
+    output << "gen.biome_noise_strength=" << config.initialConditions.terrain.biomeNoiseStrength << '\n';
+    output << "gen.island_density=" << config.initialConditions.terrain.islandDensity << '\n';
+    output << "gen.island_falloff=" << config.initialConditions.terrain.islandFalloff << '\n';
+    output << "gen.coastline_sharpness=" << config.initialConditions.terrain.coastlineSharpness << '\n';
+    output << "gen.archipelago_jitter=" << config.initialConditions.terrain.archipelagoJitter << '\n';
+    output << "gen.erosion_strength=" << config.initialConditions.terrain.erosionStrength << '\n';
+    output << "gen.shelf_depth=" << config.initialConditions.terrain.shelfDepth << '\n';
 }
 
 LaunchConfig ProfileStore::load(const std::string& profileName) const {
@@ -139,33 +139,33 @@ LaunchConfig ProfileStore::load(const std::string& profileName) const {
         }
     };
 
-    assignOptionalFloat("gen.terrain_base_frequency", config.worldGen.terrainBaseFrequency);
-    assignOptionalFloat("gen.terrain_detail_frequency", config.worldGen.terrainDetailFrequency);
-    assignOptionalFloat("gen.terrain_warp_strength", config.worldGen.terrainWarpStrength);
-    assignOptionalFloat("gen.terrain_amplitude", config.worldGen.terrainAmplitude);
-    assignOptionalFloat("gen.terrain_ridge_mix", config.worldGen.terrainRidgeMix);
+    assignOptionalFloat("gen.terrain_base_frequency", config.initialConditions.terrain.terrainBaseFrequency);
+    assignOptionalFloat("gen.terrain_detail_frequency", config.initialConditions.terrain.terrainDetailFrequency);
+    assignOptionalFloat("gen.terrain_warp_strength", config.initialConditions.terrain.terrainWarpStrength);
+    assignOptionalFloat("gen.terrain_amplitude", config.initialConditions.terrain.terrainAmplitude);
+    assignOptionalFloat("gen.terrain_ridge_mix", config.initialConditions.terrain.terrainRidgeMix);
     {
         const auto it = kv.find("gen.terrain_octaves");
         if (it != kv.end()) {
             const auto parsed = parseU32(it->second);
             if (parsed.has_value()) {
-                config.worldGen.terrainOctaves = static_cast<int>(*parsed);
+                config.initialConditions.terrain.terrainOctaves = static_cast<int>(*parsed);
             }
         }
     }
-    assignOptionalFloat("gen.terrain_lacunarity", config.worldGen.terrainLacunarity);
-    assignOptionalFloat("gen.terrain_gain", config.worldGen.terrainGain);
-    assignOptionalFloat("gen.sea_level", config.worldGen.seaLevel);
-    assignOptionalFloat("gen.polar_cooling", config.worldGen.polarCooling);
-    assignOptionalFloat("gen.latitude_banding", config.worldGen.latitudeBanding);
-    assignOptionalFloat("gen.humidity_from_water", config.worldGen.humidityFromWater);
-    assignOptionalFloat("gen.biome_noise_strength", config.worldGen.biomeNoiseStrength);
-    assignOptionalFloat("gen.island_density", config.worldGen.islandDensity);
-    assignOptionalFloat("gen.island_falloff", config.worldGen.islandFalloff);
-    assignOptionalFloat("gen.coastline_sharpness", config.worldGen.coastlineSharpness);
-    assignOptionalFloat("gen.archipelago_jitter", config.worldGen.archipelagoJitter);
-    assignOptionalFloat("gen.erosion_strength", config.worldGen.erosionStrength);
-    assignOptionalFloat("gen.shelf_depth", config.worldGen.shelfDepth);
+    assignOptionalFloat("gen.terrain_lacunarity", config.initialConditions.terrain.terrainLacunarity);
+    assignOptionalFloat("gen.terrain_gain", config.initialConditions.terrain.terrainGain);
+    assignOptionalFloat("gen.sea_level", config.initialConditions.terrain.seaLevel);
+    assignOptionalFloat("gen.polar_cooling", config.initialConditions.terrain.polarCooling);
+    assignOptionalFloat("gen.latitude_banding", config.initialConditions.terrain.latitudeBanding);
+    assignOptionalFloat("gen.humidity_from_water", config.initialConditions.terrain.humidityFromWater);
+    assignOptionalFloat("gen.biome_noise_strength", config.initialConditions.terrain.biomeNoiseStrength);
+    assignOptionalFloat("gen.island_density", config.initialConditions.terrain.islandDensity);
+    assignOptionalFloat("gen.island_falloff", config.initialConditions.terrain.islandFalloff);
+    assignOptionalFloat("gen.coastline_sharpness", config.initialConditions.terrain.coastlineSharpness);
+    assignOptionalFloat("gen.archipelago_jitter", config.initialConditions.terrain.archipelagoJitter);
+    assignOptionalFloat("gen.erosion_strength", config.initialConditions.terrain.erosionStrength);
+    assignOptionalFloat("gen.shelf_depth", config.initialConditions.terrain.shelfDepth);
 
     return config;
 }
