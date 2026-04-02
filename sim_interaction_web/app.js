@@ -673,12 +673,15 @@ async function loadInteractionData(modelId) {
 
     console.log("loadInteractionData called with:", modelId);
     
-    // Clear cache for fresh load to ensure we get latest data
+    // Always clear cache when loading via UI to ensure fresh data
+    // This prevents stale data from being used when switching models
     SimModelLoader.clearCache();
     
     const data = await SimModelLoader.loadModel(modelId);
     console.log("Data loaded, nodes:", data?.nodes?.length, "interactions:", data?.interactions?.length);
-    appState.data = data;
+    
+    // Store a fresh copy to prevent any reference issues
+    appState.data = JSON.parse(JSON.stringify(data));
 }
 
 async function populateModelSelector() {

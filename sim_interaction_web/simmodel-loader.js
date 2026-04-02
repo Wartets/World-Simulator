@@ -186,6 +186,8 @@ const SimModelLoader = {
         const nodes = [];
         const interactions = [];
         const nodeIds = new Set();
+        // Track ALL IDs (both nodes and interactions) to prevent duplicates
+        const allIds = new Set();
 
         // Create nodes from variables
         if (modelData.variables) {
@@ -196,8 +198,14 @@ const SimModelLoader = {
                 }
 
                 const nodeId = variable.id;
+                // Skip if ID already exists in all IDs
+                if (allIds.has(nodeId)) {
+                    console.warn(`Skipping duplicate node ID: ${nodeId}`);
+                    continue;
+                }
                 if (!nodeIds.has(nodeId)) {
                     nodeIds.add(nodeId);
+                    allIds.add(nodeId);
                     
                     // Determine group based on role and support
                     let group = 'resource';
@@ -224,8 +232,14 @@ const SimModelLoader = {
         if (modelData.stages) {
             for (const stage of modelData.stages) {
                 const stageId = stage.id;
+                // Skip if ID already exists in all IDs (could be a variable with same name)
+                if (allIds.has(stageId)) {
+                    console.warn(`Skipping duplicate stage ID: ${stageId} (already exists as node)`);
+                    continue;
+                }
                 if (!nodeIds.has(stageId)) {
                     nodeIds.add(stageId);
+                    allIds.add(stageId);
                     nodes.push({
                         id: stageId,
                         label: stage.id,
@@ -238,6 +252,9 @@ const SimModelLoader = {
 
         // Create interactions from stages
         if (modelData.stages) {
+            // Track interaction IDs to prevent duplicates
+            const interactionIds = new Set();
+            
             for (const stage of modelData.stages) {
                 if (!stage.interactions) continue;
 
@@ -255,6 +272,13 @@ const SimModelLoader = {
                             if (interaction.writes && interaction.writes.length > 0) {
                                 for (const writeVar of interaction.writes) {
                                     const interactionId = `${stage.id}_${interaction.id}_${readVar}`;
+                                    
+                                    // Skip if this interaction ID already exists
+                                    if (interactionIds.has(interactionId)) {
+                                        console.warn(`Duplicate interaction ID: ${interactionId}, skipping`);
+                                        continue;
+                                    }
+                                    interactionIds.add(interactionId);
                                     
                                     interactions.push({
                                         id: interactionId,
@@ -277,28 +301,28 @@ const SimModelLoader = {
                     // Also create write interactions from stage to write variables
                     if (interaction.writes && interaction.writes.length > 0) {
                         for (const writeVar of interaction.writes) {
-                            const interactionId = `${stage.id}_${interaction.id}_write`;
+                            const interactionId = `${stage.id}_${interaction.id}_write_${writeVar}`;
                             
-                            // Check if we already have this interaction
-                            const existing = interactions.find(i => 
-                                i.id === interactionId && i.target === writeVar
-                            );
-                            
-                            if (!existing) {
-                                interactions.push({
-                                    id: interactionId,
-                                    source: stage.id,
-                                    target: writeVar,
-                                    mode: 'write',
-                                    summary: `${stage.id} writes to ${writeVar}`,
-                                    detail: stage.description || '',
-                                    equation: '',
-                                    evidence: stage.id,
-                                    stageId: stage.id,
-                                    interactionId: interaction.id,
-                                    targetType: interaction.target_type
-                                });
+                            // Skip if this interaction ID already exists
+                            if (interactionIds.has(interactionId)) {
+                                console.warn(`Duplicate interaction ID: ${interactionId}, skipping`);
+                                continue;
                             }
+                            interactionIds.add(interactionId);
+                            
+                            interactions.push({
+                                id: interactionId,
+                                source: stage.id,
+                                target: writeVar,
+                                mode: 'write',
+                                summary: `${stage.id} writes to ${writeVar}`,
+                                detail: stage.description || '',
+                                equation: '',
+                                evidence: stage.id,
+                                stageId: stage.id,
+                                interactionId: interaction.id,
+                                targetType: interaction.target_type
+                            });
                         }
                     }
                 }
