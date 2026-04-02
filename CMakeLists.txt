@@ -44,6 +44,7 @@ add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/scheduler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/state_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/runtime.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/field_resolver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/subsystems/bootstrap_subsystem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/subsystems/subsystems.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/model_parser.cpp

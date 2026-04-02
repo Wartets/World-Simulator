@@ -220,6 +220,32 @@ std::vector<std::string> StateStore::variableNames() const {
     return names;
 }
 
+void StateStore::registerFieldAlias(const std::string& semanticKey, const std::string& variableName) {
+    if (semanticKey.empty()) {
+        throw std::invalid_argument("Field alias semantic key must not be empty");
+    }
+    if (!hasField(variableName)) {
+        throw std::invalid_argument("Cannot register alias for unknown variable: " + variableName);
+    }
+    fieldAliases_.insert_or_assign(semanticKey, variableName);
+}
+
+bool StateStore::hasFieldAlias(const std::string& semanticKey) const noexcept {
+    return fieldAliases_.find(semanticKey) != fieldAliases_.end();
+}
+
+std::optional<std::string> StateStore::resolveFieldAlias(const std::string& semanticKey) const {
+    const auto it = fieldAliases_.find(semanticKey);
+    if (it == fieldAliases_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+void StateStore::clearFieldAliases() noexcept {
+    fieldAliases_.clear();
+}
+
 std::uint64_t StateStore::logicalCellCount(const std::string& name) const {
     return fieldForRead(name).logicalCellCount;
 }

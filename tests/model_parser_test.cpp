@@ -298,7 +298,6 @@ void test_model_binding_plan_uses_catalog_metadata() {
 
     initialization::InitializationRequest conwayRequest;
     conwayRequest.type = InitialConditionType::Conway;
-    conwayRequest.allowKeywordFallback = false;
     const auto conwayPlan = initialization::buildBindingPlan(catalog, conwayRequest);
     assert(!conwayPlan.decisions.empty());
     assert(conwayPlan.decisions[0].resolved);
@@ -306,7 +305,6 @@ void test_model_binding_plan_uses_catalog_metadata() {
 
     initialization::InitializationRequest wavesRequest;
     wavesRequest.type = InitialConditionType::Waves;
-    wavesRequest.allowKeywordFallback = false;
     const auto wavesPlan = initialization::buildBindingPlan(catalog, wavesRequest);
     assert(!wavesPlan.decisions.empty());
     assert(wavesPlan.decisions[0].resolved);

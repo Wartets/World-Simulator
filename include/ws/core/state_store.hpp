@@ -114,6 +114,10 @@ public:
     void allocateScalarField(const VariableSpec& spec);
     [[nodiscard]] bool hasField(const std::string& name) const noexcept;
     [[nodiscard]] std::vector<std::string> variableNames() const;
+    void registerFieldAlias(const std::string& semanticKey, const std::string& variableName);
+    [[nodiscard]] bool hasFieldAlias(const std::string& semanticKey) const noexcept;
+    [[nodiscard]] std::optional<std::string> resolveFieldAlias(const std::string& semanticKey) const;
+    void clearFieldAliases() noexcept;
     [[nodiscard]] std::uint64_t logicalCellCount(const std::string& name) const;
     [[nodiscard]] const std::vector<float>& scalarField(const std::string& name) const;
     [[nodiscard]] std::optional<float> trySampleScalar(const std::string& name, CellSigned cell) const;
@@ -190,6 +194,7 @@ private:
     std::vector<VariableSpec> variableOrder_;
     std::vector<ScalarFieldStorage> scalarFields_;
         std::unordered_map<std::string, std::size_t> fieldNameToIndex_;
+        std::unordered_map<std::string, std::string> fieldAliases_;
         MemoryLayout layout_{};
     AccessObserver accessObserver_;
 };

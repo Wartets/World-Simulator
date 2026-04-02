@@ -511,6 +511,10 @@ bool loadModelExecutionSpec(
     try {
         const auto ctx = ws::ModelParser::load(modelPath);
         const json parsed = json::parse(ctx.model_json);
+        json metadataParsed;
+        if (!ctx.metadata_json.empty()) {
+            metadataParsed = json::parse(ctx.metadata_json);
+        }
 
         if (parsed.contains("variables") && parsed["variables"].is_array()) {
             for (const auto& variable : parsed["variables"]) {
@@ -571,6 +575,24 @@ bool loadModelExecutionSpec(
             }
         }
 
+        if (metadataParsed.is_object() &&
+            metadataParsed.contains("runtime_field_aliases") &&
+            metadataParsed["runtime_field_aliases"].is_object()) {
+            for (auto it = metadataParsed["runtime_field_aliases"].begin();
+                 it != metadataParsed["runtime_field_aliases"].end();
+                 ++it) {
+                if (!it.value().is_string()) {
+                    continue;
+                }
+                const std::string semanticKey = it.key();
+                const std::string variableId = it.value().get<std::string>();
+                if (semanticKey.empty() || variableId.empty()) {
+                    continue;
+                }
+                executionSpec.semanticFieldAliases.insert_or_assign(semanticKey, variableId);
+            }
+        }
+
         auto normalize = [](std::vector<std::string>& values) {
             values.erase(
                 std::remove_if(values.begin(), values.end(), [](const std::string& value) { return value.empty(); }),
@@ -593,7 +615,8 @@ bool loadModelExecutionSpec(
 
         message = "model_execution_spec_ready variables=" + std::to_string(executionSpec.cellScalarVariableIds.size()) +
             " stages=" + std::to_string(executionSpec.stageOrder.size()) +
-            " conserved=" + std::to_string(executionSpec.conservedVariables.size());
+            " conserved=" + std::to_string(executionSpec.conservedVariables.size()) +
+            " aliases=" + std::to_string(executionSpec.semanticFieldAliases.size());
         return true;
     } catch (const std::exception& exception) {
         executionSpec = ModelExecutionSpec{};
@@ -697,8 +720,7 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "conway.target_variable",
                 request.conwayTargetOverride,
-                {"alive", "binary", "state", "vegetation", "biomass"},
-                {});
+                {"alive", "binary", "state", "vegetation", "biomass"});
             break;
 
         case InitialConditionType::GrayScott: {
@@ -707,8 +729,7 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "gray_scott.target_variable_a",
                 request.grayTargetAOverride,
-                {"gray_scott_u", "reactant_u", "resource", "concentration"},
-                {});
+                {"gray_scott_u", "reactant_u", "resource", "concentration"});
 
             std::optional<std::string> exclude;
             if (!plan.decisions.empty() && plan.decisions.front().resolved) {
@@ -721,7 +742,6 @@ InitializationBindingPlan buildBindingPlan(
                 "gray_scott.target_variable_b",
                 request.grayTargetBOverride,
                 {"gray_scott_v", "reactant_v", "biomass", "vegetation", "concentration"},
-                {},
                 exclude);
 
             if (plan.decisions.size() >= 2 &&
@@ -742,8 +762,7 @@ InitializationBindingPlan buildBindingPlan(
                 catalog,
                 "waves.target_variable",
                 request.wavesTargetOverride,
-                {"water", "height", "surface", "wave", "elevation"},
-                {});
+                {"water", "height", "surface", "wave", "elevation"});
             break;
 
         case InitialConditionType::Terrain:

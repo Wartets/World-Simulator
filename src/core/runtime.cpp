@@ -332,6 +332,16 @@ void Runtime::start() {
         scheduler_.setAdmissionReport(admissionReport_);
 
         allocateCanonicalFields();
+
+        stateStore_.clearFieldAliases();
+        if (config_.modelExecutionSpec.has_value()) {
+            for (const auto& [semanticKey, variableId] : config_.modelExecutionSpec->semanticFieldAliases) {
+                if (!semanticKey.empty() && !variableId.empty() && stateStore_.hasField(variableId)) {
+                    stateStore_.registerFieldAlias(semanticKey, variableId);
+                }
+            }
+        }
+
         initializeParameterControls();
 
         const std::vector<std::string> runtimeFields = stateStore_.variableNames();
