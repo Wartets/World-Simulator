@@ -220,6 +220,9 @@ ws_add_test(subsystems_test tests/subsystems.cpp)
 ws_add_test(interactions_test tests/interactions.cpp)
 ws_add_test(model_parser_test tests/model_parser_test.cpp)
 ws_add_test(integration_multi_model_test tests/integration_multi_model.cpp)
+ws_add_test(full_pipeline_multi_model_test tests/full_pipeline_multi_model.cpp)
+ws_add_test(ui_error_paths_multi_model_test tests/ui_error_paths_multi_model.cpp)
+ws_add_test(ui_state_transitions_multi_model_test tests/ui_state_transitions_multi_model.cpp)
 ws_add_test(shell_support_test tests/shell_support.cpp)
 ws_add_test(live_patching_test tests/live_patching.cpp)
 ws_add_test(profile_store_test tests/profile_store.cpp)
@@ -234,6 +237,31 @@ target_sources(shell_support_test PRIVATE
 target_sources(profile_store_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+)
+target_sources(full_pipeline_multi_model_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/display_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_storage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
+)
+target_sources(ui_error_paths_multi_model_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_storage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
+)
+target_sources(ui_state_transitions_multi_model_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_storage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )
 ws_add_test(time_control_scrubbing_test tests/time_control_scrubbing.cpp)
 target_sources(time_control_scrubbing_test PRIVATE
