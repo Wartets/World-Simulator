@@ -24,6 +24,10 @@ struct SessionUiState {
     initialization::InitializationBindingPlan generationBindingPlan{};
     std::vector<std::string> selectedModelCellStateVariables;
     bool allowUnresolvedGenerationBindings = false;
+    bool generationShowOnlyViableModes = false;
+    int generationPreviewSourceIndex = 0;
+    int generationPreviewChannelIndex = 0;
+    int generationModeIndex = -1;
     char worldSearch[128] = "";
     bool filterCheckpointOnly = false;
     bool filterProfileOnly = false;

@@ -98,6 +98,14 @@ std::string initialConditionTypeToString(const InitialConditionType type) {
         case InitialConditionType::GrayScott: return "gray_scott";
         case InitialConditionType::Waves: return "waves";
         case InitialConditionType::Blank: return "blank";
+        case InitialConditionType::Voronoi: return "voronoi";
+        case InitialConditionType::Clustering: return "clustering";
+        case InitialConditionType::SparseRandom: return "sparse_random";
+        case InitialConditionType::GradientField: return "gradient_field";
+        case InitialConditionType::Checkerboard: return "checkerboard";
+        case InitialConditionType::RadialPattern: return "radial_pattern";
+        case InitialConditionType::MultiScale: return "multiscale";
+        case InitialConditionType::DiffusionLimit: return "diffusion_limit";
     }
     return "terrain";
 }
@@ -118,6 +126,30 @@ std::optional<InitialConditionType> parseInitialConditionType(const std::string&
     }
     if (normalized == "blank" || normalized == "zero") {
         return InitialConditionType::Blank;
+    }
+    if (normalized == "voronoi" || normalized == "tessellation") {
+        return InitialConditionType::Voronoi;
+    }
+    if (normalized == "clustering" || normalized == "clusters") {
+        return InitialConditionType::Clustering;
+    }
+    if (normalized == "sparse_random" || normalized == "sparse" || normalized == "random") {
+        return InitialConditionType::SparseRandom;
+    }
+    if (normalized == "gradient_field" || normalized == "gradient") {
+        return InitialConditionType::GradientField;
+    }
+    if (normalized == "checkerboard" || normalized == "checker") {
+        return InitialConditionType::Checkerboard;
+    }
+    if (normalized == "radial_pattern" || normalized == "radial" || normalized == "concentric") {
+        return InitialConditionType::RadialPattern;
+    }
+    if (normalized == "multiscale" || normalized == "multi_scale") {
+        return InitialConditionType::MultiScale;
+    }
+    if (normalized == "diffusion_limit" || normalized == "dla") {
+        return InitialConditionType::DiffusionLimit;
     }
     return std::nullopt;
 }

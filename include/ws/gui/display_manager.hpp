@@ -53,4 +53,15 @@ struct DisplayBuffer {
     const DisplayManagerParams& params,
     const char* label = "preview");
 
+[[nodiscard]] DisplayBuffer buildDisplayBufferFromPreviewComponents(
+    const std::vector<float>& primary,
+    const std::vector<float>& terrain,
+    const std::vector<float>& water,
+    const std::vector<float>& humidity,
+    const std::vector<float>& windU,
+    const std::vector<float>& windV,
+    DisplayType displayType,
+    const DisplayManagerParams& params,
+    const char* label = "preview");
+
 } // namespace ws::gui

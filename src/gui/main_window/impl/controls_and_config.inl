@@ -2004,13 +2004,103 @@ void drawWorldGenerationSection() {
         }
     };
 
-    const char* genTypes[] = {
-        "Geographic Terrain",
-        "Conway's Life (Random)",
-        "Gray-Scott (Spots)",
-        "Waves (Drop)",
-        "Blank Grid"};
-    ImGui::Combo("Generation Mode", &panel_.initialConditionTypeIndex, genTypes, IM_ARRAYSIZE(genTypes));
+    std::vector<ParameterControl> generationParameterControls;
+    std::string generationParameterMessage;
+    runtime_.parameterControls(generationParameterControls, generationParameterMessage);
+    static_cast<void>(generationParameterMessage);
+
+    const auto recommendation = GenerationAdvisor::recommendGenerationMode(
+        sessionUi_.selectedModelCatalog,
+        generationParameterControls);
+    const auto viableModes = GenerationAdvisor::viableGenerationModes(sessionUi_.selectedModelCatalog);
+
+    const auto isModeViable = [&](const InitialConditionType modeType) {
+        return std::find(viableModes.begin(), viableModes.end(), modeType) != viableModes.end();
+    };
+
+    const float confidencePct = std::clamp(recommendation.confidence * 100.0f, 0.0f, 100.0f);
+    ImGui::TextColored(
+        ImVec4(0.62f, 0.82f, 0.95f, 1.0f),
+        "Recommended: %s (%.0f%%)",
+        generationModeLabel(recommendation.recommendedType),
+        confidencePct);
+    ImGui::TextDisabled("%s", humanizeToken(recommendation.rationale).c_str());
+
+    const float recommendationButtonW = (ImGui::GetContentRegionAvail().x - kS2) * 0.5f;
+    if (SecondaryButton("Apply recommended defaults", ImVec2(recommendationButtonW, 24.0f))) {
+        applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, recommendation.recommendedType, true);
+    }
+    DelayedTooltip("Sets generation mode and parameters using model-aware defaults from metadata analysis.");
+    ImGui::SameLine();
+    checkboxWithHint(
+        "Show only viable modes",
+        &sessionUi_.generationShowOnlyViableModes,
+        "Filters mode list to options that best match the selected model metadata and variable catalog.");
+
+    static constexpr std::array<InitialConditionType, 5> kAllGenerationModes = {
+        InitialConditionType::Terrain,
+        InitialConditionType::Conway,
+        InitialConditionType::GrayScott,
+        InitialConditionType::Waves,
+        InitialConditionType::Blank};
+
+    auto ensureValidModeSelection = [&]() {
+        const InitialConditionType selected = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+        if (!sessionUi_.generationShowOnlyViableModes || isModeViable(selected)) {
+            return;
+        }
+        if (isModeViable(recommendation.recommendedType)) {
+            panel_.initialConditionTypeIndex = static_cast<int>(recommendation.recommendedType);
+            return;
+        }
+        for (const auto mode : kAllGenerationModes) {
+            if (isModeViable(mode)) {
+                panel_.initialConditionTypeIndex = static_cast<int>(mode);
+                return;
+            }
+        }
+        panel_.initialConditionTypeIndex = static_cast<int>(InitialConditionType::Blank);
+    };
+
+    ensureValidModeSelection();
+
+    const InitialConditionType selectedMode = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+    const char* selectedLabel = generationModeLabel(selectedMode);
+    if (ImGui::BeginCombo("Generation Mode", selectedLabel)) {
+        for (const auto modeType : kAllGenerationModes) {
+            const bool viable = isModeViable(modeType);
+            if (sessionUi_.generationShowOnlyViableModes && !viable) {
+                continue;
+            }
+
+            std::string entryLabel = generationModeLabel(modeType);
+            if (modeType == recommendation.recommendedType) {
+                entryLabel += "  [recommended]";
+            }
+            if (!viable) {
+                entryLabel += "  [low match]";
+            }
+
+            const bool selected = (panel_.initialConditionTypeIndex == static_cast<int>(modeType));
+            if (!viable) {
+                ImGui::BeginDisabled();
+            }
+            if (ImGui::Selectable(entryLabel.c_str(), selected)) {
+                panel_.initialConditionTypeIndex = static_cast<int>(modeType);
+            }
+            if (!viable) {
+                ImGui::EndDisabled();
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::TextDisabled(
+        "%s",
+        GenerationAdvisor::describeGenerationMode(static_cast<InitialConditionType>(panel_.initialConditionTypeIndex)).c_str());
     ImGui::Separator();
 
     if (panel_.initialConditionTypeIndex == 0) {

@@ -554,6 +554,41 @@
         SectionHeader("Generation preview", "Preview only - simulation is not running.");
         ImGui::Spacing();
         ImGui::BeginChild("WizardPreview", ImVec2(-1.0f, -1.0f), true);
+        static constexpr const char* kPreviewDisplayTypes[] = {
+            "Scalar Field",
+            "Surface Category",
+            "Relative Elevation",
+            "Surface Water",
+            "Moisture Map",
+            "Wind Field"};
+        static constexpr const char* kPreviewSources[] = {
+            "Auto (mode-driven)",
+            "Primary signal",
+            "Terrain proxy",
+            "Water proxy",
+            "Moisture proxy",
+            "Wind magnitude proxy"};
+
+        int previewDisplayTypeIndex = static_cast<int>(viz_.generationPreviewDisplayType);
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo(
+            "Preview display",
+            &previewDisplayTypeIndex,
+            kPreviewDisplayTypes,
+            static_cast<int>(std::size(kPreviewDisplayTypes)))) {
+            viz_.generationPreviewDisplayType = static_cast<DisplayType>(std::clamp(previewDisplayTypeIndex, 0, 5));
+        }
+
+        sessionUi_.generationPreviewSourceIndex = std::clamp(sessionUi_.generationPreviewSourceIndex, 0, 5);
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::Combo(
+            "Preview source",
+            &sessionUi_.generationPreviewSourceIndex,
+            kPreviewSources,
+            static_cast<int>(std::size(kPreviewSources)));
+
+        ImGui::Spacing();
+
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const ImVec2 avail = ImGui::GetContentRegionAvail();
         const ImVec2 minPos = ImGui::GetCursorScreenPos();
@@ -580,8 +615,11 @@
         }
         const float drawX = minPos.x + (avail.x - drawW) * 0.5f;
         const float drawY = minPos.y + (avail.y - drawH) * 0.5f;
+
         std::uint64_t previewHash = 1469598103934665603ull;
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.seed));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.initialConditionTypeIndex));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(sessionUi_.generationPreviewSourceIndex));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewBaseW));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewBaseH));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewStride));
@@ -613,36 +651,256 @@
         previewHash = hashCombine(previewHash, hashFloat(panel_.archipelagoJitter));
         previewHash = hashCombine(previewHash, hashFloat(panel_.erosionStrength));
         previewHash = hashCombine(previewHash, hashFloat(panel_.shelfDepth));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.conwayAliveProbability));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.conwayAliveValue));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.conwayDeadValue));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.conwaySmoothingPasses));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.grayScottBackgroundA));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.grayScottBackgroundB));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.grayScottSpotValueA));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.grayScottSpotValueB));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.grayScottSpotCount));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.grayScottSpotRadius));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.grayScottSpotJitter));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.waveBaseline));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.waveDropAmplitude));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.waveDropRadius));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.waveDropCount));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.waveDropJitter));
+        previewHash = hashCombine(previewHash, hashFloat(panel_.waveRingFrequency));
 
         if (previewHash != wizardPreviewHash_ || wizardPreviewW_ != previewW || wizardPreviewH_ != previewH) {
-            std::vector<float> previewTerrain;
-            std::vector<float> previewWater;
-            previewTerrain.reserve(static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH));
-            previewWater.reserve(static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH));
+            const std::size_t pixelCount = static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH);
+            std::vector<float> previewPrimary(pixelCount, 0.0f);
+            std::vector<float> previewTerrain(pixelCount, 0.5f);
+            std::vector<float> previewWater(pixelCount, 0.0f);
+            std::vector<float> previewHumidity(pixelCount, 0.0f);
+            std::vector<float> previewWindU(pixelCount, 0.0f);
+            std::vector<float> previewWindV(pixelCount, 0.0f);
 
-            for (int y = 0; y < previewH; ++y) {
-                for (int x = 0; x < previewW; ++x) {
-                    const float terrain = previewTerrainValue(panel_, x * previewStride, y * previewStride, previewBaseW, previewBaseH);
-                    const float water = std::clamp((panel_.seaLevel - terrain) * 1.9f + 0.10f, 0.0f, 1.0f);
-                    previewTerrain.push_back(terrain);
-                    previewWater.push_back(water);
+            const auto noise2D = [&](const std::uint64_t salt, const int x, const int y) {
+                std::uint64_t h = panel_.seed ^ salt;
+                h = hashCombine(h, static_cast<std::uint64_t>(x * 73856093));
+                h = hashCombine(h, static_cast<std::uint64_t>(y * 19349663));
+                h ^= (h >> 33u);
+                h *= 0xff51afd7ed558ccdull;
+                h ^= (h >> 33u);
+                h *= 0xc4ceb9fe1a85ec53ull;
+                h ^= (h >> 33u);
+                return static_cast<float>(h & 0xFFFFFFFFull) / static_cast<float>(0xFFFFFFFFull);
+            };
+
+            auto indexOf = [&](const int x, const int y) {
+                return static_cast<std::size_t>(y) * static_cast<std::size_t>(previewW) + static_cast<std::size_t>(x);
+            };
+
+            const InitialConditionType modeType = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+            if (modeType == InitialConditionType::Terrain) {
+                for (int y = 0; y < previewH; ++y) {
+                    for (int x = 0; x < previewW; ++x) {
+                        const std::size_t idx = indexOf(x, y);
+                        const float terrain = previewTerrainValue(panel_, x * previewStride, y * previewStride, previewBaseW, previewBaseH);
+                        const float water = std::clamp((panel_.seaLevel - terrain) * 1.9f + 0.10f, 0.0f, 1.0f);
+                        const float humidity = std::clamp(
+                            panel_.humidityFromWater * water +
+                            (0.25f + 0.75f * panel_.biomeNoiseStrength) * noise2D(0xA5ull, x, y),
+                            0.0f,
+                            1.0f);
+                        previewPrimary[idx] = terrain;
+                        previewTerrain[idx] = terrain;
+                        previewWater[idx] = water;
+                        previewHumidity[idx] = humidity;
+                    }
+                }
+            } else if (modeType == InitialConditionType::Conway) {
+                std::vector<float> aliveMask(pixelCount, 0.0f);
+                for (int y = 0; y < previewH; ++y) {
+                    for (int x = 0; x < previewW; ++x) {
+                        const std::size_t idx = indexOf(x, y);
+                        aliveMask[idx] = noise2D(0xC0ull, x, y) < panel_.conwayAliveProbability ? 1.0f : 0.0f;
+                    }
+                }
+
+                const int smoothingPasses = std::clamp(panel_.conwaySmoothingPasses, 0, 3);
+                for (int pass = 0; pass < smoothingPasses; ++pass) {
+                    std::vector<float> nextMask = aliveMask;
+                    for (int y = 1; y < previewH - 1; ++y) {
+                        for (int x = 1; x < previewW - 1; ++x) {
+                            int neighbors = 0;
+                            for (int oy = -1; oy <= 1; ++oy) {
+                                for (int ox = -1; ox <= 1; ++ox) {
+                                    if (ox == 0 && oy == 0) {
+                                        continue;
+                                    }
+                                    neighbors += aliveMask[indexOf(x + ox, y + oy)] > 0.5f ? 1 : 0;
+                                }
+                            }
+                            nextMask[indexOf(x, y)] = neighbors >= 4 ? 1.0f : 0.0f;
+                        }
+                    }
+                    aliveMask.swap(nextMask);
+                }
+
+                for (std::size_t i = 0; i < pixelCount; ++i) {
+                    const float alive = aliveMask[i];
+                    previewPrimary[i] = (alive > 0.5f) ? panel_.conwayAliveValue : panel_.conwayDeadValue;
+                    previewTerrain[i] = 0.3f + 0.6f * alive;
+                    previewWater[i] = std::clamp(0.35f - 0.25f * alive, 0.0f, 1.0f);
+                    previewHumidity[i] = 0.25f + 0.55f * alive;
+                }
+            } else if (modeType == InitialConditionType::GrayScott) {
+                std::vector<float> fieldA(pixelCount, panel_.grayScottBackgroundA);
+                std::vector<float> fieldB(pixelCount, panel_.grayScottBackgroundB);
+                const int spotCount = std::clamp(panel_.grayScottSpotCount, 1, 64);
+                const float baseRadius = std::max(1.0f, panel_.grayScottSpotRadius / static_cast<float>(previewStride));
+
+                for (int spot = 0; spot < spotCount; ++spot) {
+                    const float centerX = noise2D(0x901ull + static_cast<std::uint64_t>(spot), spot, previewW) * static_cast<float>(previewW - 1);
+                    const float centerY = noise2D(0xA11ull + static_cast<std::uint64_t>(spot), previewH, spot) * static_cast<float>(previewH - 1);
+                    const float radius = baseRadius * (1.0f + panel_.grayScottSpotJitter * (noise2D(0xB21ull + static_cast<std::uint64_t>(spot), spot, spot) - 0.5f));
+                    const float radiusSafe = std::max(0.5f, radius);
+
+                    for (int y = 0; y < previewH; ++y) {
+                        for (int x = 0; x < previewW; ++x) {
+                            const float dx = static_cast<float>(x) - centerX;
+                            const float dy = static_cast<float>(y) - centerY;
+                            const float d2 = dx * dx + dy * dy;
+                            const float influence = std::exp(-d2 / (2.0f * radiusSafe * radiusSafe));
+                            const std::size_t idx = indexOf(x, y);
+                            fieldA[idx] = fieldA[idx] * (1.0f - influence) + panel_.grayScottSpotValueA * influence;
+                            fieldB[idx] = fieldB[idx] * (1.0f - influence) + panel_.grayScottSpotValueB * influence;
+                        }
+                    }
+                }
+
+                auto normalizeRange = [&](const std::vector<float>& input) {
+                    std::vector<float> out(input.size(), 0.0f);
+                    float minV = std::numeric_limits<float>::infinity();
+                    float maxV = -std::numeric_limits<float>::infinity();
+                    for (const float v : input) {
+                        minV = std::min(minV, v);
+                        maxV = std::max(maxV, v);
+                    }
+                    const float span = std::max(1e-6f, maxV - minV);
+                    for (std::size_t i = 0; i < input.size(); ++i) {
+                        out[i] = std::clamp((input[i] - minV) / span, 0.0f, 1.0f);
+                    }
+                    return out;
+                };
+
+                previewPrimary = fieldB;
+                previewTerrain = normalizeRange(fieldA);
+                previewWater = normalizeRange(fieldB);
+                for (std::size_t i = 0; i < pixelCount; ++i) {
+                    previewHumidity[i] = std::clamp(0.5f * previewTerrain[i] + 0.5f * previewWater[i], 0.0f, 1.0f);
+                }
+            } else if (modeType == InitialConditionType::Waves) {
+                std::vector<float> wave(pixelCount, panel_.waveBaseline);
+                const int dropCount = std::clamp(panel_.waveDropCount, 1, 24);
+                const float baseRadius = std::max(1.0f, panel_.waveDropRadius / static_cast<float>(previewStride));
+                for (int d = 0; d < dropCount; ++d) {
+                    const float jitterX = (noise2D(0xD11ull + static_cast<std::uint64_t>(d), d, previewW) - 0.5f) * panel_.waveDropJitter;
+                    const float jitterY = (noise2D(0xD21ull + static_cast<std::uint64_t>(d), previewH, d) - 0.5f) * panel_.waveDropJitter;
+                    const float centerX = static_cast<float>(previewW - 1) * (0.5f + jitterX);
+                    const float centerY = static_cast<float>(previewH - 1) * (0.5f + jitterY);
+                    const float radius = std::max(0.75f, baseRadius * (0.8f + 0.4f * noise2D(0xD31ull, d, d)));
+
+                    for (int y = 0; y < previewH; ++y) {
+                        for (int x = 0; x < previewW; ++x) {
+                            const float dx = static_cast<float>(x) - centerX;
+                            const float dy = static_cast<float>(y) - centerY;
+                            const float dist = std::sqrt(dx * dx + dy * dy);
+                            const float normalizedDist = dist / radius;
+                            const float envelope = std::exp(-normalizedDist * normalizedDist);
+                            const float ring = std::cos(normalizedDist * panel_.waveRingFrequency * 3.1415926f);
+                            wave[indexOf(x, y)] += panel_.waveDropAmplitude * envelope * ring;
+                        }
+                    }
+                }
+
+                auto normalizeWave = [&](const std::vector<float>& input) {
+                    std::vector<float> out(input.size(), 0.0f);
+                    float minV = std::numeric_limits<float>::infinity();
+                    float maxV = -std::numeric_limits<float>::infinity();
+                    for (const float v : input) {
+                        minV = std::min(minV, v);
+                        maxV = std::max(maxV, v);
+                    }
+                    const float span = std::max(1e-6f, maxV - minV);
+                    for (std::size_t i = 0; i < input.size(); ++i) {
+                        out[i] = std::clamp((input[i] - minV) / span, 0.0f, 1.0f);
+                    }
+                    return out;
+                };
+
+                previewPrimary = wave;
+                previewTerrain = normalizeWave(wave);
+                for (std::size_t i = 0; i < pixelCount; ++i) {
+                    previewWater[i] = std::clamp(std::abs(previewTerrain[i] - 0.5f) * 2.0f, 0.0f, 1.0f);
+                    previewHumidity[i] = std::clamp(0.35f + 0.65f * previewWater[i], 0.0f, 1.0f);
+                }
+
+                for (int y = 1; y < previewH - 1; ++y) {
+                    for (int x = 1; x < previewW - 1; ++x) {
+                        const float gx = wave[indexOf(x + 1, y)] - wave[indexOf(x - 1, y)];
+                        const float gy = wave[indexOf(x, y + 1)] - wave[indexOf(x, y - 1)];
+                        const std::size_t idx = indexOf(x, y);
+                        previewWindU[idx] = gx;
+                        previewWindV[idx] = gy;
+                    }
+                }
+            } else {
+                for (std::size_t i = 0; i < pixelCount; ++i) {
+                    previewPrimary[i] = 0.0f;
+                    previewTerrain[i] = 0.5f;
+                    previewWater[i] = 0.0f;
+                    previewHumidity[i] = 0.0f;
                 }
             }
 
-            DisplayBuffer previewDisplay = buildDisplayBufferFromTerrain(
+            std::vector<float> displayPrimary = previewPrimary;
+            switch (sessionUi_.generationPreviewSourceIndex) {
+                case 1: displayPrimary = previewPrimary; break;
+                case 2: displayPrimary = previewTerrain; break;
+                case 3: displayPrimary = previewWater; break;
+                case 4: displayPrimary = previewHumidity; break;
+                case 5: {
+                    displayPrimary.assign(pixelCount, 0.0f);
+                    for (std::size_t i = 0; i < pixelCount; ++i) {
+                        const float m = std::sqrt(previewWindU[i] * previewWindU[i] + previewWindV[i] * previewWindV[i]);
+                        displayPrimary[i] = m;
+                    }
+                    break;
+                }
+                default: {
+                    if (modeType == InitialConditionType::Terrain) displayPrimary = previewTerrain;
+                    else if (modeType == InitialConditionType::GrayScott) displayPrimary = previewWater;
+                    else if (modeType == InitialConditionType::Waves) displayPrimary = previewPrimary;
+                    else if (modeType == InitialConditionType::Conway) displayPrimary = previewPrimary;
+                    else displayPrimary = previewPrimary;
+                    break;
+                }
+            }
+
+            DisplayBuffer previewDisplay = buildDisplayBufferFromPreviewComponents(
+                displayPrimary,
                 previewTerrain,
                 previewWater,
+                previewHumidity,
+                previewWindU,
+                previewWindV,
                 viz_.generationPreviewDisplayType,
                 viz_.displayManager,
                 "preview");
 
-            const std::size_t pixelCount = static_cast<std::size_t>(previewW) * static_cast<std::size_t>(previewH);
             wizardPreviewPixels_.assign(pixelCount * 4u, 0u);
             for (std::size_t idx = 0; idx < pixelCount; ++idx) {
                 const float value = idx < previewDisplay.values.size() ? previewDisplay.values[idx] : 0.0f;
                 const float normalized = std::clamp((value - previewDisplay.minValue) / std::max(0.0001f, previewDisplay.maxValue - previewDisplay.minValue), 0.0f, 1.0f);
                 const ImU32 color = mapDisplayTypeColor(
-                    (viz_.generationPreviewDisplayType == DisplayType::ScalarField || viz_.generationPreviewDisplayType == DisplayType::WaterDepth) ? normalized : value,
+                    (viz_.generationPreviewDisplayType == DisplayType::ScalarField ||
+                     viz_.generationPreviewDisplayType == DisplayType::WaterDepth ||
+                     viz_.generationPreviewDisplayType == DisplayType::WindField) ? normalized : value,
                     viz_.generationPreviewDisplayType,
                     ColorMapMode::Turbo);
                 std::uint8_t r = 0, g = 0, b = 0, a = 0;
@@ -673,11 +931,13 @@
 
         const std::string previewLabel = std::string("Preview mode: ") + displayTypeLabel(viz_.generationPreviewDisplayType);
         dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2), IM_COL32(235, 240, 255, 255), previewLabel.c_str());
+        const std::string sourceLabel = std::string("Source: ") + kPreviewSources[static_cast<std::size_t>(std::clamp(sessionUi_.generationPreviewSourceIndex, 0, 5))];
+        dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 18.0f), IM_COL32(188, 200, 226, 255), sourceLabel.c_str());
         const std::string autoLevel = "Water level: " + std::to_string(wizardPreviewWaterLevel_).substr(0, 5) + (viz_.displayManager.autoWaterLevel ? " (auto)" : " (manual)");
-        dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 18.0f), IM_COL32(188, 200, 226, 255), autoLevel.c_str());
+        dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 36.0f), IM_COL32(188, 200, 226, 255), autoLevel.c_str());
         if (wizardPreviewStride_ > 1) {
             const std::string quality = "Preview stride: 1/" + std::to_string(wizardPreviewStride_) + " for performance";
-            dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 36.0f), IM_COL32(188, 200, 226, 255), quality.c_str());
+            dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 54.0f), IM_COL32(188, 200, 226, 255), quality.c_str());
         }
         ImGui::EndChild();
 
@@ -699,51 +959,84 @@
                 panel_.seed = generateRandomSeed();
             }
 
-            initialization::InitializationRequest verifyRequest;
-            verifyRequest.type = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
-            verifyRequest.conwayTargetOverride = std::string(panel_.conwayTargetVariable);
-            verifyRequest.grayTargetAOverride = std::string(panel_.grayScottTargetVariableA);
-            verifyRequest.grayTargetBOverride = std::string(panel_.grayScottTargetVariableB);
-            verifyRequest.wavesTargetOverride = std::string(panel_.wavesTargetVariable);
-            sessionUi_.generationBindingPlan = initialization::buildBindingPlan(sessionUi_.selectedModelCatalog, verifyRequest);
+            bool preflightBlocked = false;
+            std::string preflightReason;
+            const InitialConditionType selectedType = static_cast<InitialConditionType>(
+                std::clamp(panel_.initialConditionTypeIndex, 0, static_cast<int>(InitialConditionType::DiffusionLimit)));
 
-            if (sessionUi_.generationBindingPlan.hasBlockingIssues() && !sessionUi_.allowUnresolvedGenerationBindings) {
-                std::ostringstream status;
-                status << "world_create_blocked unresolved_bindings=";
-                for (std::size_t i = 0; i < sessionUi_.generationBindingPlan.issues.size(); ++i) {
-                    if (i > 0) {
-                        status << ',';
+            if (sessionUi_.selectedModelCatalog.variables.empty()) {
+                preflightBlocked = true;
+                preflightReason = "world_create_blocked reason=model_catalog_unavailable";
+            }
+
+            if (!preflightBlocked && selectedType == InitialConditionType::Conway && std::strlen(panel_.conwayTargetVariable) == 0u) {
+                preflightBlocked = true;
+                preflightReason = "world_create_blocked reason=missing_conway_target_variable";
+            }
+            if (!preflightBlocked && selectedType == InitialConditionType::GrayScott &&
+                (std::strlen(panel_.grayScottTargetVariableA) == 0u || std::strlen(panel_.grayScottTargetVariableB) == 0u)) {
+                preflightBlocked = true;
+                preflightReason = "world_create_blocked reason=missing_gray_scott_target_variable";
+            }
+            if (!preflightBlocked && selectedType == InitialConditionType::Waves && std::strlen(panel_.wavesTargetVariable) == 0u) {
+                preflightBlocked = true;
+                preflightReason = "world_create_blocked reason=missing_waves_target_variable";
+            }
+
+            if (preflightBlocked) {
+                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", preflightReason.c_str());
+                appendLog(preflightReason);
+            }
+
+            if (!preflightBlocked) {
+                initialization::InitializationRequest verifyRequest;
+                verifyRequest.type = selectedType;
+                verifyRequest.conwayTargetOverride = std::string(panel_.conwayTargetVariable);
+                verifyRequest.grayTargetAOverride = std::string(panel_.grayScottTargetVariableA);
+                verifyRequest.grayTargetBOverride = std::string(panel_.grayScottTargetVariableB);
+                verifyRequest.wavesTargetOverride = std::string(panel_.wavesTargetVariable);
+                sessionUi_.generationBindingPlan = initialization::buildBindingPlan(sessionUi_.selectedModelCatalog, verifyRequest);
+
+                if (sessionUi_.generationBindingPlan.hasBlockingIssues() && !sessionUi_.allowUnresolvedGenerationBindings) {
+                    std::ostringstream status;
+                    status << "world_create_blocked unresolved_bindings=";
+                    for (std::size_t i = 0; i < sessionUi_.generationBindingPlan.issues.size(); ++i) {
+                        if (i > 0) {
+                            status << ',';
+                        }
+                        status << sessionUi_.generationBindingPlan.issues[i].code;
                     }
-                    status << sessionUi_.generationBindingPlan.issues[i].code;
+                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", status.str().c_str());
+                    appendLog(status.str());
+                    preflightBlocked = true;
                 }
-                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", status.str().c_str());
-                appendLog(status.str());
-                return;
             }
 
-            applyConfigFromPanel();
-            std::string worldName = runtime_.normalizeWorldNameForUi(sessionUi_.pendingWorldName);
-            if (worldName.empty()) {
-                const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'
-                    ? std::string(sessionUi_.selectedModelName)
-                    : std::string("world");
-                worldName = runtime_.suggestWorldNameFromHint(baseHint);
-            }
-            if (worldName != sessionUi_.pendingWorldName) {
-                std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", worldName.c_str());
-            }
+            if (!preflightBlocked) {
+                applyConfigFromPanel();
+                std::string worldName = runtime_.normalizeWorldNameForUi(sessionUi_.pendingWorldName);
+                if (worldName.empty()) {
+                    const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'
+                        ? std::string(sessionUi_.selectedModelName)
+                        : std::string("world");
+                    worldName = runtime_.suggestWorldNameFromHint(baseHint);
+                }
+                if (worldName != sessionUi_.pendingWorldName) {
+                    std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", worldName.c_str());
+                }
 
-            std::string message;
-            if (runtime_.createWorld(worldName, runtime_.config(), message)) {
-                appendLog(message);
-                refreshFieldNames();
-                resetDisplayConfigToDefaults();
-                loadDisplayPrefs();
-                enterSimulationPaused();
-                sessionUi_.needsRefresh = true;
-            } else {
-                appendLog(message);
-                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                std::string message;
+                if (runtime_.createWorld(worldName, runtime_.config(), message)) {
+                    appendLog(message);
+                    refreshFieldNames();
+                    resetDisplayConfigToDefaults();
+                    loadDisplayPrefs();
+                    enterSimulationPaused();
+                    sessionUi_.needsRefresh = true;
+                } else {
+                    appendLog(message);
+                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                }
             }
         }
         DelayedTooltip("Applies generation settings, creates the world, and enters simulation view.");

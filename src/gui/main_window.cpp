@@ -24,6 +24,7 @@ enum class AppState        { ModelSelector, ModelEditor, SessionManager, NewWorl
 #include "ws/gui/ui_components.hpp"
 #include "ws/gui/vector_renderer.hpp"
 #include "ws/gui/viewport_manager.hpp"
+#include "ws/gui/generation_advisor.hpp"
 
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
@@ -177,6 +178,98 @@ constexpr float kS3 = 12.0f;
 constexpr float kS5 = 24.0f;
 constexpr float kPageMaxWidth = 1600.0f;
 
+[[nodiscard]] const char* generationModeLabel(const InitialConditionType type) {
+    switch (type) {
+        case InitialConditionType::Terrain: return "Geographic Terrain";
+        case InitialConditionType::Conway: return "Conway's Life (Random)";
+        case InitialConditionType::GrayScott: return "Gray-Scott (Spots)";
+        case InitialConditionType::Waves: return "Waves (Drop)";
+        case InitialConditionType::Blank: return "Blank Grid";
+        default: return "Unknown";
+    }
+}
+
+[[nodiscard]] std::string humanizeToken(const std::string& token) {
+    std::string out;
+    out.reserve(token.size());
+    bool upperNext = true;
+    for (char ch : token) {
+        if (ch == '_' || ch == '-') {
+            out.push_back(' ');
+            upperNext = true;
+            continue;
+        }
+        if (upperNext) {
+            out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+            upperNext = false;
+        } else {
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
+void applyGenerationDefaultsForMode(
+    PanelState& panel,
+    const initialization::ModelVariableCatalog& catalog,
+    const InitialConditionType modeType,
+    const bool selectMode) {
+    if (selectMode) {
+        panel.initialConditionTypeIndex = static_cast<int>(modeType);
+    }
+
+    const auto defaults = GenerationAdvisor::recommendDefaultParameters(catalog, modeType);
+
+    panel.terrainBaseFrequency = defaults.terrainBaseFrequency;
+    panel.terrainDetailFrequency = defaults.terrainDetailFrequency;
+    panel.terrainWarpStrength = defaults.terrainWarpStrength;
+    panel.terrainAmplitude = defaults.terrainAmplitude;
+    panel.terrainRidgeMix = defaults.terrainRidgeMix;
+    panel.terrainOctaves = defaults.terrainOctaves;
+    panel.terrainLacunarity = defaults.terrainLacunarity;
+    panel.terrainGain = defaults.terrainGain;
+    panel.seaLevel = defaults.seaLevel;
+    panel.polarCooling = defaults.polarCooling;
+    panel.latitudeBanding = defaults.latitudeBanding;
+    panel.humidityFromWater = defaults.humidityFromWater;
+    panel.biomeNoiseStrength = defaults.biomeNoiseStrength;
+    panel.islandDensity = defaults.islandDensity;
+    panel.islandFalloff = defaults.islandFalloff;
+    panel.coastlineSharpness = defaults.coastlineSharpness;
+    panel.archipelagoJitter = defaults.archipelagoJitter;
+    panel.erosionStrength = defaults.erosionStrength;
+    panel.shelfDepth = defaults.shelfDepth;
+
+    panel.conwayAliveProbability = defaults.conwayAliveProbability;
+    panel.conwayAliveValue = defaults.conwayAliveValue;
+    panel.conwayDeadValue = defaults.conwayDeadValue;
+    panel.conwaySmoothingPasses = defaults.conwaySmoothingPasses;
+
+    panel.grayScottBackgroundA = defaults.grayScottBackgroundA;
+    panel.grayScottBackgroundB = defaults.grayScottBackgroundB;
+    panel.grayScottSpotValueA = defaults.grayScottSpotValueA;
+    panel.grayScottSpotValueB = defaults.grayScottSpotValueB;
+    panel.grayScottSpotCount = defaults.grayScottSpotCount;
+    panel.grayScottSpotRadius = defaults.grayScottSpotRadius;
+    panel.grayScottSpotJitter = defaults.grayScottSpotJitter;
+
+    panel.waveBaseline = defaults.waveBaseline;
+    panel.waveDropAmplitude = defaults.waveDropAmplitude;
+    panel.waveDropRadius = defaults.waveDropRadius;
+    panel.waveDropCount = defaults.waveDropCount;
+    panel.waveDropJitter = defaults.waveDropJitter;
+    panel.waveRingFrequency = defaults.waveRingFrequency;
+}
+
+// Helper: Apply generation advisor recommendations to panel state
+void applyGenerationAdvisorRecommendations(
+    PanelState& panel,
+    const initialization::ModelVariableCatalog& catalog,
+    const std::vector<ParameterControl>& parameters) {
+    const auto modeRec = GenerationAdvisor::recommendGenerationMode(catalog, parameters);
+    applyGenerationDefaultsForMode(panel, catalog, modeRec.recommendedType, true);
+}
+
 // GLFW window creation
 GLFWwindow* createGlfwWindowWithFallback() {
     struct VP { int major, minor; };
@@ -327,6 +420,19 @@ public:
                 std::string catalogMessage;
                 if (initialization::loadModelVariableCatalog(model.path, sessionUi_.selectedModelCatalog, catalogMessage)) {
                     sessionUi_.selectedModelCellStateVariables = sessionUi_.selectedModelCatalog.cellStateVariableIds();
+                    
+                    // Get generation recommendation from advisor
+                    const auto modeRec = GenerationAdvisor::recommendGenerationMode(sessionUi_.selectedModelCatalog, {});
+                    sessionUi_.generationModeIndex = static_cast<int>(modeRec.recommendedType);
+                    
+                    // Auto-apply generation defaults for recommended mode
+                    applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, modeRec.recommendedType, true);
+                    
+                    // Log the recommendation for user visibility
+                    std::string recLog = "Auto-recommended: " + 
+                        std::string(generationModeLabel(modeRec.recommendedType)) + 
+                        " (" + std::to_string(static_cast<int>(modeRec.confidence * 100.0f)) + "% confidence)";
+                    appendLog(recLog);
                 } else {
                     appendLog(catalogMessage);
                 }
@@ -334,6 +440,9 @@ public:
 
             sessionUi_.generationBindingPlan = initialization::InitializationBindingPlan{};
             sessionUi_.allowUnresolvedGenerationBindings = false;
+            sessionUi_.generationShowOnlyViableModes = false;
+            sessionUi_.generationPreviewSourceIndex = 0;
+                        sessionUi_.generationPreviewChannelIndex = 0;
             std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "model_selected=%s", model.name.c_str());
             appState_ = AppState::SessionManager;
         };

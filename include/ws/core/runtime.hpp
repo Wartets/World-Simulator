@@ -24,7 +24,15 @@ enum class InitialConditionType : std::uint8_t {
     Conway = 1,
     GrayScott = 2,
     Waves = 3,
-    Blank = 4
+    Blank = 4,
+    Voronoi = 5,
+    Clustering = 6,
+    SparseRandom = 7,
+    GradientField = 8,
+    Checkerboard = 9,
+    RadialPattern = 10,
+    MultiScale = 11,
+    DiffusionLimit = 12
 };
 
 struct TerrainParams {
@@ -79,12 +87,92 @@ struct WaveParams {
     float ringFrequency = 1.0f;
 };
 
+struct VoronoiParams {
+    std::string targetVariable = "initialization.voronoi.target";
+    int seedCount = 12;
+    float smoothing = 0.3f;
+    float colorScale = 1.0f;
+    float jitter = 0.5f;
+};
+
+struct ClusteringParams {
+    std::string targetVariable = "initialization.clustering.target";
+    int clusterCount = 8;
+    float clusterRadius = 20.0f;
+    float clusterIntensity = 0.8f;
+    float clusterDecay = 0.6f;
+    float clusterSpread = 0.4f;
+};
+
+struct SparseRandomParams {
+    std::string targetVariable = "initialization.sparse.target";
+    float fillDensity = 0.15f;
+    float minValue = 0.2f;
+    float maxValue = 0.9f;
+    bool clusterSparse = false;
+    float clusterRadius = 8.0f;
+};
+
+struct GradientFieldParams {
+    std::string targetVariable = "initialization.gradient.target";
+    int directionMode = 0;
+    float gradientScale = 1.0f;
+    float centerX = 0.5f;
+    float centerY = 0.5f;
+    float perturbation = 0.1f;
+};
+
+struct CheckerboardParams {
+    std::string targetVariable = "initialization.checkerboard.target";
+    int cellSize = 4;
+    float darkValue = 0.2f;
+    float lightValue = 0.8f;
+    float blurRadius = 0.0f;
+    bool diagonal = false;
+};
+
+struct RadialPatternParams {
+    std::string targetVariable = "initialization.radial.target";
+    float centerX = 0.5f;
+    float centerY = 0.5f;
+    int ringCount = 6;
+    float innerValue = 0.3f;
+    float outerValue = 0.7f;
+    float falloff = 1.0f;
+};
+
+struct MultiScaleParams {
+    std::string targetVariable = "initialization.multiscale.target";
+    int scaleCount = 3;
+    float baseFrequency = 0.5f;
+    float frequencyScale = 2.0f;
+    float amplitudeScale = 0.5f;
+    float blendMode = 0.5f;
+};
+
+struct DiffusionLimitParams {
+    std::string targetVariable = "initialization.diffusion.target";
+    int seedCount = 5;
+    float growthRate = 0.2f;
+    float anisotropy = 0.0f;
+    float colorVariance = 0.3f;
+    float randomWalk = 0.15f;
+};
+
 struct InitialConditionConfig {
     InitialConditionType type = InitialConditionType::Terrain;
     TerrainParams terrain;
     ConwayParams conway;
     GrayScottParams grayScott;
     WaveParams waves;
+    VoronoiParams voronoi;
+    ClusteringParams clustering;
+    SparseRandomParams sparseRandom;
+    GradientFieldParams gradientField;
+    CheckerboardParams checkerboard;
+    RadialPatternParams radialPattern;
+    MultiScaleParams multiScale;
+    DiffusionLimitParams diffusionLimit;
 };
 
 struct ParameterControl {

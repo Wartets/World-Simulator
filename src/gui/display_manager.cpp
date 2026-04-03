@@ -333,4 +333,50 @@ DisplayBuffer buildDisplayBufferFromTerrain(
         label == nullptr ? "preview" : label);
 }
 
+DisplayBuffer buildDisplayBufferFromPreviewComponents(
+    const std::vector<float>& primary,
+    const std::vector<float>& terrain,
+    const std::vector<float>& water,
+    const std::vector<float>& humidity,
+    const std::vector<float>& windU,
+    const std::vector<float>& windV,
+    const DisplayType displayType,
+    const DisplayManagerParams& params,
+    const char* label) {
+    const std::size_t minSize = std::max<std::size_t>(1u, primary.size());
+
+    std::vector<float> safePrimary = primary;
+    if (safePrimary.empty()) {
+        safePrimary.assign(minSize, 0.0f);
+    }
+
+    auto fitToPrimarySize = [&](const std::vector<float>& source, const float fallback) {
+        std::vector<float> out = source;
+        if (out.empty()) {
+            out.assign(safePrimary.size(), fallback);
+        }
+        if (out.size() < safePrimary.size()) {
+            out.resize(safePrimary.size(), fallback);
+        }
+        return out;
+    };
+
+    std::vector<float> safeTerrain = fitToPrimarySize(terrain, 0.0f);
+    std::vector<float> safeWater = fitToPrimarySize(water, 0.0f);
+    std::vector<float> safeHumidity = fitToPrimarySize(humidity, 0.0f);
+    std::vector<float> safeWindU = fitToPrimarySize(windU, 0.0f);
+    std::vector<float> safeWindV = fitToPrimarySize(windV, 0.0f);
+
+    return buildDisplayBufferCore(
+        safePrimary,
+        safeTerrain,
+        safeWater,
+        safeHumidity,
+        safeWindU,
+        safeWindV,
+        displayType,
+        params,
+        label == nullptr ? "preview" : label);
+}
+
 } // namespace ws::gui

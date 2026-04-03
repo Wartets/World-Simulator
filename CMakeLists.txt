@@ -182,6 +182,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_history.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_selector.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_generator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/generation_advisor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/paint_tools.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_viewport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/heatmap_renderer.cpp
