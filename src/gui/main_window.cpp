@@ -160,8 +160,17 @@ struct VisualizationState {
     std::unordered_map<std::string, std::pair<float,float>> stickyRanges;
 };
 
-constexpr std::array<const char*, 3> kTierOptions    = {"A (Baseline)","B (Intermediate)","C (Advanced)"};
-constexpr std::array<const char*, 3> kTemporalOptions = {"uniform","phased","multirate"};
+constexpr std::array<const char*, 3> kTierOptions    = {
+    "Local deterministic",
+    "Neighborhood exchange",
+    "Coupled multi-rate"
+};
+constexpr std::array<const char*, 3> kTemporalOptions = {
+    "Single-pass",
+    "Phased",
+    "Adaptive multi-rate"
+};
+constexpr std::array<const char*, 3> kTemporalPolicyTokens = {"uniform","phased","multirate"};
 constexpr int   kImGuiIntSafeMax = std::numeric_limits<int>::max() / 2;
 constexpr float kS2 = 8.0f;
 constexpr float kS3 = 12.0f;

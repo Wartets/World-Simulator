@@ -165,7 +165,7 @@ void drawStatusHeader() {
         const auto& snap = viz_.cachedCheckpoint.stateSnapshot;
         const auto& sig  = viz_.cachedCheckpoint.runSignature;
         ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f),
-            "Step %-9llu  %ux%u  Tier %s  %s",
+            "Step %-9llu  %ux%u  Profile %s  %s",
             (unsigned long long)snap.header.stepIndex,
             sig.grid().width, sig.grid().height,
             toString(runtime_.config().tier).c_str(),
@@ -190,9 +190,9 @@ void drawStatusHeader() {
 void drawSimulationTab() {
     ImGui::BeginChild("SimTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
-    // Tier / Mode
+    // Execution profile / temporal behavior
     PushSectionTint(0);
-    if (ImGui::CollapsingHeader("Model Tier & Temporal Policy", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("Execution Profile & Temporal Behavior", ImGuiTreeNodeFlags_DefaultOpen)) {
         drawTierSelector();
     }
     PopSectionTint();
@@ -485,20 +485,14 @@ void drawPerturbationSection() {
 void drawTierSelector() {
     const bool isRunning = runtime_.isRunning();
 
-    // Current tier badges + description
+    // Current profile badges + description
     static constexpr const char* kTierDesc[3] = {
-        "Baseline - fast, deterministic, local-only interactions.\n"
-        "Hydrology, temperature, humidity are computed from local\n"
-        "values only; no neighborhood exchange or coupling. Suitable\n"
-        "for large grids and high step-rates.",
-        "Intermediate - adds lateral diffusion and neighborhood exchange\n"
-        "between adjacent cells for hydrology, temperature, and humidity.\n"
-        "Phased execution separates Tier-A subsystems from B/C ones.\n"
-        "Good balance between realism and performance.",
-        "Advanced - full multi-rate micro-stepping, wind-humidity coupling,\n"
-        "water-climate feedback, and adaptive sub-iterations for stiff\n"
-        "subsystems. Requires MultiRateC temporal policy. Higher\n"
-        "computational cost; richest emergent behavior."
+        "Local deterministic updates with no neighborhood exchange.\n"
+        "Best for fast iteration and strict reproducibility.",
+        "Adds neighborhood exchange and staged update flow.\n"
+        "Balances throughput with richer local coupling.",
+        "Uses adaptive multi-rate updates and stronger coupling paths.\n"
+        "Highest computational cost with the richest dynamics."
     };
     static constexpr ImVec4 kTierColors[3] = {
         {0.35f, 0.75f, 0.45f, 1.0f},
@@ -507,7 +501,7 @@ void drawTierSelector() {
     };
 
     const int currentTier = panel_.tierIndex;
-    ImGui::TextColored(kTierColors[currentTier], "Active: Tier %s",
+    ImGui::TextColored(kTierColors[currentTier], "Active profile: %s",
         kTierOptions[currentTier]);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip("%s", kTierDesc[currentTier]);
@@ -515,24 +509,24 @@ void drawTierSelector() {
 
     if (isRunning) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 0.3f, 1.0f));
-        ImGui::TextWrapped("Warning: tier changes take effect after you restart the simulation using the button below.");
+        ImGui::TextWrapped("Warning: profile changes take effect after you restart the simulation using the button below.");
         ImGui::PopStyleColor();
         ImGui::Spacing();
     }
 
-    // Tier radio buttons
+    // Profile radio buttons
     for (int i = 0; i < 3; ++i) {
         const bool sel = (panel_.tierIndex == i);
         ImGui::PushStyleColor(ImGuiCol_Text, sel ? kTierColors[i] : ImVec4(0.7f,0.7f,0.7f,1.0f));
         if (ImGui::RadioButton(kTierOptions[i], sel)) {
             panel_.tierIndex = i;
-            // auto-match temporal policy
+            // auto-match recommended temporal behavior
             const ws::TemporalPolicy recommended =
                 (i == 0) ? ws::TemporalPolicy::UniformA :
                 (i == 1) ? ws::TemporalPolicy::PhasedB  : ws::TemporalPolicy::MultiRateC;
             const std::string recStr = app::temporalPolicyToString(recommended);
             for (int j = 0; j < 3; ++j)
-                if (std::string(kTemporalOptions[j]) == recStr) { panel_.temporalIndex = j; break; }
+                if (std::string(kTemporalPolicyTokens[j]) == recStr) { panel_.temporalIndex = j; break; }
         }
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -543,7 +537,7 @@ void drawTierSelector() {
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Text("Temporal Policy:");
+    ImGui::Text("Temporal behavior:");
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::BeginCombo("##temporal", kTemporalOptions[panel_.temporalIndex])) {
         for (int i = 0; i < 3; ++i) {
@@ -554,20 +548,20 @@ void drawTierSelector() {
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip(
-            "uniform  - single ordered pass (Tier A)\n"
-            "phased   - A-tier first, then B/C-tier (Tier B)\n"
-            "multirate - micro-stepped with adaptive sub-iterations (Tier C)\n"
-            "The policy MUST match the tier; mismatches are blocked at admission.");
+            "Single-pass        - one ordered pass per step\n"
+            "Phased             - staged execution across subsystem groups\n"
+            "Adaptive multi-rate - micro-stepped execution with adaptive sub-iterations\n"
+            "The selected behavior must be compatible with the selected execution profile.");
 
     // Constraint reminder
     {
         const ws::TemporalPolicy req =
             (panel_.tierIndex == 0) ? ws::TemporalPolicy::UniformA :
             (panel_.tierIndex == 1) ? ws::TemporalPolicy::PhasedB  : ws::TemporalPolicy::MultiRateC;
-        const auto selected = app::parseTemporalPolicy(kTemporalOptions[panel_.temporalIndex]);
+        const auto selected = app::parseTemporalPolicy(kTemporalPolicyTokens[panel_.temporalIndex]);
         if (selected.has_value() && *selected != req) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-            ImGui::TextWrapped("Warning: policy mismatch - admission will reject this combination.");
+            ImGui::TextWrapped("Warning: temporal behavior mismatch - admission will reject this combination.");
             ImGui::PopStyleColor();
         }
     }
@@ -587,14 +581,14 @@ void drawTierSelector() {
             }
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            ImGui::SetTooltip("Restarts the simulation with new tier/policy settings.\nThe simulation will be paused after restart.");
+            ImGui::SetTooltip("Restarts the simulation with updated profile and temporal behavior settings.\nThe simulation will be paused after restart.");
     } else {
         if (PrimaryButton("Apply these settings", ImVec2(-1.0f, 30.0f))) {
             applyConfigFromPanel();
-            appendLog("Tier and temporal policy settings applied. Use 'Start Simulation' to begin.");
+            appendLog("Execution profile and temporal behavior settings applied. Use 'Start Simulation' to begin.");
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            ImGui::SetTooltip("Applies tier/policy settings without starting the simulation.\nUse 'Start Simulation' button to begin.");
+            ImGui::SetTooltip("Applies profile/temporal settings without starting the simulation.\nUse 'Start Simulation' button to begin.");
     }
 }
 
@@ -613,7 +607,7 @@ void drawPlaybackSection() {
             } else appendLog(msg);
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            ImGui::SetTooltip("Initialize and start the simulation from step 0.\nApplies the current tier/temporal settings.");
+            ImGui::SetTooltip("Initialize and start the simulation from step 0.\nApplies the current execution profile and temporal behavior settings.");
     } else {
         const float halfW = (ImGui::GetContentRegionAvail().x - 6.0f) * 0.5f;
 
@@ -832,7 +826,7 @@ void drawCheckpointSection() {
 }
 
 void drawGuardrailsSection() {
-    ImGui::TextDisabled("Numeric guardrail tuning is controlled by the active profile and runtime tier.");
+    ImGui::TextDisabled("Numeric guardrail tuning is controlled by the active profile and runtime execution mode.");
     ImGui::Spacing();
     ImGui::TextWrapped("Use profile configuration to set stability and guardrail behavior. The current GUI build does not expose direct guardrail fields.");
     ImGui::Spacing();
@@ -2149,7 +2143,7 @@ void drawWorldGenerationSection() {
         sliderFloatWithHint("Ring frequency", &panel_.waveRingFrequency, 0.5f, 4.0f, "%.2f",
             "Oscillation count inside each drop radius. Higher = more ripple rings.");
     } else if (panel_.initialConditionTypeIndex == 4) { // Blank
-        ImGui::TextDisabled("Blank mode initializes canonical fields to zero.");
+        ImGui::TextDisabled("Blank mode initializes all runtime fields to zero.");
     }
 }
 
@@ -2246,7 +2240,7 @@ void applyConfigFromPanel() {
         static_cast<std::uint32_t>(std::clamp(panel_.gridHeight, 1, 4096))};
     cfg.tier        = (panel_.tierIndex == 0) ? ModelTier::A
                     : (panel_.tierIndex == 1) ? ModelTier::B : ModelTier::C;
-    auto tp = app::parseTemporalPolicy(kTemporalOptions[panel_.temporalIndex]);
+    auto tp = app::parseTemporalPolicy(kTemporalPolicyTokens[panel_.temporalIndex]);
     if (tp.has_value()) cfg.temporalPolicy = *tp;
 
     cfg.initialConditions.type = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
@@ -2300,7 +2294,7 @@ void applyConfigFromPanel() {
     std::ostringstream out;
     out << "config_applied seed=" << cfg.seed
         << " grid=" << cfg.grid.width << 'x' << cfg.grid.height
-        << " tier=" << toString(cfg.tier)
+        << " execution_profile=" << toString(cfg.tier)
         << " temporal=" << app::temporalPolicyToString(cfg.temporalPolicy);
     appendLog(out.str());
 }

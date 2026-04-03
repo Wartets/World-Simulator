@@ -63,7 +63,7 @@ struct PanelState {
     int grayScottSpotCount = 4;
     float grayScottSpotRadius = 15.0f;
     float grayScottSpotJitter = 0.35f;
-    char wavesTargetVariable[128] = "surface_water_w";
+    char wavesTargetVariable[128] = "";
     float waveBaseline = 0.0f;
     float waveDropAmplitude = 1.0f;
     float waveDropRadius = 5.0f;

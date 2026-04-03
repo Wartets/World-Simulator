@@ -1,4 +1,6 @@
 #include "ws/core/initialization_binding.hpp"
+#include "ws/core/determinism.hpp"
+#include "ws/core/runtime.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -70,6 +72,40 @@ void verifyModelCatalogAndExecutionSpecConsistency(const std::filesystem::path& 
     }
 }
 
+void verifyRuntimeBootAndStepAcrossModel(const std::filesystem::path& modelPath) {
+    ws::ModelExecutionSpec executionSpec;
+    std::string executionMessage;
+    const bool executionOk = ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage);
+    assert(executionOk);
+    assert(!executionSpec.cellScalarVariableIds.empty());
+
+    ws::RuntimeConfig config;
+    config.seed = ws::DeterministicHash::hashString(modelPath.string());
+    config.grid = ws::GridSpec{6, 6};
+    config.temporalPolicy = ws::TemporalPolicy::UniformA;
+    config.initialConditions.type = ws::InitialConditionType::Blank;
+    config.modelExecutionSpec = executionSpec;
+
+    ws::Runtime runtime(config);
+    runtime.start();
+    assert(runtime.status() == ws::RuntimeStatus::Running);
+
+    const auto snapshot0 = runtime.snapshot();
+    runtime.step();
+    runtime.step();
+    const auto snapshot2 = runtime.snapshot();
+
+    assert(snapshot2.stateHeader.stepIndex == snapshot0.stateHeader.stepIndex + 2);
+    assert(snapshot2.runSignature.identityHash() != 0u);
+
+    const ws::RuntimeCheckpoint checkpoint = runtime.createCheckpoint("integration_multi_model_runtime");
+    assert(!checkpoint.stateSnapshot.fields.empty());
+    assert(checkpoint.stateSnapshot.header.stepIndex == snapshot2.stateHeader.stepIndex);
+
+    runtime.stop();
+    assert(runtime.status() == ws::RuntimeStatus::Terminated);
+}
+
 } // namespace
 
 int main() {
@@ -89,6 +125,7 @@ int main() {
         }
 
         verifyModelCatalogAndExecutionSpecConsistency(entry.path());
+        verifyRuntimeBootAndStepAcrossModel(entry.path());
         ++verified;
     }
 
