@@ -1,17 +1,107 @@
 #include "ws/core/interactions.hpp"
+#include "ws/core/initialization_binding.hpp"
 #include "ws/core/runtime.hpp"
 #include "ws/core/scheduler.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <stdexcept>
+#include <set>
 #include <string>
+#include <vector>
 
 namespace {
 
+std::filesystem::path resolveModelsRoot() {
+    const std::filesystem::path direct = "models";
+    if (std::filesystem::exists(direct) && std::filesystem::is_directory(direct)) {
+        return direct;
+    }
+
+    const std::filesystem::path parent = std::filesystem::path("..") / "models";
+    if (std::filesystem::exists(parent) && std::filesystem::is_directory(parent)) {
+        return parent;
+    }
+
+    return {};
+}
+
+std::optional<std::string> tryAliasTarget(const ws::ModelExecutionSpec& executionSpec, const std::string& semanticKey) {
+    const auto it = executionSpec.semanticFieldAliases.find(semanticKey);
+    if (it == executionSpec.semanticFieldAliases.end() || it->second.empty()) {
+        return std::nullopt;
+    }
+    if (std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), it->second) ==
+        executionSpec.cellScalarVariableIds.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+bool hasRequiredPhase4Aliases(const ws::ModelExecutionSpec& executionSpec) {
+    std::set<std::string> requiredSemanticKeys;
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        if (!subsystem) {
+            continue;
+        }
+        for (const auto& key : subsystem->declaredReadSet()) {
+            if (!key.empty()) {
+                requiredSemanticKeys.insert(key);
+            }
+        }
+        for (const auto& key : subsystem->declaredWriteSet()) {
+            if (!key.empty()) {
+                requiredSemanticKeys.insert(key);
+            }
+        }
+    }
+
+    for (const auto& semanticKey : requiredSemanticKeys) {
+        if (!tryAliasTarget(executionSpec, semanticKey).has_value()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<ws::ModelExecutionSpec> selectExecutionSpec() {
+    const auto modelsRoot = resolveModelsRoot();
+    if (modelsRoot.empty()) {
+        return std::nullopt;
+    }
+
+    std::vector<std::filesystem::path> candidates;
+    for (const auto& entry : std::filesystem::directory_iterator(modelsRoot)) {
+        if (!entry.is_directory() || entry.path().extension() != ".simmodel") {
+            continue;
+        }
+        candidates.push_back(entry.path());
+    }
+    std::sort(candidates.begin(), candidates.end());
+
+    for (const auto& modelPath : candidates) {
+        ws::ModelExecutionSpec executionSpec;
+        std::string executionMessage;
+        const bool executionOk = ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage);
+        if (!executionOk || executionSpec.cellScalarVariableIds.empty() || !hasRequiredPhase4Aliases(executionSpec)) {
+            continue;
+        }
+        return executionSpec;
+    }
+    return std::nullopt;
+}
+
 ws::ProfileResolverInput makeProfileInput(const ws::ModelTier tier, const ws::ModelTier temporalTier) {
     ws::ProfileResolverInput input;
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        if (subsystem) {
+            input.requestedSubsystemTiers[subsystem->name()] = tier;
+        }
+    }
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
         input.requestedSubsystemTiers[subsystem] = tier;
     }
@@ -24,11 +114,15 @@ ws::ProfileResolverInput makeProfileInput(const ws::ModelTier tier, const ws::Mo
 }
 
 void verifyTemporalAdmissionBlocksMismatch() {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+
     ws::RuntimeConfig config;
     config.seed = 99;
     config.grid = ws::GridSpec{4, 4};
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     config.profileInput = makeProfileInput(ws::ModelTier::A, ws::ModelTier::B);
+    config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
@@ -45,12 +139,16 @@ void verifyTemporalAdmissionBlocksMismatch() {
 }
 
 void verifyNoHardcodedHydrologyEventsGate() {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+
     ws::RuntimeConfig config;
     config.seed = 101;
     config.grid = ws::GridSpec{4, 4};
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     config.profileInput = makeProfileInput(ws::ModelTier::A, ws::ModelTier::A);
     config.profileInput.requestedSubsystemTiers["events"] = ws::ModelTier::B;
+    config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
@@ -63,11 +161,15 @@ void verifyNoHardcodedHydrologyEventsGate() {
 }
 
 void verifyDeterministicAdmissionGraph() {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+
     ws::RuntimeConfig config;
     config.seed = 555;
     config.grid = ws::GridSpec{6, 6};
     config.temporalPolicy = ws::TemporalPolicy::PhasedB;
     config.profileInput = makeProfileInput(ws::ModelTier::B, ws::ModelTier::B);
+    config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runA(config);
     ws::Runtime runB(config);

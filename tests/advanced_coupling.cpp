@@ -1,5 +1,6 @@
 #include "ws/core/runtime.hpp"
 #include "ws/core/scheduler.hpp"
+#include "ws/core/initialization_binding.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
 
 #include <algorithm>
