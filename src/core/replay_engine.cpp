@@ -5,6 +5,8 @@
 
 namespace ws {
 
+// Replays simulation from checkpoint to target step.
+// Validates state hash if expected hash is provided.
 ReplayExecutionResult ReplayEngine::replayToStep(
     Runtime& runtime,
     const RuntimeCheckpoint& checkpoint,

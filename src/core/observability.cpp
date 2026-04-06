@@ -4,6 +4,8 @@
 
 namespace ws {
 
+// Records a trace event to the observability pipeline.
+// Updates metrics based on trace channel and event name.
 void ObservabilityPipeline::record(TraceRecord record) {
     records_.push_back(std::move(record));
 

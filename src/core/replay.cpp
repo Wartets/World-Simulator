@@ -6,6 +6,7 @@
 
 namespace ws {
 
+// Constructs ReplayRunner with configuration and subsystem factory.
 ReplayRunner::ReplayRunner(RuntimeConfig config, std::function<std::vector<std::shared_ptr<ISubsystem>>()> subsystemFactory)
     : config_(std::move(config)),
       subsystemFactory_(std::move(subsystemFactory)) {
@@ -14,6 +15,8 @@ ReplayRunner::ReplayRunner(RuntimeConfig config, std::function<std::vector<std::
     }
 }
 
+// Runs simulation replay according to the provided plan.
+// Validates checkpoint compatibility and steps through replay frames.
 ReplayResult ReplayRunner::run(const ReplayPlan& plan) const {
     Runtime runtime(config_);
     for (auto& subsystem : subsystemFactory_()) {

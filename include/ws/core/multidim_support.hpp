@@ -12,15 +12,18 @@ namespace ws {
 // Generalized multi-dimensional grid support (scaffolding for Phase 10.3)
 // Supports 1D to 5D grids with configurable boundary conditions per dimension
 
+// Dimensions for multi-dimensional grids.
 struct GridDimensions {
     std::vector<std::uint32_t> sizes;  // [X, Y, Z, W, V] for up to 5D
     std::vector<BoundaryCondition> boundaryConditions;
 
     explicit GridDimensions() = default;
 
+    // Create 2D grid with Neumann boundary conditions
     explicit GridDimensions(std::uint32_t width, std::uint32_t height)
         : sizes({width, height}), boundaryConditions(2, BoundaryCondition::Neumann) {}
 
+    // Create 3D grid with Neumann boundary conditions
     explicit GridDimensions(std::uint32_t width, std::uint32_t height, std::uint32_t depth)
         : sizes({width, height, depth}), boundaryConditions(3, BoundaryCondition::Neumann) {}
 

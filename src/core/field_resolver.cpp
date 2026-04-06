@@ -4,6 +4,8 @@
 
 namespace ws {
 
+// Resolves a required semantic field to its variable ID.
+// Throws runtime_error if the semantic key is missing or resolves to unknown variable.
 std::string FieldResolver::resolveRequiredField(
     const StateStore& stateStore,
     const std::string& semanticKey,
@@ -20,6 +22,8 @@ std::string FieldResolver::resolveRequiredField(
     return *variableId;
 }
 
+// Resolves a required semantic field and returns its field handle.
+// Throws runtime_error if resolution fails or handle acquisition fails.
 StateStore::FieldHandle FieldResolver::resolveRequiredFieldHandle(
     const StateStore& stateStore,
     const std::string& semanticKey,

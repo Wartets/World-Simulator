@@ -5,10 +5,13 @@
 
 namespace ws::random {
 
-// FNV-1a hash for combining seeds
+// FNV-1a hash constants for seed combining.
+// Provides good distribution for deterministic random generation.
 static constexpr std::uint64_t FNV_OFFSET = 14695981039346656037ULL;
 static constexpr std::uint64_t FNV_PRIME = 1099511628211ULL;
 
+// Deterministic hash function combining coordinates, step, and global seed.
+// Uses FNV-1a algorithm for good avalanche properties.
 std::uint64_t DeterministicRNG::hash(
     std::uint32_t x,
     std::uint32_t y,
@@ -35,6 +38,7 @@ std::uint64_t DeterministicRNG::hash(
     return h;
 }
 
+// Constructs deterministic RNG with given global seed.
 DeterministicRNG::DeterministicRNG(std::uint64_t globalSeed) noexcept
     : state_(0), globalSeed_(globalSeed), hasSpare_(false), spare_(0.0f) {}
 

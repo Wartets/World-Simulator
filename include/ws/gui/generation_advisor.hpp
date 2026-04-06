@@ -9,12 +9,14 @@
 
 namespace ws::gui {
 
+// Recommendation for initial condition generation mode.
 struct GenerationModeRecommendation {
     InitialConditionType recommendedType;
     float confidence = 0.0f;
     std::string rationale;
 };
 
+// Default parameter values for various generation modes.
 struct GenerationParameterDefaults {
     // Terrain parameters
     float terrainBaseFrequency = 1.5f;
@@ -117,38 +119,48 @@ struct GenerationParameterDefaults {
     float diffusionLimitRandomWalk = 0.15f;
 };
 
+// Provides recommendations for initial condition generation based on model analysis.
 class GenerationAdvisor {
 public:
+    // Analyzes model catalog and parameters to recommend best generation mode.
     static GenerationModeRecommendation recommendGenerationMode(
         const initialization::ModelVariableCatalog& catalog,
         const std::vector<ParameterControl>& parameters);
 
+    // Returns default parameters for a given generation mode.
     static GenerationParameterDefaults recommendDefaultParameters(
         const initialization::ModelVariableCatalog& catalog,
         InitialConditionType modeType);
 
+    // Lists all viable generation modes for the given model.
     static std::vector<InitialConditionType> viableGenerationModes(
         const initialization::ModelVariableCatalog& catalog);
 
+    // Returns human-readable description of a generation mode.
     static std::string describeGenerationMode(InitialConditionType type);
 
 private:
+    // Helper: checks if catalog has variables with specific tag.
     static bool catalogHasVariablesWithTag(
         const initialization::ModelVariableCatalog& catalog,
         const std::string& tag);
 
+    // Helper: checks if catalog has variables with specific hint.
     static bool catalogHasVariablesWithHint(
         const initialization::ModelVariableCatalog& catalog,
         const std::string& hint);
 
+    // Helper: counts variables with specific role.
     static int countVariablesWithRole(
         const initialization::ModelVariableCatalog& catalog,
         const std::string& role);
 
+    // Helper: counts variables with specific tag.
     static int countVariablesWithTag(
         const initialization::ModelVariableCatalog& catalog,
         const std::string& tag);
 
+    // Estimates computational complexity for model.
     static float estimateModelComplexity(
         const initialization::ModelVariableCatalog& catalog,
         const std::vector<ParameterControl>& parameters);

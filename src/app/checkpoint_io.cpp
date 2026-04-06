@@ -10,9 +10,11 @@ namespace ws::app {
 
 namespace {
 
+// Checkpoint file magic number and format version constants.
 constexpr std::uint64_t kCheckpointMagic = 0x315650435357ull; // "WSCPV1"
 constexpr std::uint32_t kCheckpointFormatVersion = 2;
 
+// Writes a plain-old-data value to the output stream in binary form.
 template <typename T>
 void writePod(std::ostream& output, const T& value) {
     static_assert(std::is_trivially_copyable_v<T>);
@@ -22,6 +24,7 @@ void writePod(std::ostream& output, const T& value) {
     }
 }
 
+// Reads a plain-old-data value from the input stream in binary form.
 template <typename T>
 T readPod(std::istream& input) {
     static_assert(std::is_trivially_copyable_v<T>);
@@ -33,6 +36,7 @@ T readPod(std::istream& input) {
     return value;
 }
 
+// Writes a string by first writing its length as a 64-bit integer, then the data.
 void writeString(std::ostream& output, const std::string& value) {
     const auto size = static_cast<std::uint64_t>(value.size());
     writePod(output, size);
@@ -42,6 +46,7 @@ void writeString(std::ostream& output, const std::string& value) {
     }
 }
 
+// Reads a string by first reading its length, then the data.
 std::string readString(std::istream& input) {
     const auto size = readPod<std::uint64_t>(input);
     std::string value(size, '\0');

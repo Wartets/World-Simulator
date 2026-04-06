@@ -3,6 +3,8 @@
 #include <exception>
 #include <iostream>
 
+// Application entry point for command-line runtime.
+// Initializes the runtime shell and executes user commands.
 int main() {
     try {
         ws::app::RuntimeShell shell;

@@ -14,12 +14,14 @@
 
 namespace ws {
 
+// Default no-op implementations for subsystem lifecycle hooks.
 void ISubsystem::preStep(const ModelProfile&, const std::uint64_t) {}
 
 void ISubsystem::postStep(const ModelProfile&, const std::uint64_t) {}
 
 namespace {
 
+// Extracts sorted unique subsystem names from a subsystem vector.
 std::vector<std::string> lexicalNamesFromSubsystems(const std::vector<std::shared_ptr<ISubsystem>>& subsystems) {
     std::vector<std::string> names;
     names.reserve(subsystems.size());
@@ -35,6 +37,7 @@ std::vector<std::string> lexicalNamesFromSubsystems(const std::vector<std::share
 
 using FieldSnapshot = std::unordered_map<std::string, std::vector<float>>;
 
+// Captures a snapshot of all field values in the state store.
 FieldSnapshot captureFieldSnapshot(StateStore& stateStore) {
     FieldSnapshot snapshot;
     for (const auto& variableName : stateStore.variableNames()) {
@@ -45,6 +48,7 @@ FieldSnapshot captureFieldSnapshot(StateStore& stateStore) {
     return snapshot;
 }
 
+// Restores field values from a previously captured snapshot.
 void restoreFieldSnapshot(StateStore& stateStore, const FieldSnapshot& snapshot, const std::string& owner) {
     StateStore::WriteSession restoreSession(stateStore, owner, stateStore.variableNames());
     for (const auto& variableName : stateStore.variableNames()) {
@@ -69,6 +73,8 @@ void restoreFieldSnapshot(StateStore& stateStore, const FieldSnapshot& snapshot,
     }
 }
 
+// Computes a drift metric comparing current state to a reference snapshot.
+// Returns the average absolute change per cell across all variables.
 double computeDriftMetric(StateStore& stateStore, const FieldSnapshot& reference) {
     double totalAbsDelta = 0.0;
     std::uint64_t sampleCount = 0;

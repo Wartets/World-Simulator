@@ -11,12 +11,15 @@
 
 namespace ws {
 
+// Configuration for checkpoint management behavior.
 struct CheckpointManagerConfig {
     bool enabled = true;
     std::uint32_t intervalSteps = 100;
     std::size_t maxInMemoryCheckpoints = 64;
 };
 
+// Manages automatic and manual checkpoints during simulation.
+// Controls capture intervals, retention limits, and state restoration.
 class CheckpointManager {
 public:
     explicit CheckpointManager(CheckpointManagerConfig config = {});

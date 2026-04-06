@@ -9,6 +9,7 @@
 
 namespace ws {
 
+// Container for all model data loaded from disk.
 struct ModelContext {
     std::string metadata_json;
     std::string version_json;
@@ -19,6 +20,7 @@ struct ModelContext {
     std::unique_ptr<ir::Program> ir_program;
 };
 
+// Parses simulation model files from directory or ZIP archives.
 class ModelParser {
 public:
     // Automatically detect directory or ZIP and load
@@ -31,6 +33,7 @@ public:
     static std::vector<uint8_t> compileToFlatBuffers(const nlohmann::json& modelJson);
 };
 
+// Exception thrown when model parsing fails.
 class ModelParseError : public std::runtime_error {
 public:
     ModelParseError(const std::string& msg) : std::runtime_error(msg) {}

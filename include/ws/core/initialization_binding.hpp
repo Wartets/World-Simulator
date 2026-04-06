@@ -11,6 +11,7 @@
 
 namespace ws::initialization {
 
+// Describes a single variable in the model.
 struct VariableDescriptor {
     std::string id;
     std::string role;
@@ -28,6 +29,7 @@ struct VariableDescriptor {
     float domainMax = 0.0f;
 };
 
+// Default initialization settings for a variable.
 struct VariableInitializationDefault {
     bool enabled = false;
     bool hasBaseValue = false;
@@ -40,6 +42,7 @@ struct VariableInitializationDefault {
     float clampMax = 1.0f;
 };
 
+// Complete catalog of model variables and initialization metadata.
 struct ModelVariableCatalog {
     std::filesystem::path sourceModelPath;
     std::string modelId;
@@ -55,6 +58,7 @@ struct ModelVariableCatalog {
     [[nodiscard]] std::vector<std::string> cellStateVariableIds() const;
 };
 
+// Request for initializing a model with specific conditions.
 struct InitializationRequest {
     InitialConditionType type = InitialConditionType::Terrain;
     bool requireMetadataHints = true;
@@ -64,6 +68,7 @@ struct InitializationRequest {
     std::optional<std::string> wavesTargetOverride;
 };
 
+// A single binding decision linking initialization to a variable.
 struct BindingDecision {
     std::string bindingKey;
     std::string variableId;
@@ -73,12 +78,14 @@ struct BindingDecision {
     bool required = true;
 };
 
+// An issue encountered during binding resolution.
 struct BindingIssue {
     std::string code;
     std::string message;
     bool blocking = true;
 };
 
+// Complete initialization binding plan for a model.
 struct InitializationBindingPlan {
     InitialConditionType type = InitialConditionType::Terrain;
     std::vector<BindingDecision> decisions;
@@ -88,26 +95,31 @@ struct InitializationBindingPlan {
     [[nodiscard]] bool hasBlockingIssues() const;
 };
 
+// Loads the variable catalog from a model file.
 [[nodiscard]] bool loadModelVariableCatalog(
     const std::filesystem::path& modelPath,
     ModelVariableCatalog& outCatalog,
     std::string& message);
 
+// Loads parameter controls from a model file.
 [[nodiscard]] bool loadModelParameterControls(
     const std::filesystem::path& modelPath,
     std::vector<ParameterControl>& controls,
     std::string& message);
 
+// Loads execution specification from a model file.
 [[nodiscard]] bool loadModelExecutionSpec(
     const std::filesystem::path& modelPath,
     ModelExecutionSpec& executionSpec,
     std::string& message);
 
+// Loads display specification from a model file.
 [[nodiscard]] bool loadModelDisplaySpec(
     const std::filesystem::path& modelPath,
     ModelDisplaySpec& displaySpec,
     std::string& message);
 
+// Builds an initialization binding plan from catalog and request.
 [[nodiscard]] InitializationBindingPlan buildBindingPlan(
     const ModelVariableCatalog& catalog,
     const InitializationRequest& request);

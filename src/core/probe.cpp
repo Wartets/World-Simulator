@@ -5,6 +5,8 @@
 
 namespace ws {
 
+// Adds a new probe to the manager with the given definition.
+// Returns true if successful, false otherwise with error message.
 bool ProbeManager::addProbe(const ProbeDefinition& definition, const StateStore& stateStore, std::string& message) {
     if (definition.id.empty()) {
         message = "probe_add_failed reason=empty_id";
@@ -27,6 +29,8 @@ bool ProbeManager::addProbe(const ProbeDefinition& definition, const StateStore&
     return true;
 }
 
+// Removes an existing probe by ID.
+// Returns true if the probe was found and removed.
 bool ProbeManager::removeProbe(const std::string& probeId, std::string& message) {
     const auto erased = probes_.erase(probeId);
     if (erased == 0u) {
@@ -38,16 +42,19 @@ bool ProbeManager::removeProbe(const std::string& probeId, std::string& message)
     return true;
 }
 
+// Removes all probes.
 void ProbeManager::clear() noexcept {
     probes_.clear();
 }
 
+// Clears all recorded samples from all probes while keeping definitions.
 void ProbeManager::clearSamples() noexcept {
     for (auto& [_, series] : probes_) {
         series.samples.clear();
     }
 }
 
+// Records a sample from all probes using the current state store values.
 void ProbeManager::recordAll(const StateStore& stateStore, const std::uint64_t step, const float time) {
     for (auto& [_, series] : probes_) {
         const auto sampled = sample(series.definition, stateStore);
@@ -59,6 +66,7 @@ void ProbeManager::recordAll(const StateStore& stateStore, const std::uint64_t s
     }
 }
 
+// Returns a list of all probe definitions.
 std::vector<ProbeDefinition> ProbeManager::definitions() const {
     std::vector<ProbeDefinition> result;
     result.reserve(probes_.size());
@@ -68,6 +76,7 @@ std::vector<ProbeDefinition> ProbeManager::definitions() const {
     return result;
 }
 
+// Retrieves the time series data for a specific probe.
 bool ProbeManager::getSeries(const std::string& probeId, ProbeSeries& outSeries, std::string& message) const {
     const auto it = probes_.find(probeId);
     if (it == probes_.end()) {
@@ -80,6 +89,7 @@ bool ProbeManager::getSeries(const std::string& probeId, ProbeSeries& outSeries,
     return true;
 }
 
+// Returns all probe time series data.
 std::vector<ProbeSeries> ProbeManager::allSeries() const {
     std::vector<ProbeSeries> result;
     result.reserve(probes_.size());
@@ -89,6 +99,8 @@ std::vector<ProbeSeries> ProbeManager::allSeries() const {
     return result;
 }
 
+// Computes statistical metrics for a probe series.
+// Includes count, min, max, mean, stddev, and last value.
 ProbeStatistics ProbeManager::computeStatistics(const ProbeSeries& series) {
     ProbeStatistics stats;
     if (series.samples.empty()) {
@@ -120,6 +132,8 @@ ProbeStatistics ProbeManager::computeStatistics(const ProbeSeries& series) {
     return stats;
 }
 
+// Validates a probe definition against the current state store.
+// Checks variable existence and spatial bounds.
 bool ProbeManager::validateDefinition(const ProbeDefinition& definition, const StateStore& stateStore, std::string& message) {
     if (!stateStore.hasField(definition.variableName)) {
         message = "probe_add_failed reason=unknown_variable variable=" + definition.variableName;
@@ -156,6 +170,8 @@ bool ProbeManager::validateDefinition(const ProbeDefinition& definition, const S
     return false;
 }
 
+// Samples the current value from the state store based on probe definition kind.
+// Returns empty optional if sampling fails.
 std::optional<float> ProbeManager::sample(const ProbeDefinition& definition, const StateStore& stateStore) {
     switch (definition.kind) {
         case ProbeKind::GlobalScalar: {

@@ -9,6 +9,7 @@
 
 namespace ws::gui::session_manager {
 
+// Configuration for a single variable's initialization behavior.
 struct VariableInitializationSetting {
     std::string variableId;
     bool enabled = false;
@@ -18,6 +19,7 @@ struct VariableInitializationSetting {
     float clampMax = 1.0f;
 };
 
+// UI state for the session manager window.
 struct SessionUiState {
     std::vector<StoredWorldInfo> worlds;
     int selectedWorldIndex = -1;
@@ -55,7 +57,9 @@ struct SessionUiState {
     char statusMessage[256] = "";
 };
 
+// Formats byte count as human-readable string (KB, MB, GB).
 [[nodiscard]] std::string formatBytes(std::uintmax_t bytes);
+// Formats file timestamp for display in UI.
 [[nodiscard]] std::string formatFileTime(const std::filesystem::file_time_type& timePoint, bool available);
 
 } // namespace ws::gui::session_manager

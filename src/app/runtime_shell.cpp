@@ -30,6 +30,8 @@ namespace ws::app {
 
 namespace {
 
+// Checks if a subsystem key can be resolved to an actual variable.
+// Considers direct variable IDs and aliased names.
 bool canResolveSubsystemKey(
     const std::string& key,
     const std::unordered_set<std::string>& variableIds,

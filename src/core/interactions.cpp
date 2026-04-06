@@ -14,8 +14,10 @@ namespace ws {
 
 namespace {
 
+// Ordered string set for dependency tracking.
 using OrderedSet = std::set<std::string, std::less<>>;
 
+// Converts DependencyEdgeKind enum to string.
 std::string toString(const DependencyEdgeKind kind) {
     switch (kind) {
         case DependencyEdgeKind::Data: return "data";
@@ -24,6 +26,7 @@ std::string toString(const DependencyEdgeKind kind) {
     return "unknown";
 }
 
+// Converts ConflictResolutionMode enum to string.
 std::string toString(const ConflictResolutionMode mode) {
     switch (mode) {
         case ConflictResolutionMode::DeterministicPriority: return "deterministic_priority";
@@ -33,6 +36,7 @@ std::string toString(const ConflictResolutionMode mode) {
     return "unknown";
 }
 
+// Converts AdmissionIssue severity to string.
 std::string toString(const AdmissionIssue::Severity severity) {
     switch (severity) {
         case AdmissionIssue::Severity::Info: return "info";

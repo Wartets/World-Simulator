@@ -9,6 +9,7 @@
 
 namespace ws::gui {
 
+// Information about a loaded simulation model.
 struct ModelInfo {
     std::string model_id;
     std::string name;
@@ -25,6 +26,7 @@ struct ModelInfo {
     std::filesystem::file_time_type last_modified;
 };
 
+// Dialog for browsing, selecting, and managing simulation models.
 class ModelSelector {
 public:
     ModelSelector();

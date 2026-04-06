@@ -6,7 +6,9 @@
 
 namespace ws::gui {
 
+// A single validation message produced during model validation.
 struct ValidationMessage {
+    // Severity level of the validation message.
     enum class Severity { Error, Warning, Info };
     
     Severity severity;
@@ -15,6 +17,8 @@ struct ValidationMessage {
     std::string suggestion;
 };
 
+// Validates simulation models for correctness.
+// Checks syntax, types, units, dependencies, and structure.
 class ModelValidator {
 public:
     ModelValidator();

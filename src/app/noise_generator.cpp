@@ -9,9 +9,11 @@
 namespace ws::app {
 namespace {
 
+// 2D gradient vectors for Perlin/Simplex noise.
 constexpr std::array<int, 8> kGrad2X = {1, -1, 1, -1, 1, -1, 0, 0};
 constexpr std::array<int, 8> kGrad2Y = {1, 1, -1, -1, 0, 0, 1, -1};
 
+// 64-bit hash mixing using FNV-1a variant.
 inline std::uint64_t mix64(std::uint64_t v) {
     v ^= v >> 33;
     v *= 0xff51afd7ed558ccdULL;
@@ -21,30 +23,38 @@ inline std::uint64_t mix64(std::uint64_t v) {
     return v;
 }
 
+// Hashes 2D coordinates with seed using splitmix64-like mixing.
 inline std::uint64_t hash2(std::int64_t x, std::int64_t y, std::uint64_t seed) {
     const auto ux = static_cast<std::uint64_t>(x) * 0x9e3779b185ebca87ULL;
     const auto uy = static_cast<std::uint64_t>(y) * 0xc2b2ae3d27d4eb4fULL;
     return mix64(seed ^ ux ^ (uy << 1));
 }
 
+// Converts 64-bit integer to float in [0, 1] range.
 inline float toUnitFloat(std::uint64_t v) {
     constexpr double kScale = 1.0 / static_cast<double>(std::numeric_limits<std::uint64_t>::max());
     return static_cast<float>(static_cast<double>(v) * kScale);
 }
 
+// Perlin fade function: 6t^5 - 15t^4 + 10t^3.
+// Smooths interpolation between grid points.
 inline float fade(const float t) {
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
 
+// Linear interpolation between a and b by t.
 inline float lerp(const float a, const float b, const float t) {
     return a + (b - a) * t;
 }
 
+// Computes dot product of gradient vector with offset.
 float gradDot(const std::uint64_t h, const float x, const float y) {
     const std::size_t idx = static_cast<std::size_t>(h & 7ULL);
     return static_cast<float>(kGrad2X[idx]) * x + static_cast<float>(kGrad2Y[idx]) * y;
 }
 
+// Samples value noise at (x, y) with given seed.
+// Uses bilinear interpolation of hash values at grid corners.
 float sampleValueNoise(const float x, const float y, const std::uint64_t seed) {
     const auto x0 = static_cast<std::int64_t>(std::floor(x));
     const auto y0 = static_cast<std::int64_t>(std::floor(y));
@@ -64,6 +74,8 @@ float sampleValueNoise(const float x, const float y, const std::uint64_t seed) {
     return lerp(lerp(n00, n10, u), lerp(n01, n11, u), v);
 }
 
+// Samples classic Perlin noise at (x, y).
+// Uses gradient interpolation rather than value interpolation.
 float samplePerlin(const float x, const float y, const std::uint64_t seed) {
     const auto x0 = static_cast<std::int64_t>(std::floor(x));
     const auto y0 = static_cast<std::int64_t>(std::floor(y));
@@ -83,6 +95,8 @@ float samplePerlin(const float x, const float y, const std::uint64_t seed) {
     return lerp(lerp(g00, g10, u), lerp(g01, g11, u), v) * 0.70710678f;
 }
 
+// Samples simplified Simplex noise approximation.
+// Uses skewed grid transformation and radial falloff.
 float sampleSimplexApprox(const float x, const float y, const std::uint64_t seed) {
     constexpr float kF2 = 0.366025403784f;
     constexpr float kG2 = 0.211324865405f;
@@ -124,6 +138,8 @@ float sampleSimplexApprox(const float x, const float y, const std::uint64_t seed
     return 45.23065f * (n0 + n1 + n2);
 }
 
+// Samples Worley (cellular/Voronoi) noise.
+// Returns distance to nearest feature point, normalized to [-1, 1].
 float sampleWorley(const float x, const float y, const std::uint64_t seed) {
     const auto baseX = static_cast<std::int64_t>(std::floor(x));
     const auto baseY = static_cast<std::int64_t>(std::floor(y));
@@ -151,6 +167,7 @@ float sampleWorley(const float x, const float y, const std::uint64_t seed) {
     return (1.0f - normalized) * 2.0f - 1.0f;
 }
 
+// Dispatches to the appropriate noise sampling function based on type.
 float sampleOne(const NoiseType type, const float x, const float y, const std::uint64_t seed) {
     switch (type) {
         case NoiseType::Simplex:
@@ -165,6 +182,8 @@ float sampleOne(const NoiseType type, const float x, const float y, const std::u
 
 } // namespace
 
+// Samples 2D noise with fractal Brownian motion (multiple octaves).
+// Combines multiple frequency layers with decreasing amplitude.
 float NoiseGenerator::sample2D(const float x, const float y, const std::uint64_t seed, const NoiseConfig& config) {
     const int octaveCount = std::clamp(config.octaves, 1, 16);
     float amplitude = std::max(0.0f, config.amplitude);
@@ -191,6 +210,8 @@ float NoiseGenerator::sample2D(const float x, const float y, const std::uint64_t
     return std::clamp(total / weight, -1.0f, 1.0f);
 }
 
+// Generates a 2D noise field of specified dimensions.
+// Returns flat vector representing the grid (row-major order).
 std::vector<float> NoiseGenerator::generate2D(
     const std::size_t width,
     const std::size_t height,

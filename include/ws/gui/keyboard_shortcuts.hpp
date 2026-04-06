@@ -4,20 +4,13 @@
 #include <map>
 #include <functional>
 
-/**
- * @file keyboard_shortcuts.hpp
- * @brief Keyboard shortcut manager for GUI layer
- * 
- * Provides centralized keyboard shortcut registration and dispatch.
- * All shortcuts are non-blocking and context-aware.
- */
-
 namespace ws::gui {
 
-/**
- * @enum KeyModifier
- * @brief Keyboard modifiers (Ctrl, Shift, Alt)
- */
+// =============================================================================
+// Key Modifier
+// =============================================================================
+
+// Keyboard modifier keys.
 enum class KeyModifier {
     None = 0,
     Ctrl = 1 << 0,
@@ -29,10 +22,11 @@ enum class KeyModifier {
     CtrlShiftAlt = Ctrl | Shift | Alt
 };
 
-/**
- * @enum KeyCode
- * @brief Virtual key codes (subset of important keys)
- */
+// =============================================================================
+// Key Code
+// =============================================================================
+
+// Virtual key codes for keyboard input.
 enum class KeyCode {
     Unknown = 0,
     
@@ -61,90 +55,55 @@ enum class KeyCode {
     Delete = 0x2E, Backspace = 0x08
 };
 
-/**
- * @struct ShortcutDef
- * @brief Definition of a keyboard shortcut
- */
+// =============================================================================
+// Shortcut Definition
+// =============================================================================
+
+// Definition of a keyboard shortcut.
 struct ShortcutDef {
-    std::string id;              ///< Unique identifier
-    std::string description;     ///< Human-readable description
-    KeyCode key;                 ///< Key code
-    KeyModifier modifier;        ///< Modifier keys
-    std::function<void()> action; ///< Callback when shortcut triggered
-    bool enabled;                ///< Whether shortcut is active
+    std::string id;                             // Unique identifier.
+    std::string description;                    // Human-readable description.
+    KeyCode key;                                // Key code.
+    KeyModifier modifier;                       // Modifier keys.
+    std::function<void()> action;               // Callback when shortcut triggered.
+    bool enabled;                               // Whether shortcut is active.
 };
 
-/**
- * @class KeyboardShortcutManager
- * @brief Centralized keyboard shortcut management
- * 
- * Features:
- * - Register/unregister shortcuts dynamically
- * - Context-aware enable/disable
- * - Query shortcuts and build help text
- * - ImGui integration for shortcut remapping
- */
+// =============================================================================
+// Keyboard Shortcut Manager
+// =============================================================================
+
+// Centralized keyboard shortcut management.
 class KeyboardShortcutManager {
 public:
-    /// Initialize with default shortcuts
+    // Constructs the manager with default shortcuts.
     KeyboardShortcutManager();
     
-    /**
-     * @brief Register a new shortcut
-     * @param def Shortcut definition
-     */
+    // Registers a new shortcut.
     void registerShortcut(const ShortcutDef& def);
     
-    /**
-     * @brief Unregister a shortcut
-     * @param id Shortcut ID
-     */
+    // Unregisters a shortcut by ID.
     void unregisterShortcut(const std::string& id);
     
-    /**
-     * @brief Process keyboard event
-     * @param key Key code pressed
-     * @param modifiers Active modifiers
-     * @return true if shortcut was handled
-     */
+    // Processes a key press and triggers matching shortcut.
     bool handleKeyPress(KeyCode key, KeyModifier modifiers);
     
-    /**
-     * @brief Enable/disable shortcut
-     * @param id Shortcut ID
-     * @param enabled Enable state
-     */
+    // Enables or disables a shortcut.
     void setShortcutEnabled(const std::string& id, bool enabled);
     
-    /**
-     * @brief Get all registered shortcuts
-     * @return Vector of shortcut definitions
-     */
+    // Returns all registered shortcuts.
     const std::vector<ShortcutDef>& getShortcuts() const;
     
-    /**
-     * @brief Get shortcut by ID
-     * @param id Shortcut ID
-     * @return ShortcutDef or nullptr
-     */
+    // Finds a shortcut by ID.
     ShortcutDef* findShortcut(const std::string& id);
     
-    /**
-     * @brief Build help text for display
-     * @return Formatted shortcut help string
-     */
+    // Builds help text for display.
     std::string buildHelpText() const;
     
-    /**
-     * @brief Persist shortcuts to file
-     * @param filename Target file path
-     */
+    // Saves shortcuts to a file.
     void saveShortcuts(const std::string& filename);
     
-    /**
-     * @brief Load shortcuts from file
-     * @param filename Source file path
-     */
+    // Loads shortcuts from a file.
     void loadShortcuts(const std::string& filename);
 
 private:

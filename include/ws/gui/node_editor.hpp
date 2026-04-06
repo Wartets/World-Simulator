@@ -12,42 +12,47 @@ namespace ws::gui {
 
 // === Node Types ===
 
+// Types of nodes in the model graph.
 enum class NodeType {
-    GlobalVariable,
-    CellVariable,
-    Parameter,
-    Derived,
-    Equation,
-    Operator,
-    Stage,
-    Domain
+    GlobalVariable,  // Global scalar variable
+    CellVariable,    // Per-cell variable
+    Parameter,        // Model parameter
+    Derived,          // Derived/computed variable
+    Equation,         // Mathematical equation
+    Operator,         // Operator node
+    Stage,            // Simulation stage
+    Domain            // Domain specification
 };
 
+// Role of a variable in the model.
 enum class VariableRole {
-    Parameter,
-    State,
-    Forcing,
-    Derived,
-    Auxiliary
+    Parameter,   // Model parameter (settable)
+    State,       // State variable (evolves)
+    Forcing,     // External forcing
+    Derived,     // Derived from other variables
+    Auxiliary    // Auxiliary/computed
 };
 
+// Spatial support of a variable.
 enum class VariableSupport {
-    Global,
-    Cell
+    Global,  // Single global value
+    Cell     // Per-cell values
 };
 
+// Data type for variables.
 enum class DataType {
-    F32,
-    F64,
-    I32,
-    U32,
-    Bool,
-    Vec2,
-    Vec3
+    F32,    // 32-bit float
+    F64,    // 64-bit float
+    I32,    // 32-bit integer
+    U32,    // 32-bit unsigned
+    Bool,   // Boolean
+    Vec2,   // 2D vector
+    Vec3    // 3D vector
 };
 
 // === Port Types ===
 
+// Connection point on a node.
 struct Port {
     std::string name;
     std::string variable_id;
@@ -61,6 +66,7 @@ struct Port {
 
 // === Node Definition ===
 
+// A node in the model graph representing a variable or operation.
 struct Node {
     std::string id;
     NodeType type;
@@ -138,6 +144,7 @@ struct Node {
 
 // === Connection (Edge) ===
 
+// A connection between two nodes.
 struct Connection {
     std::string from_node_id;
     std::string to_node_id;
@@ -153,6 +160,7 @@ struct Connection {
 
 // === Node Editor State ===
 
+// Interactive node-based model editor.
 class NodeEditor {
 public:
     NodeEditor();

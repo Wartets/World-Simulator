@@ -12,6 +12,8 @@
 
 namespace ws::gui {
 
+// Visual editor for creating and modifying simulation models.
+// Provides node-based model construction with validation.
 class ModelEditorWindow {
 public:
     explicit ModelEditorWindow(const std::string& window_title = "Model Editor");

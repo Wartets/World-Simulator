@@ -8,6 +8,8 @@
 
 namespace ws {
 
+// Constructs a write session with owner name and allowed variables.
+// Variables are sorted and deduplicated for efficient lookup.
 StateStore::WriteSession::WriteSession(StateStore& stateStore, std::string ownerName, std::vector<std::string> allowedVariables)
     : stateStore_(stateStore), ownerName_(std::move(ownerName)), allowedVariables_(std::move(allowedVariables)) {
     std::sort(allowedVariables_.begin(), allowedVariables_.end());
@@ -18,6 +20,7 @@ StateStore::WriteSession::WriteSession(StateStore& stateStore, std::string owner
     }
 }
 
+// Sets a scalar value for a variable at the given cell.
 void StateStore::WriteSession::setScalar(const std::string& variableName, const Cell cell, const float value) {
     if (!isAllowed(variableName)) {
         throw std::runtime_error("Write denied for variable '" + variableName + "' by owner '" + ownerName_ + "'");
@@ -26,6 +29,7 @@ void StateStore::WriteSession::setScalar(const std::string& variableName, const 
 }
 
 
+// Sets a scalar value in the overlay layer (temporary modification).
 void StateStore::WriteSession::setOverlayScalar(const std::string& variableName, const Cell cell, const float value) {
     if (!isAllowed(variableName)) {
         throw std::runtime_error("Overlay write denied for variable '" + variableName + "' by owner '" + ownerName_ + "'");
@@ -33,6 +37,7 @@ void StateStore::WriteSession::setOverlayScalar(const std::string& variableName,
     stateStore_.setOverlayScalarInternal(variableName, cell, value);
 }
 
+// Clears the overlay scalar value at the given cell.
 void StateStore::WriteSession::clearOverlayScalar(const std::string& variableName, const Cell cell) {
     if (!isAllowed(variableName)) {
         throw std::runtime_error("Overlay clear denied for variable '" + variableName + "' by owner '" + ownerName_ + "'");
@@ -40,12 +45,14 @@ void StateStore::WriteSession::clearOverlayScalar(const std::string& variableNam
     stateStore_.clearOverlayScalarInternal(variableName, cell);
 }
 
+// Marks a scalar value as invalid (requiring recomputation).
 void StateStore::WriteSession::invalidateScalar(const std::string& variableName, const Cell cell) {
     if (!isAllowed(variableName)) {
         throw std::runtime_error("Invalidate denied for variable '" + variableName + "' by owner '" + ownerName_ + "'");
     }
     stateStore_.invalidateScalarInternal(variableName, cell);
 }
+// Fills all cells of a variable with a constant value.
 void StateStore::WriteSession::fillScalar(const std::string& variableName, const float value) {
     if (!isAllowed(variableName)) {
         throw std::runtime_error("Fill denied for variable '" + variableName + "' by owner '" + ownerName_ + "'");

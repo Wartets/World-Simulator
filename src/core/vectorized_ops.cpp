@@ -15,12 +15,16 @@
 namespace ws::vectorized {
 namespace {
 
+// Wraps a coordinate value to valid range [0, extent).
+// Uses modular arithmetic to handle negative indices.
 inline std::uint32_t wrapIndex(const std::int64_t value, const std::uint32_t extent) noexcept {
     const std::int64_t mod = static_cast<std::int64_t>(extent);
     const std::int64_t wrapped = ((value % mod) + mod) % mod;
     return static_cast<std::uint32_t>(wrapped);
 }
 
+// Reflects a coordinate value at boundary edges.
+// Creates mirror-like boundary behavior for out-of-range indices.
 inline std::uint32_t reflectIndex(const std::int64_t value, const std::uint32_t extent) noexcept {
     if (extent == 1u) {
         return 0u;
@@ -37,6 +41,8 @@ inline std::uint32_t reflectIndex(const std::int64_t value, const std::uint32_t 
     return static_cast<std::uint32_t>(wrapped);
 }
 
+// Samples input array at specified coordinates with boundary handling.
+// Applies different strategies based on boundary condition enum.
 inline float sampleBoundary(
     const float* input,
     const std::uint32_t width,
@@ -76,6 +82,8 @@ inline float sampleBoundary(
     return 0.0f;
 }
 
+// Computes 5-point Laplacian for interior row cells.
+// Uses centered difference approximation for second derivatives.
 inline void laplacianInteriorScalar(
     const float* input,
     float* output,
@@ -93,6 +101,8 @@ inline void laplacianInteriorScalar(
     }
 }
 
+// Computes central difference gradient for interior row cells.
+// Uses forward/backward differences for x and y components.
 inline void gradientInteriorScalar(
     const float* input,
     float* outX,
@@ -115,6 +125,8 @@ inline void gradientInteriorScalar(
 
 } // namespace
 
+// Clamps all values in data array to [minValue, maxValue] range.
+// Uses SSE2 intrinsics when available for vectorized processing.
 void clampInPlace(float* data, const std::size_t count, const float minValue, const float maxValue) noexcept {
     if (data == nullptr || count == 0u) {
         return;
@@ -140,6 +152,8 @@ void clampInPlace(float* data, const std::size_t count, const float minValue, co
 #endif
 }
 
+// Element-wise addition of two arrays into destination.
+// Uses SSE2 when available for parallel processing of 4 floats.
 void add(float* destination, const float* lhs, const float* rhs, const std::size_t count) noexcept {
     if (destination == nullptr || lhs == nullptr || rhs == nullptr || count == 0u) {
         return;
@@ -162,6 +176,8 @@ void add(float* destination, const float* lhs, const float* rhs, const std::size
 #endif
 }
 
+// Element-wise subtraction of rhs from lhs into destination.
+// Uses SSE2 vectorization when available.
 void subtract(float* destination, const float* lhs, const float* rhs, const std::size_t count) noexcept {
     if (destination == nullptr || lhs == nullptr || rhs == nullptr || count == 0u) {
         return;
@@ -184,6 +200,8 @@ void subtract(float* destination, const float* lhs, const float* rhs, const std:
 #endif
 }
 
+// Element-wise multiplication of two arrays into destination.
+// Uses SSE2 vectorization for improved throughput.
 void multiply(float* destination, const float* lhs, const float* rhs, const std::size_t count) noexcept {
     if (destination == nullptr || lhs == nullptr || rhs == nullptr || count == 0u) {
         return;
@@ -206,6 +224,8 @@ void multiply(float* destination, const float* lhs, const float* rhs, const std:
 #endif
 }
 
+// Element-wise division of lhs by rhs into destination.
+// Uses SSE2 when available; falls back to scalar division.
 void divide(float* destination, const float* lhs, const float* rhs, const std::size_t count) noexcept {
     if (destination == nullptr || lhs == nullptr || rhs == nullptr || count == 0u) {
         return;
@@ -228,6 +248,8 @@ void divide(float* destination, const float* lhs, const float* rhs, const std::s
 #endif
 }
 
+// Computes 5-point Laplacian stencil on 2D grid.
+// Uses boundary handler for edge cells; optionally uses SSE2 for interior.
 void laplacian5Point2D(
     const float* input,
     float* output,
@@ -252,6 +274,7 @@ void laplacian5Point2D(
         return;
     }
 
+    // Processes top and bottom boundary rows with boundary sampling.
     for (std::uint32_t x = 0; x < width; ++x) {
         const std::size_t top = static_cast<std::size_t>(x);
         const std::size_t bottom = static_cast<std::size_t>(height - 1u) * width + x;
@@ -269,6 +292,7 @@ void laplacian5Point2D(
             4.0f * centerBottom;
     }
 
+    // Processes interior rows using vectorized or scalar path.
     for (std::uint32_t y = 1; y + 1 < height; ++y) {
         const std::size_t row = static_cast<std::size_t>(y) * width;
         output[row] = sampleBoundary(input, width, height, -1, static_cast<std::int64_t>(y), boundaryCondition) +
@@ -304,6 +328,8 @@ void laplacian5Point2D(
     }
 }
 
+// Computes central difference gradient on 2D grid.
+// Outputs x and y gradient components; uses SSE2 when available.
 void gradientCentralDifference2D(
     const float* input,
     float* outX,
@@ -330,6 +356,7 @@ void gradientCentralDifference2D(
         return;
     }
 
+    // Processes top and bottom boundary rows with boundary sampling.
     for (std::uint32_t x = 0; x < width; ++x) {
         const std::size_t top = static_cast<std::size_t>(x);
         const std::size_t bottom = static_cast<std::size_t>(height - 1u) * width + x;
@@ -347,6 +374,7 @@ void gradientCentralDifference2D(
         outY[bottom] = 0.5f * (southBottom - northBottom);
     }
 
+    // Processes interior rows using vectorized or scalar path.
     for (std::uint32_t y = 1; y + 1 < height; ++y) {
         const std::size_t row = static_cast<std::size_t>(y) * width;
         outX[row] = 0.5f * (sampleBoundary(input, width, height, 1, static_cast<std::int64_t>(y), boundaryCondition) -

@@ -15,6 +15,8 @@ ws::ir::Program* g_program = nullptr;
 
 namespace ws::ir {
 
+// Parses IR source code and returns the resulting AST program.
+// Throws std::runtime_error if parsing fails.
 Program parse_ir(const std::string& source) {
     g_program = nullptr;
     

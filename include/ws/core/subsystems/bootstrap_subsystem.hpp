@@ -4,6 +4,11 @@
 
 namespace ws {
 
+// =============================================================================
+// Bootstrap Subsystem
+// =============================================================================
+
+// Initializes the simulation state with initial conditions.
 class BootstrapSubsystem final : public ISubsystem {
 public:
     [[nodiscard]] std::string name() const override;

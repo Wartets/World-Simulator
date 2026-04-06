@@ -7,10 +7,12 @@
 
 namespace ws::app {
 
+// Initializes storage with the specified retention policy.
 CheckpointStorage::CheckpointStorage(CheckpointStoragePolicy policy)
     : policy_(std::move(policy)) {
 }
 
+// Updates storage policy and enforces retention limits.
 void CheckpointStorage::configure(CheckpointStoragePolicy policy) {
     policy_ = std::move(policy);
     if (policy_.intervalSteps == 0u) {
@@ -19,6 +21,8 @@ void CheckpointStorage::configure(CheckpointStoragePolicy policy) {
     enforceRetention();
 }
 
+// Persists checkpoint to disk at the step-indexed path.
+// Returns true on success; failure message describes the error.
 bool CheckpointStorage::store(const RuntimeCheckpoint& checkpoint, std::string& message) {
     if (!policy_.enabled) {
         message = "checkpoint_storage_skip reason=disabled";
@@ -39,6 +43,8 @@ bool CheckpointStorage::store(const RuntimeCheckpoint& checkpoint, std::string& 
     }
 }
 
+// Loads checkpoint from disk by step index.
+// Returns true if found and loaded; sets error message on failure.
 bool CheckpointStorage::load(const std::uint64_t step, RuntimeCheckpoint& checkpoint, std::string& message) const {
     const auto it = stepToPath_.find(step);
     if (it == stepToPath_.end()) {
@@ -56,6 +62,8 @@ bool CheckpointStorage::load(const std::uint64_t step, RuntimeCheckpoint& checkp
     }
 }
 
+// Finds the nearest stored checkpoint at or before the given step.
+// Returns nullopt if no checkpoint exists at or before the target.
 std::optional<std::uint64_t> CheckpointStorage::nearestStepAtOrBefore(const std::uint64_t step) const {
     if (stepToPath_.empty()) {
         return std::nullopt;
@@ -70,6 +78,7 @@ std::optional<std::uint64_t> CheckpointStorage::nearestStepAtOrBefore(const std:
     return it->first;
 }
 
+// Returns sorted list of all step indices with stored checkpoints.
 std::vector<std::uint64_t> CheckpointStorage::listSteps() const {
     std::vector<std::uint64_t> steps;
     steps.reserve(stepToPath_.size());
@@ -79,10 +88,12 @@ std::vector<std::uint64_t> CheckpointStorage::listSteps() const {
     return steps;
 }
 
+// Clears the step-to-path index without deleting files.
 void CheckpointStorage::clearIndex() {
     stepToPath_.clear();
 }
 
+// Removes oldest checkpoints exceeding the retention limit.
 void CheckpointStorage::enforceRetention() {
     if (policy_.maxRetainedFiles == 0u) {
         for (const auto& [_, path] : stepToPath_) {
@@ -101,6 +112,7 @@ void CheckpointStorage::enforceRetention() {
     }
 }
 
+// Generates filesystem path for checkpoint file at given step.
 std::filesystem::path CheckpointStorage::pathForStep(const std::uint64_t step) const {
     return policy_.directory / ("step_" + std::to_string(step) + ".wscp");
 }

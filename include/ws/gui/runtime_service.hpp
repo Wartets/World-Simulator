@@ -19,6 +19,7 @@
 
 namespace ws::gui {
 
+// Context information about the currently loaded model.
 struct ModelScopeContext {
     std::string modelId;
     std::string modelName;
@@ -26,6 +27,7 @@ struct ModelScopeContext {
     std::string modelIdentityHash;
 };
 
+// Information about a stored world (profile/checkpoint).
 struct StoredWorldInfo {
     std::string modelKey;
     std::string worldName;
@@ -48,22 +50,27 @@ struct StoredWorldInfo {
     std::uint64_t runIdentityHash = 0;
 };
 
+// Central service managing runtime lifecycle, checkpoints, and world storage.
 class RuntimeService {
 public:
     RuntimeService();
 
+    // Configuration access
     [[nodiscard]] const app::LaunchConfig& config() const noexcept { return config_; }
     void setConfig(const app::LaunchConfig& config) { config_ = config; }
     void setModelScope(ModelScopeContext context);
     [[nodiscard]] const ModelScopeContext& modelScope() const noexcept { return modelScope_; }
 
+    // Runtime state
     [[nodiscard]] bool isRunning() const;
     [[nodiscard]] bool isPaused() const;
 
+    // Lifecycle control
     bool start(std::string& message);
     bool restart(std::string& message);
     bool stop(std::string& message);
 
+    // Stepping control
     bool step(std::uint32_t count, std::string& message);
     bool stepBackward(std::uint32_t count, std::string& message);
     bool runUntil(std::uint64_t targetStep, std::string& message);
@@ -74,6 +81,7 @@ public:
     [[nodiscard]] float playbackSpeed() const noexcept { return playbackSpeed_; }
     bool configureCheckpointTimeline(std::uint32_t intervalSteps, std::size_t retention, std::string& message);
 
+    // Diagnostics and introspection
     bool status(std::string& message) const;
     bool metrics(std::string& message) const;
     bool listFields(std::string& message) const;
@@ -82,26 +90,33 @@ public:
     bool fieldNames(std::vector<std::string>& names, std::string& message) const;
     bool fieldDisplayTags(std::unordered_map<std::string, std::vector<std::string>>& tags, std::string& message) const;
     bool parameterControls(std::vector<ParameterControl>& controls, std::string& message) const;
+
+    // Probe management
     bool addProbe(const ProbeDefinition& definition, std::string& message);
     bool removeProbe(const std::string& probeId, std::string& message);
     bool clearProbes(std::string& message);
     bool probeDefinitions(std::vector<ProbeDefinition>& definitions, std::string& message) const;
     bool probeSeries(const std::string& probeId, ProbeSeries& series, std::string& message) const;
     bool lastStepDiagnostics(StepDiagnostics& diagnostics, std::string& message) const;
+
+    // Parameter and state modification
     bool setParameterValue(const std::string& parameterName, float value, const std::string& note, std::string& message);
     bool applyManualPatch(const std::string& variableName, std::optional<Cell> cell, float newValue, const std::string& note, std::string& message);
     bool undoLastManualPatch(std::string& message);
     bool enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message);
     bool manualEventLog(std::vector<ManualEventRecord>& events, std::string& message) const;
 
+    // Checkpoint management
     bool createCheckpoint(const std::string& label, std::string& message);
     bool restoreCheckpoint(const std::string& label, std::string& message);
     bool listCheckpoints(std::string& message) const;
 
+    // Profile management
     bool saveProfile(const std::string& name, std::string& message);
     bool loadProfile(const std::string& name, std::string& message);
     bool listProfiles(std::string& message) const;
 
+    // World management
     [[nodiscard]] std::vector<StoredWorldInfo> listStoredWorlds(std::string& message) const;
     [[nodiscard]] std::string suggestNextWorldName() const;
     [[nodiscard]] std::string suggestWorldNameFromHint(const std::string& hint) const;

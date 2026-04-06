@@ -9,6 +9,7 @@
 
 namespace ws {
 
+// Types of neighborhood connectivity for stencil operations.
 enum class NeighborhoodType : std::uint8_t {
     Moore4 = 0,      // N, S, E, W (4-connected)
     Moore8 = 1,      // + diagonals (8-connected)
@@ -17,11 +18,13 @@ enum class NeighborhoodType : std::uint8_t {
     Custom = 4       // User-defined offset list
 };
 
+// User-defined neighborhood with custom offsets.
 struct CustomNeighborhood {
     std::string name;
     std::vector<std::pair<int, int>> offsets;  // List of (dx, dy) offsets
 };
 
+// Defines neighborhood connectivity for grid-based operations.
 class NeighborhoodDefinition {
 public:
     explicit NeighborhoodDefinition(NeighborhoodType type);
@@ -44,6 +47,7 @@ private:
     void initMooreOffsets(NeighborhoodType type);
 };
 
+// Handles boundary conditions when accessing neighbor cells.
 class BoundaryHandler {
 public:
     explicit BoundaryHandler(

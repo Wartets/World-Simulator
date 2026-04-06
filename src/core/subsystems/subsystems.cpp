@@ -13,10 +13,12 @@ namespace ws {
 
 namespace {
 
+// Clamps a value to the specified range.
 float clampRange(const float value, const float low, const float high) {
     return std::clamp(value, low, high);
 }
 
+// 64-bit hash mixing function (MurmurHash3 finalizer).
 std::uint64_t mix64(std::uint64_t value) {
     value += 0x9e3779b97f4a7c15ull;
     value = (value ^ (value >> 30u)) * 0xbf58476d1ce4e5b9ull;
@@ -24,6 +26,7 @@ std::uint64_t mix64(std::uint64_t value) {
     return value ^ (value >> 31u);
 }
 
+// Generates a deterministic hash value in [0,1] from seed and coordinates.
 float hash01(const std::uint64_t seed, const int x, const int y) {
     std::uint64_t h = DeterministicHash::combine(seed, DeterministicHash::hashPod(x));
     h = DeterministicHash::combine(h, DeterministicHash::hashPod(y));

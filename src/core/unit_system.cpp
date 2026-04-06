@@ -5,22 +5,27 @@
 
 namespace ws {
 
+// Constructs error with context about which units were incompatible.
 UnitMismatchError::UnitMismatchError(const SIUnit& a, const SIUnit& b, const std::string& context)
     : std::runtime_error("Unit mismatch in " + context + ": dimension <" + a.toString() + "> is incompatible with <" + b.toString() + ">") {}
 
+// Returns true if all dimension exponents are zero (dimensionless quantity).
 bool SIUnit::isDimensionless() const noexcept {
     return kg == 0 && m == 0 && s == 0 && K == 0 && A == 0 && mol == 0 && cd == 0;
 }
 
+// Compares two SI units for equality based on all dimension exponents.
 bool SIUnit::operator==(const SIUnit& other) const noexcept {
     return kg == other.kg && m == other.m && s == other.s &&
            K == other.K && A == other.A && mol == other.mol && cd == other.cd;
 }
 
+// Inequality operator is negation of equality.
 bool SIUnit::operator!=(const SIUnit& other) const noexcept {
     return !(*this == other);
 }
 
+// Multiplies two SI units by adding their dimension exponents.
 SIUnit SIUnit::operator*(const SIUnit& other) const noexcept {
     SIUnit result;
     result.kg = kg + other.kg;
@@ -33,6 +38,7 @@ SIUnit SIUnit::operator*(const SIUnit& other) const noexcept {
     return result;
 }
 
+// Divides two SI units by subtracting their dimension exponents.
 SIUnit SIUnit::operator/(const SIUnit& other) const noexcept {
     SIUnit result;
     result.kg = kg - other.kg;
@@ -45,6 +51,7 @@ SIUnit SIUnit::operator/(const SIUnit& other) const noexcept {
     return result;
 }
 
+// Adds two SI units; throws if dimensions do not match.
 SIUnit SIUnit::add(const SIUnit& other) const {
     if (*this != other) {
         throw UnitMismatchError(*this, other, "addition/subtraction");
@@ -52,20 +59,27 @@ SIUnit SIUnit::add(const SIUnit& other) const {
     return *this;
 }
 
+// Subtraction delegates to addition since both require dimension compatibility.
 SIUnit SIUnit::sub(const SIUnit& other) const {
     return add(other);
 }
 
+// Returns a dimensionless SI unit (all exponents zero).
 SIUnit SIUnit::dimensionless() noexcept {
     return SIUnit{};
 }
 
+// Token types for unit expression parser.
 enum TokenType { TOK_ID, TOK_NUM, TOK_MUL, TOK_DIV, TOK_POW, TOK_LPAREN, TOK_RPAREN, TOK_EOF };
+
+// Represents a single token in a unit expression.
 struct Token {
     TokenType type;
     std::string val;
 };
 
+// Tokenizes a unit string into a sequence of tokens.
+// Handles identifiers, numbers, operators, and parentheses.
 static std::vector<Token> tokenize(const std::string& input) {
     std::vector<Token> output;
     size_t i = 0;
@@ -99,8 +113,11 @@ static std::vector<Token> tokenize(const std::string& input) {
     return output;
 }
 
+// Forward declaration for recursive descent parser.
 static SIUnit parseFactor(const std::vector<Token>& tokens, size_t& pos);
 
+// Parses a primary expression: identifier, number, or parenthesized expression.
+// Handles SI base units (kg, m, s, K, A, mol, cd) with optional exponents.
 static SIUnit parsePrimary(const std::vector<Token>& tokens, size_t& pos) {
     if (tokens[pos].type == TOK_ID) {
         SIUnit u;
@@ -144,6 +161,8 @@ static SIUnit parsePrimary(const std::vector<Token>& tokens, size_t& pos) {
     throw std::runtime_error("Unexpected token in unit expression: " + tokens[pos].val);
 }
 
+// Parses a factor: primary expression followed by optional multiplication/division.
+// Implements left-to-right associativity for multiplicative operators.
 static SIUnit parseFactor(const std::vector<Token>& tokens, size_t& pos) {
     SIUnit result = parsePrimary(tokens, pos);
     while (tokens[pos].type == TOK_MUL || tokens[pos].type == TOK_DIV) {
@@ -156,6 +175,8 @@ static SIUnit parseFactor(const std::vector<Token>& tokens, size_t& pos) {
     return result;
 }
 
+// Parses a unit string into an SIUnit structure.
+// Handles expressions like "m/s^2", "kg*m/s^2", "1" (dimensionless).
 SIUnit SIUnit::parse(const std::string& unitStr) {
     if (unitStr.empty() || unitStr == "1" || unitStr == "none") return dimensionless();
     auto tokens = tokenize(unitStr);
@@ -167,6 +188,8 @@ SIUnit SIUnit::parse(const std::string& unitStr) {
     return result;
 }
 
+// Converts SIUnit to string representation.
+// Formats as numerator/denominator for negative exponents.
 std::string SIUnit::toString() const {
     if (isDimensionless()) return "1";
     std::ostringstream num, den;

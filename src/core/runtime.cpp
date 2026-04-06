@@ -16,15 +16,20 @@ namespace ws {
 
 namespace {
 
+// Converts ModelTier enum to string representation.
 std::string tierToString(const ModelTier tier) {
     return toString(tier);
 }
 
+// Smooth step function for interpolation (Hermite curve).
+// Returns values smoothly interpolated between 0 and 1.
 float smoothStep(const float t) {
     const float x = std::clamp(t, 0.0f, 1.0f);
     return x * x * (3.0f - 2.0f * x);
 }
 
+// MurmurHash3 64-bit finalizer mix function.
+// Provides good avalanche effect for hash mixing.
 std::uint64_t mix64(std::uint64_t value) {
     value += 0x9e3779b97f4a7c15ull;
     value = (value ^ (value >> 30u)) * 0xbf58476d1ce4e5b9ull;
@@ -32,6 +37,8 @@ std::uint64_t mix64(std::uint64_t value) {
     return value ^ (value >> 31u);
 }
 
+// Generates a deterministic hash value in [0,1] range.
+// Combines seed with x,y coordinates using MurmurHash3.
 float hash01(const std::uint64_t seed, const int x, const int y) {
     std::uint64_t h = DeterministicHash::combine(seed, DeterministicHash::hashPod(x));
     h = DeterministicHash::combine(h, DeterministicHash::hashPod(y));
@@ -40,6 +47,8 @@ float hash01(const std::uint64_t seed, const int x, const int y) {
     return static_cast<float>(top24) / static_cast<float>(0xFFFFFFu);
 }
 
+// 2D value noise interpolation.
+// Samples hash values at grid corners and interpolates.
 float valueNoise2D(const std::uint64_t seed, const float x, const float y) {
     const int x0 = static_cast<int>(std::floor(x));
     const int y0 = static_cast<int>(std::floor(y));
