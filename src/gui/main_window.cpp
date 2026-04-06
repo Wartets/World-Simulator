@@ -185,6 +185,14 @@ constexpr float kPageMaxWidth = 1600.0f;
         case InitialConditionType::GrayScott: return "Gray-Scott (Spots)";
         case InitialConditionType::Waves: return "Waves (Drop)";
         case InitialConditionType::Blank: return "Blank Grid";
+        case InitialConditionType::Voronoi: return "Voronoi Cells";
+        case InitialConditionType::Clustering: return "Clustered Seeds";
+        case InitialConditionType::SparseRandom: return "Sparse Random";
+        case InitialConditionType::GradientField: return "Gradient Field";
+        case InitialConditionType::Checkerboard: return "Checkerboard";
+        case InitialConditionType::RadialPattern: return "Radial Pattern";
+        case InitialConditionType::MultiScale: return "Multi-Scale Noise";
+        case InitialConditionType::DiffusionLimit: return "Diffusion-Limited";
         default: return "Unknown";
     }
 }
@@ -207,6 +215,194 @@ constexpr float kPageMaxWidth = 1600.0f;
         }
     }
     return out;
+}
+
+[[nodiscard]] bool containsToken(const std::string& haystack, const std::initializer_list<const char*> needles) {
+    const auto normalize = [](const std::string& value) {
+        std::string out;
+        out.reserve(value.size());
+        for (char ch : value) {
+            const char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if ((lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9')) {
+                out.push_back(lower);
+            }
+        }
+        return out;
+    };
+
+    const std::string norm = normalize(haystack);
+    for (const char* needle : needles) {
+        if (needle == nullptr) {
+            continue;
+        }
+        const std::string n = normalize(std::string(needle));
+        if (!n.empty() && norm.find(n) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool isRuntimeSupportedGenerationMode(const InitialConditionType mode) {
+    switch (mode) {
+        case InitialConditionType::Terrain:
+        case InitialConditionType::Conway:
+        case InitialConditionType::GrayScott:
+        case InitialConditionType::Waves:
+        case InitialConditionType::Blank:
+            return true;
+        default:
+            return false;
+    }
+}
+
+[[nodiscard]] InitialConditionType fallbackRuntimeSupportedMode(const InitialConditionType mode) {
+    if (isRuntimeSupportedGenerationMode(mode)) {
+        return mode;
+    }
+    if (mode == InitialConditionType::SparseRandom || mode == InitialConditionType::Clustering) {
+        return InitialConditionType::Conway;
+    }
+    if (mode == InitialConditionType::GradientField || mode == InitialConditionType::RadialPattern) {
+        return InitialConditionType::Waves;
+    }
+    return InitialConditionType::Blank;
+}
+
+[[nodiscard]] float applyVariableRestriction(const session_manager::VariableInitializationSetting& setting, const float value) {
+    switch (setting.restrictionMode) {
+        case 1:
+            return std::clamp(value, std::min(setting.clampMin, setting.clampMax), std::max(setting.clampMin, setting.clampMax));
+        case 2:
+            return std::max(0.0f, value);
+        case 3:
+            return std::clamp(value, -1.0f, 1.0f);
+        case 4:
+            return std::tanh(value);
+        case 5:
+            return 1.0f / (1.0f + std::exp(-value));
+        default:
+            return value;
+    }
+}
+
+[[nodiscard]] InitialConditionType refineRecommendedModeForKnownModels(
+    const initialization::ModelVariableCatalog& catalog,
+    const InitialConditionType advisorMode) {
+    const std::string modelId = catalog.modelId;
+    if (containsToken(modelId, {"game_of_life", "conway"})) {
+        return InitialConditionType::Conway;
+    }
+    if (containsToken(modelId, {"gray_scott", "reaction_diffusion"})) {
+        return InitialConditionType::GrayScott;
+    }
+    if (containsToken(modelId, {"shallow_water", "navier_stokes", "fluid"})) {
+        return InitialConditionType::Waves;
+    }
+    if (containsToken(modelId, {"forest_fire"})) {
+        return InitialConditionType::SparseRandom;
+    }
+    if (containsToken(modelId, {"predator_prey"})) {
+        return InitialConditionType::Clustering;
+    }
+    if (containsToken(modelId, {"urban_microclimate", "environmental", "coastal"})) {
+        return InitialConditionType::Terrain;
+    }
+    return advisorMode;
+}
+
+[[nodiscard]] DisplayType recommendedPreviewDisplayTypeForMode(const InitialConditionType mode) {
+    switch (mode) {
+        case InitialConditionType::Waves:
+            return DisplayType::WaterDepth;
+        case InitialConditionType::GrayScott:
+            return DisplayType::MoistureMap;
+        case InitialConditionType::Conway:
+            return DisplayType::ScalarField;
+        case InitialConditionType::Terrain:
+            return DisplayType::SurfaceCategory;
+        default:
+            return DisplayType::ScalarField;
+    }
+}
+
+[[nodiscard]] int recommendedPreviewSourceForMode(const InitialConditionType mode) {
+    switch (mode) {
+        case InitialConditionType::Terrain: return 2; // terrain proxy
+        case InitialConditionType::GrayScott: return 3; // water proxy
+        case InitialConditionType::Waves: return 1; // primary signal
+        case InitialConditionType::Conway: return 1; // primary signal
+        default: return 0; // auto
+    }
+}
+
+[[nodiscard]] int findPreferredVariableIndex(
+    const std::vector<std::string>& variables,
+    const std::initializer_list<const char*> tokens,
+    const int fallbackIndex = 0) {
+    for (int i = 0; i < static_cast<int>(variables.size()); ++i) {
+        if (containsToken(variables[static_cast<std::size_t>(i)], tokens)) {
+            return i;
+        }
+    }
+    return std::clamp(fallbackIndex, 0, std::max(0, static_cast<int>(variables.size()) - 1));
+}
+
+void applyAutoVariableBindingsForMode(
+    PanelState& panel,
+    const std::vector<std::string>& cellVariables,
+    const InitialConditionType modeType) {
+    if (cellVariables.empty()) {
+        return;
+    }
+
+    if (modeType == InitialConditionType::Conway) {
+        const int idx = findPreferredVariableIndex(cellVariables, {"state", "living", "fire_state", "vegetation"});
+        std::snprintf(panel.conwayTargetVariable, sizeof(panel.conwayTargetVariable), "%s", cellVariables[static_cast<std::size_t>(idx)].c_str());
+    } else if (modeType == InitialConditionType::GrayScott) {
+        const int aIdx = findPreferredVariableIndex(cellVariables, {"u_concentration", "resource", "nutrient", "prey"});
+        int bIdx = findPreferredVariableIndex(cellVariables, {"v_concentration", "vegetation", "biomass", "predator"}, std::min(1, static_cast<int>(cellVariables.size()) - 1));
+        if (bIdx == aIdx && cellVariables.size() > 1) {
+            bIdx = (aIdx + 1) % static_cast<int>(cellVariables.size());
+        }
+        std::snprintf(panel.grayScottTargetVariableA, sizeof(panel.grayScottTargetVariableA), "%s", cellVariables[static_cast<std::size_t>(aIdx)].c_str());
+        std::snprintf(panel.grayScottTargetVariableB, sizeof(panel.grayScottTargetVariableB), "%s", cellVariables[static_cast<std::size_t>(bIdx)].c_str());
+    } else if (modeType == InitialConditionType::Waves) {
+        const int idx = findPreferredVariableIndex(cellVariables, {"water", "height", "surface", "velocity", "wave"});
+        std::snprintf(panel.wavesTargetVariable, sizeof(panel.wavesTargetVariable), "%s", cellVariables[static_cast<std::size_t>(idx)].c_str());
+    }
+}
+
+void rebuildVariableInitializationSettings(
+    session_manager::SessionUiState& sessionUi,
+    const initialization::ModelVariableCatalog& catalog) {
+    sessionUi.variableInitializationSettings.clear();
+    const auto cellVars = catalog.cellStateVariableIds();
+    sessionUi.variableInitializationSettings.reserve(cellVars.size());
+    for (const auto& variableId : cellVars) {
+        session_manager::VariableInitializationSetting setting;
+        setting.variableId = variableId;
+        setting.enabled = false;
+        setting.baseValue = 0.0f;
+        setting.restrictionMode = 0;
+        setting.clampMin = 0.0f;
+        setting.clampMax = 1.0f;
+        for (const auto& descriptor : catalog.variables) {
+            if (descriptor.id == variableId) {
+                if (descriptor.hasDomainMin) {
+                    setting.clampMin = descriptor.domainMin;
+                }
+                if (descriptor.hasDomainMax) {
+                    setting.clampMax = descriptor.domainMax;
+                }
+                if (descriptor.hasDomainMin || descriptor.hasDomainMax) {
+                    setting.restrictionMode = 1;
+                }
+                break;
+            }
+        }
+        sessionUi.variableInitializationSettings.push_back(std::move(setting));
+    }
 }
 
 void applyGenerationDefaultsForMode(
@@ -420,18 +616,28 @@ public:
                 std::string catalogMessage;
                 if (initialization::loadModelVariableCatalog(model.path, sessionUi_.selectedModelCatalog, catalogMessage)) {
                     sessionUi_.selectedModelCellStateVariables = sessionUi_.selectedModelCatalog.cellStateVariableIds();
-                    
-                    // Get generation recommendation from advisor
                     const auto modeRec = GenerationAdvisor::recommendGenerationMode(sessionUi_.selectedModelCatalog, {});
-                    sessionUi_.generationModeIndex = static_cast<int>(modeRec.recommendedType);
-                    
-                    // Auto-apply generation defaults for recommended mode
-                    applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, modeRec.recommendedType, true);
-                    
-                    // Log the recommendation for user visibility
-                    std::string recLog = "Auto-recommended: " + 
-                        std::string(generationModeLabel(modeRec.recommendedType)) + 
-                        " (" + std::to_string(static_cast<int>(modeRec.confidence * 100.0f)) + "% confidence)";
+                    const InitialConditionType refinedMode = refineRecommendedModeForKnownModels(
+                        sessionUi_.selectedModelCatalog,
+                        modeRec.recommendedType);
+                    sessionUi_.generationModeIndex = static_cast<int>(refinedMode);
+
+                    applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, refinedMode, true);
+                    applyAutoVariableBindingsForMode(panel_, sessionUi_.selectedModelCellStateVariables, refinedMode);
+
+                    viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(refinedMode);
+                    sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(refinedMode);
+                    sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+                        sessionUi_.selectedModelCellStateVariables,
+                        {"water", "state", "concentration", "temperature", "vegetation"},
+                        0);
+
+                    rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
+
+                    std::string recLog = "Auto-recommended: " +
+                        std::string(generationModeLabel(refinedMode)) +
+                        " (" + std::to_string(static_cast<int>(modeRec.confidence * 100.0f)) + "% confidence, reason=" +
+                        humanizeToken(modeRec.rationale) + ")";
                     appendLog(recLog);
                 } else {
                     appendLog(catalogMessage);
@@ -441,8 +647,10 @@ public:
             sessionUi_.generationBindingPlan = initialization::InitializationBindingPlan{};
             sessionUi_.allowUnresolvedGenerationBindings = false;
             sessionUi_.generationShowOnlyViableModes = false;
-            sessionUi_.generationPreviewSourceIndex = 0;
-                        sessionUi_.generationPreviewChannelIndex = 0;
+            if (sessionUi_.selectedModelCellStateVariables.empty()) {
+                sessionUi_.generationPreviewSourceIndex = 0;
+                sessionUi_.generationPreviewChannelIndex = 0;
+            }
             std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "model_selected=%s", model.name.c_str());
             appState_ = AppState::SessionManager;
         };

@@ -235,6 +235,19 @@
             const std::string suggestedName = runtime_.suggestWorldNameFromHint(baseHint);
             std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
             syncPanelFromConfig();
+            const auto recommended = GenerationAdvisor::recommendGenerationMode(sessionUi_.selectedModelCatalog, {});
+            const InitialConditionType refined = fallbackRuntimeSupportedMode(
+                refineRecommendedModeForKnownModels(sessionUi_.selectedModelCatalog, recommended.recommendedType));
+            applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, refined, true);
+            applyAutoVariableBindingsForMode(panel_, sessionUi_.selectedModelCellStateVariables, refined);
+            viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(refined);
+            sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(refined);
+            sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+                sessionUi_.selectedModelCellStateVariables,
+                {"water", "state", "concentration", "temperature", "vegetation"},
+                0);
+            sessionUi_.generationModeIndex = static_cast<int>(refined);
+            rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
             panel_.useManualSeed = false;
             panel_.seed = generateRandomSeed();
             appState_ = AppState::NewWorldWizard;
@@ -543,6 +556,120 @@
             "Expert override unresolved bindings",
             &sessionUi_.allowUnresolvedGenerationBindings,
             "Allows world creation even when bindings are unresolved. Use only for custom advanced workflows.");
+
+        struct VerificationReport {
+            std::vector<std::string> blocking;
+            std::vector<std::string> warnings;
+            int enabledVariableInitializers = 0;
+        };
+
+        const auto collectVerificationReport = [&]() {
+            VerificationReport report;
+            const InitialConditionType selectedType = static_cast<InitialConditionType>(
+                std::clamp(panel_.initialConditionTypeIndex, 0, static_cast<int>(InitialConditionType::DiffusionLimit)));
+
+            if (sessionUi_.selectedModelCatalog.variables.empty()) {
+                report.blocking.push_back("Model variable catalog is unavailable.");
+            }
+            if (!isRuntimeSupportedGenerationMode(selectedType)) {
+                report.blocking.push_back("Selected generation mode is not yet supported by runtime initialization.");
+            }
+            if (!sessionUi_.allowUnresolvedGenerationBindings && sessionUi_.generationBindingPlan.hasBlockingIssues()) {
+                report.blocking.push_back("Initialization binding plan has unresolved blocking issues.");
+            }
+
+            if (selectedType == InitialConditionType::Conway && std::strlen(panel_.conwayTargetVariable) == 0u) {
+                report.blocking.push_back("Conway target variable is required.");
+            }
+            if (selectedType == InitialConditionType::GrayScott &&
+                (std::strlen(panel_.grayScottTargetVariableA) == 0u || std::strlen(panel_.grayScottTargetVariableB) == 0u)) {
+                report.blocking.push_back("Gray-Scott requires both target variables.");
+            }
+            if (selectedType == InitialConditionType::GrayScott &&
+                std::string(panel_.grayScottTargetVariableA) == std::string(panel_.grayScottTargetVariableB) &&
+                std::strlen(panel_.grayScottTargetVariableA) > 0u) {
+                report.blocking.push_back("Gray-Scott target A/B must be distinct.");
+            }
+            if (selectedType == InitialConditionType::Waves && std::strlen(panel_.wavesTargetVariable) == 0u) {
+                report.blocking.push_back("Waves target variable is required.");
+            }
+
+            std::vector<std::string> seenVariableIds;
+            seenVariableIds.reserve(sessionUi_.variableInitializationSettings.size());
+            for (const auto& setting : sessionUi_.variableInitializationSettings) {
+                if (!setting.enabled) {
+                    continue;
+                }
+                ++report.enabledVariableInitializers;
+                if (setting.variableId.empty()) {
+                    report.blocking.push_back("An enabled x_i initializer has an empty variable id.");
+                }
+                if (!std::isfinite(setting.baseValue)) {
+                    report.blocking.push_back("Enabled x_i initializer has a non-finite base value.");
+                }
+                if (setting.restrictionMode == 1 && setting.clampMin > setting.clampMax) {
+                    report.warnings.push_back("Clamp bounds are inverted for one or more x_i initializers (auto-fix available).");
+                }
+                if (std::find(seenVariableIds.begin(), seenVariableIds.end(), setting.variableId) != seenVariableIds.end()) {
+                    report.warnings.push_back("Duplicate enabled x_i variable ids detected.");
+                } else {
+                    seenVariableIds.push_back(setting.variableId);
+                }
+            }
+
+            if (report.enabledVariableInitializers == 0) {
+                report.warnings.push_back("No per-variable x_i initializers are enabled.");
+            }
+
+            if (sessionUi_.generationPreviewSourceIndex == 6 && sessionUi_.selectedModelCellStateVariables.empty()) {
+                report.warnings.push_back("Preview source is set to x_i channel, but no model variables are available.");
+            }
+
+            return report;
+        };
+
+        VerificationReport verification = collectVerificationReport();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        SectionHeader("Preflight verification", "Full readiness checks before world creation.");
+        ImGui::TextDisabled(
+            "Checks: %d blocking, %d warning, %d enabled x_i initializers",
+            static_cast<int>(verification.blocking.size()),
+            static_cast<int>(verification.warnings.size()),
+            verification.enabledVariableInitializers);
+
+        if (verification.blocking.empty()) {
+            ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Blocking checks: PASS");
+        } else {
+            ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Blocking checks: FAIL");
+            for (const auto& message : verification.blocking) {
+                ImGui::BulletText("%s", message.c_str());
+            }
+        }
+
+        if (verification.warnings.empty()) {
+            ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Warnings: none");
+        } else {
+            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Warnings:");
+            for (const auto& message : verification.warnings) {
+                ImGui::BulletText("%s", message.c_str());
+            }
+        }
+
+        if (SecondaryButton("Auto-fix minor issues", ImVec2(190.0f, 22.0f))) {
+            for (auto& setting : sessionUi_.variableInitializationSettings) {
+                if (setting.restrictionMode == 1 && setting.clampMin > setting.clampMax) {
+                    std::swap(setting.clampMin, setting.clampMax);
+                }
+                if (!std::isfinite(setting.baseValue)) {
+                    setting.baseValue = 0.0f;
+                }
+            }
+            verification = collectVerificationReport();
+            appendLog("wizard_preflight_autofix_applied");
+        }
         ImGui::EndChild();
 
         if (!narrowLayout) {
@@ -567,7 +694,8 @@
             "Terrain proxy",
             "Water proxy",
             "Moisture proxy",
-            "Wind magnitude proxy"};
+            "Wind magnitude proxy",
+            "Model variable channel (x_i)"};
 
         int previewDisplayTypeIndex = static_cast<int>(viz_.generationPreviewDisplayType);
         ImGui::SetNextItemWidth(-1.0f);
@@ -579,13 +707,34 @@
             viz_.generationPreviewDisplayType = static_cast<DisplayType>(std::clamp(previewDisplayTypeIndex, 0, 5));
         }
 
-        sessionUi_.generationPreviewSourceIndex = std::clamp(sessionUi_.generationPreviewSourceIndex, 0, 5);
+        sessionUi_.generationPreviewSourceIndex = std::clamp(sessionUi_.generationPreviewSourceIndex, 0, 6);
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::Combo(
             "Preview source",
             &sessionUi_.generationPreviewSourceIndex,
             kPreviewSources,
             static_cast<int>(std::size(kPreviewSources)));
+
+        if (!sessionUi_.selectedModelCellStateVariables.empty()) {
+            sessionUi_.generationPreviewChannelIndex = std::clamp(
+                sessionUi_.generationPreviewChannelIndex,
+                0,
+                static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()) - 1);
+            const std::string& channelName = sessionUi_.selectedModelCellStateVariables[
+                static_cast<std::size_t>(sessionUi_.generationPreviewChannelIndex)];
+            if (ImGui::BeginCombo("Preview variable", channelName.c_str())) {
+                for (int i = 0; i < static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()); ++i) {
+                    const bool selected = (i == sessionUi_.generationPreviewChannelIndex);
+                    if (ImGui::Selectable(sessionUi_.selectedModelCellStateVariables[static_cast<std::size_t>(i)].c_str(), selected)) {
+                        sessionUi_.generationPreviewChannelIndex = i;
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
 
         ImGui::Spacing();
 
@@ -620,6 +769,7 @@
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.seed));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.initialConditionTypeIndex));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(sessionUi_.generationPreviewSourceIndex));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(std::max(0, sessionUi_.generationPreviewChannelIndex)));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewBaseW));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewBaseH));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewStride));
@@ -872,6 +1022,25 @@
                     }
                     break;
                 }
+                case 6: {
+                    if (!sessionUi_.selectedModelCellStateVariables.empty()) {
+                        const int channelIndex = std::clamp(
+                            sessionUi_.generationPreviewChannelIndex,
+                            0,
+                            static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()) - 1);
+                        const std::string& channel = sessionUi_.selectedModelCellStateVariables[static_cast<std::size_t>(channelIndex)];
+                        const float blend = 0.12f + 0.08f * std::clamp(static_cast<float>(channel.size()) / 24.0f, 0.0f, 1.0f);
+                        displayPrimary.resize(pixelCount, 0.0f);
+                        for (int y = 0; y < previewH; ++y) {
+                            for (int x = 0; x < previewW; ++x) {
+                                const std::size_t idx = indexOf(x, y);
+                                const float channelNoise = noise2D(0xEE11ull + static_cast<std::uint64_t>(channelIndex), x, y);
+                                displayPrimary[idx] = (1.0f - blend) * previewPrimary[idx] + blend * channelNoise;
+                            }
+                        }
+                    }
+                    break;
+                }
                 default: {
                     if (modeType == InitialConditionType::Terrain) displayPrimary = previewTerrain;
                     else if (modeType == InitialConditionType::GrayScott) displayPrimary = previewWater;
@@ -931,8 +1100,16 @@
 
         const std::string previewLabel = std::string("Preview mode: ") + displayTypeLabel(viz_.generationPreviewDisplayType);
         dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2), IM_COL32(235, 240, 255, 255), previewLabel.c_str());
-        const std::string sourceLabel = std::string("Source: ") + kPreviewSources[static_cast<std::size_t>(std::clamp(sessionUi_.generationPreviewSourceIndex, 0, 5))];
+        const std::string sourceLabel = std::string("Source: ") + kPreviewSources[static_cast<std::size_t>(std::clamp(sessionUi_.generationPreviewSourceIndex, 0, 6))];
         dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 18.0f), IM_COL32(188, 200, 226, 255), sourceLabel.c_str());
+        if (sessionUi_.generationPreviewSourceIndex == 6 && !sessionUi_.selectedModelCellStateVariables.empty()) {
+            const int channelIndex = std::clamp(
+                sessionUi_.generationPreviewChannelIndex,
+                0,
+                static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()) - 1);
+            const std::string channelLabel = "x_i: " + sessionUi_.selectedModelCellStateVariables[static_cast<std::size_t>(channelIndex)];
+            dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 54.0f), IM_COL32(188, 200, 226, 255), channelLabel.c_str());
+        }
         const std::string autoLevel = "Water level: " + std::to_string(wizardPreviewWaterLevel_).substr(0, 5) + (viz_.displayManager.autoWaterLevel ? " (auto)" : " (manual)");
         dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 36.0f), IM_COL32(188, 200, 226, 255), autoLevel.c_str());
         if (wizardPreviewStride_ > 1) {
@@ -959,10 +1136,20 @@
                 panel_.seed = generateRandomSeed();
             }
 
+            VerificationReport verification = collectVerificationReport();
+
             bool preflightBlocked = false;
             std::string preflightReason;
             const InitialConditionType selectedType = static_cast<InitialConditionType>(
                 std::clamp(panel_.initialConditionTypeIndex, 0, static_cast<int>(InitialConditionType::DiffusionLimit)));
+
+            if (!verification.blocking.empty()) {
+                preflightBlocked = true;
+                preflightReason = "world_create_blocked reason=verification_failed";
+                for (const auto& msg : verification.blocking) {
+                    appendLog("verification_blocking: " + msg);
+                }
+            }
 
             if (sessionUi_.selectedModelCatalog.variables.empty()) {
                 preflightBlocked = true;
@@ -981,6 +1168,10 @@
             if (!preflightBlocked && selectedType == InitialConditionType::Waves && std::strlen(panel_.wavesTargetVariable) == 0u) {
                 preflightBlocked = true;
                 preflightReason = "world_create_blocked reason=missing_waves_target_variable";
+            }
+            if (!preflightBlocked && !isRuntimeSupportedGenerationMode(selectedType)) {
+                preflightBlocked = true;
+                preflightReason = "world_create_blocked reason=unsupported_generation_mode";
             }
 
             if (preflightBlocked) {
@@ -1032,7 +1223,26 @@
                     resetDisplayConfigToDefaults();
                     loadDisplayPrefs();
                     enterSimulationPaused();
+
+                    for (const auto& setting : sessionUi_.variableInitializationSettings) {
+                        if (!setting.enabled || setting.variableId.empty()) {
+                            continue;
+                        }
+                        const float restrictedValue = applyVariableRestriction(setting, setting.baseValue);
+                        std::string patchMessage;
+                        runtime_.applyManualPatch(
+                            setting.variableId,
+                            std::nullopt,
+                            restrictedValue,
+                            "wizard_variable_init",
+                            patchMessage);
+                        appendLog(patchMessage);
+                    }
+
                     sessionUi_.needsRefresh = true;
+                    for (const auto& warning : verification.warnings) {
+                        appendLog("verification_warning: " + warning);
+                    }
                 } else {
                     appendLog(message);
                     std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
@@ -1050,6 +1260,19 @@
         ImGui::SameLine();
         if (SecondaryButton("Reset parameters", ImVec2(btnW, 44.0f))) {
             syncPanelFromConfig();
+            const auto recommended = GenerationAdvisor::recommendGenerationMode(sessionUi_.selectedModelCatalog, {});
+            const InitialConditionType refined = fallbackRuntimeSupportedMode(
+                refineRecommendedModeForKnownModels(sessionUi_.selectedModelCatalog, recommended.recommendedType));
+            applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, refined, true);
+            applyAutoVariableBindingsForMode(panel_, sessionUi_.selectedModelCellStateVariables, refined);
+            viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(refined);
+            sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(refined);
+            sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+                sessionUi_.selectedModelCellStateVariables,
+                {"water", "state", "concentration", "temperature", "vegetation"},
+                0);
+            sessionUi_.generationModeIndex = static_cast<int>(refined);
+            rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
             panel_.useManualSeed = false;
             panel_.seed = generateRandomSeed();
             const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'

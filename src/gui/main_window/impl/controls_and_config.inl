@@ -2012,6 +2012,9 @@ void drawWorldGenerationSection() {
     const auto recommendation = GenerationAdvisor::recommendGenerationMode(
         sessionUi_.selectedModelCatalog,
         generationParameterControls);
+    const InitialConditionType refinedRecommendation = refineRecommendedModeForKnownModels(
+        sessionUi_.selectedModelCatalog,
+        recommendation.recommendedType);
     const auto viableModes = GenerationAdvisor::viableGenerationModes(sessionUi_.selectedModelCatalog);
 
     const auto isModeViable = [&](const InitialConditionType modeType) {
@@ -2022,13 +2025,23 @@ void drawWorldGenerationSection() {
     ImGui::TextColored(
         ImVec4(0.62f, 0.82f, 0.95f, 1.0f),
         "Recommended: %s (%.0f%%)",
-        generationModeLabel(recommendation.recommendedType),
+        generationModeLabel(refinedRecommendation),
         confidencePct);
     ImGui::TextDisabled("%s", humanizeToken(recommendation.rationale).c_str());
 
     const float recommendationButtonW = (ImGui::GetContentRegionAvail().x - kS2) * 0.5f;
     if (SecondaryButton("Apply recommended defaults", ImVec2(recommendationButtonW, 24.0f))) {
-        applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, recommendation.recommendedType, true);
+        const InitialConditionType runtimeMode = fallbackRuntimeSupportedMode(refinedRecommendation);
+        applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, runtimeMode, true);
+        applyAutoVariableBindingsForMode(panel_, modelCellVars, runtimeMode);
+        viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(runtimeMode);
+        sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(runtimeMode);
+        sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+            modelCellVars,
+            {"water", "state", "concentration", "temperature", "vegetation"},
+            0);
+        sessionUi_.generationModeIndex = static_cast<int>(runtimeMode);
+        rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
     }
     DelayedTooltip("Sets generation mode and parameters using model-aware defaults from metadata analysis.");
     ImGui::SameLine();
@@ -2037,20 +2050,28 @@ void drawWorldGenerationSection() {
         &sessionUi_.generationShowOnlyViableModes,
         "Filters mode list to options that best match the selected model metadata and variable catalog.");
 
-    static constexpr std::array<InitialConditionType, 5> kAllGenerationModes = {
+    static constexpr std::array<InitialConditionType, 13> kAllGenerationModes = {
         InitialConditionType::Terrain,
         InitialConditionType::Conway,
         InitialConditionType::GrayScott,
         InitialConditionType::Waves,
-        InitialConditionType::Blank};
+        InitialConditionType::Blank,
+        InitialConditionType::Voronoi,
+        InitialConditionType::Clustering,
+        InitialConditionType::SparseRandom,
+        InitialConditionType::GradientField,
+        InitialConditionType::Checkerboard,
+        InitialConditionType::RadialPattern,
+        InitialConditionType::MultiScale,
+        InitialConditionType::DiffusionLimit};
 
     auto ensureValidModeSelection = [&]() {
         const InitialConditionType selected = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
         if (!sessionUi_.generationShowOnlyViableModes || isModeViable(selected)) {
             return;
         }
-        if (isModeViable(recommendation.recommendedType)) {
-            panel_.initialConditionTypeIndex = static_cast<int>(recommendation.recommendedType);
+        if (isModeViable(refinedRecommendation)) {
+            panel_.initialConditionTypeIndex = static_cast<int>(refinedRecommendation);
             return;
         }
         for (const auto mode : kAllGenerationModes) {
@@ -2069,26 +2090,30 @@ void drawWorldGenerationSection() {
     if (ImGui::BeginCombo("Generation Mode", selectedLabel)) {
         for (const auto modeType : kAllGenerationModes) {
             const bool viable = isModeViable(modeType);
+            const bool runtimeSupported = isRuntimeSupportedGenerationMode(modeType);
             if (sessionUi_.generationShowOnlyViableModes && !viable) {
                 continue;
             }
 
             std::string entryLabel = generationModeLabel(modeType);
-            if (modeType == recommendation.recommendedType) {
+            if (modeType == refinedRecommendation) {
                 entryLabel += "  [recommended]";
             }
             if (!viable) {
                 entryLabel += "  [low match]";
             }
+            if (!runtimeSupported) {
+                entryLabel += "  [coming soon]";
+            }
 
             const bool selected = (panel_.initialConditionTypeIndex == static_cast<int>(modeType));
-            if (!viable) {
+            if (!viable || !runtimeSupported) {
                 ImGui::BeginDisabled();
             }
             if (ImGui::Selectable(entryLabel.c_str(), selected)) {
                 panel_.initialConditionTypeIndex = static_cast<int>(modeType);
             }
-            if (!viable) {
+            if (!viable || !runtimeSupported) {
                 ImGui::EndDisabled();
             }
             if (selected) {
@@ -2234,6 +2259,131 @@ void drawWorldGenerationSection() {
             "Oscillation count inside each drop radius. Higher = more ripple rings.");
     } else if (panel_.initialConditionTypeIndex == 4) { // Blank
         ImGui::TextDisabled("Blank mode initializes all runtime fields to zero.");
+    } else {
+        ImGui::TextDisabled("This generation mode is listed from metadata analysis, but runtime initialization support is not enabled yet.");
+        ImGui::TextDisabled("Use Apply recommended defaults to switch to a practical supported mode automatically.");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextUnformatted("Per-variable initialization (x_i defaults)");
+    if (sessionUi_.variableInitializationSettings.empty()) {
+        ImGui::TextDisabled("No model cell-state variables detected.");
+    } else {
+        static constexpr const char* kRestrictionModes[] = {
+            "None", "Clamp[min,max]", "Non-negative", "Clamp[-1,1]", "tanh(x)", "sigmoid(x)"};
+
+        const float actionW = (ImGui::GetContentRegionAvail().x - (3.0f * kS2)) * 0.25f;
+        if (SecondaryButton("Enable all", ImVec2(actionW, 22.0f))) {
+            for (auto& setting : sessionUi_.variableInitializationSettings) {
+                setting.enabled = true;
+            }
+        }
+        ImGui::SameLine();
+        if (SecondaryButton("Disable all", ImVec2(actionW, 22.0f))) {
+            for (auto& setting : sessionUi_.variableInitializationSettings) {
+                setting.enabled = false;
+            }
+        }
+        ImGui::SameLine();
+        if (SecondaryButton("Enable suggested", ImVec2(actionW, 22.0f))) {
+            for (auto& setting : sessionUi_.variableInitializationSettings) {
+                setting.enabled = false;
+            }
+
+            const InitialConditionType modeType = static_cast<InitialConditionType>(
+                std::clamp(panel_.initialConditionTypeIndex, 0, static_cast<int>(InitialConditionType::DiffusionLimit)));
+            std::vector<int> candidates;
+            for (int i = 0; i < static_cast<int>(sessionUi_.variableInitializationSettings.size()); ++i) {
+                const auto& variableId = sessionUi_.variableInitializationSettings[static_cast<std::size_t>(i)].variableId;
+                bool match = false;
+                if (modeType == InitialConditionType::Conway) {
+                    match = containsToken(variableId, {"state", "alive", "binary", "fire", "vegetation"});
+                } else if (modeType == InitialConditionType::GrayScott) {
+                    match = containsToken(variableId, {"concentration", "resource", "nutrient", "prey", "predator", "u", "v"});
+                } else if (modeType == InitialConditionType::Waves || modeType == InitialConditionType::Terrain) {
+                    match = containsToken(variableId, {"water", "height", "surface", "temperature", "humidity", "moisture"});
+                } else {
+                    match = containsToken(variableId, {"state", "value", "signal", "field"});
+                }
+                if (match) {
+                    candidates.push_back(i);
+                }
+            }
+
+            if (candidates.empty() && !sessionUi_.variableInitializationSettings.empty()) {
+                candidates.push_back(0);
+            }
+
+            const int requestedCount = (modeType == InitialConditionType::GrayScott) ? 2 : 1;
+            for (int i = 0; i < std::min(requestedCount, static_cast<int>(candidates.size())); ++i) {
+                sessionUi_.variableInitializationSettings[static_cast<std::size_t>(candidates[static_cast<std::size_t>(i)])].enabled = true;
+            }
+        }
+        ImGui::SameLine();
+        if (SecondaryButton("Enabled -> midpoint", ImVec2(actionW, 22.0f))) {
+            for (auto& setting : sessionUi_.variableInitializationSettings) {
+                if (!setting.enabled) {
+                    continue;
+                }
+                const float lo = std::min(setting.clampMin, setting.clampMax);
+                const float hi = std::max(setting.clampMin, setting.clampMax);
+                setting.baseValue = 0.5f * (lo + hi);
+            }
+        }
+
+        if (SecondaryButton("Enabled -> zero", ImVec2(120.0f, 22.0f))) {
+            for (auto& setting : sessionUi_.variableInitializationSettings) {
+                if (setting.enabled) {
+                    setting.baseValue = 0.0f;
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (SecondaryButton("Enabled -> one", ImVec2(120.0f, 22.0f))) {
+            for (auto& setting : sessionUi_.variableInitializationSettings) {
+                if (setting.enabled) {
+                    setting.baseValue = 1.0f;
+                }
+            }
+        }
+
+        ImGui::SetNextItemWidth(-1.0f);
+        const int previewMax = static_cast<int>(sessionUi_.variableInitializationSettings.size()) - 1;
+        if (previewMax >= 0) {
+            ImGui::SliderInt("Preview focus variable", &sessionUi_.generationPreviewChannelIndex, 0, previewMax);
+        }
+
+        ImGui::BeginChild("VariableInitList", ImVec2(-1.0f, 190.0f), true);
+        for (int i = 0; i < static_cast<int>(sessionUi_.variableInitializationSettings.size()); ++i) {
+            auto& setting = sessionUi_.variableInitializationSettings[static_cast<std::size_t>(i)];
+            ImGui::PushID(i);
+            ImGui::Checkbox("##enabled", &setting.enabled);
+            ImGui::SameLine();
+            ImGui::TextUnformatted(setting.variableId.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Focus preview")) {
+                sessionUi_.generationPreviewChannelIndex = i;
+            }
+
+            if (setting.enabled) {
+                ImGui::Indent();
+                NumericSliderPair("Base value", &setting.baseValue, -10.0f, 10.0f, "%.3f", 95.0f);
+                ImGui::SetNextItemWidth(190.0f);
+                ImGui::Combo("Restriction", &setting.restrictionMode, kRestrictionModes, static_cast<int>(std::size(kRestrictionModes)));
+                if (setting.restrictionMode == 1) {
+                    NumericSliderPair("Clamp min", &setting.clampMin, -10.0f, 10.0f, "%.3f", 95.0f);
+                    NumericSliderPair("Clamp max", &setting.clampMax, -10.0f, 10.0f, "%.3f", 95.0f);
+                    if (setting.clampMin > setting.clampMax) {
+                        std::swap(setting.clampMin, setting.clampMax);
+                    }
+                }
+                ImGui::Unindent();
+            }
+            ImGui::Separator();
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
     }
 }
 
@@ -2333,7 +2483,8 @@ void applyConfigFromPanel() {
     auto tp = app::parseTemporalPolicy(kTemporalPolicyTokens[panel_.temporalIndex]);
     if (tp.has_value()) cfg.temporalPolicy = *tp;
 
-    cfg.initialConditions.type = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+    const InitialConditionType requestedMode = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+    cfg.initialConditions.type = fallbackRuntimeSupportedMode(requestedMode);
 
     cfg.initialConditions.terrain.terrainBaseFrequency   = panel_.terrainBaseFrequency;
     cfg.initialConditions.terrain.terrainDetailFrequency = panel_.terrainDetailFrequency;

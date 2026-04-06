@@ -9,6 +9,15 @@
 
 namespace ws::gui::session_manager {
 
+struct VariableInitializationSetting {
+    std::string variableId;
+    bool enabled = false;
+    float baseValue = 0.0f;
+    int restrictionMode = 0; // 0=None,1=Clamp01,2=NonNegative,3=Clamp[-1,1],4=Tanh,5=Sigmoid
+    float clampMin = 0.0f;
+    float clampMax = 1.0f;
+};
+
 struct SessionUiState {
     std::vector<StoredWorldInfo> worlds;
     int selectedWorldIndex = -1;
@@ -28,6 +37,7 @@ struct SessionUiState {
     int generationPreviewSourceIndex = 0;
     int generationPreviewChannelIndex = 0;
     int generationModeIndex = -1;
+    std::vector<VariableInitializationSetting> variableInitializationSettings;
     char worldSearch[128] = "";
     bool filterCheckpointOnly = false;
     bool filterProfileOnly = false;
