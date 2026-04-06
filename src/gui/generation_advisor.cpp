@@ -403,14 +403,14 @@ GenerationParameterDefaults GenerationAdvisor::recommendDefaultParameters(
     // ===== CONWAY =====
     if (modeType == InitialConditionType::Conway) {
         if (complexity > 1.5f) {
-            defaults.conwayAliveProbability = 0.25f;
+            defaults.conwayAliveProbability = 0.30f;
             defaults.conwaySmoothingPasses = 0;
         } else if (complexity > 0.8f) {
-            defaults.conwayAliveProbability = 0.40f;
-            defaults.conwaySmoothingPasses = 1;
+            defaults.conwayAliveProbability = 0.35f;
+            defaults.conwaySmoothingPasses = 0;
         } else {
-            defaults.conwayAliveProbability = 0.55f;
-            defaults.conwaySmoothingPasses = 3;
+            defaults.conwayAliveProbability = 0.40f;
+            defaults.conwaySmoothingPasses = 0;
         }
     }
 

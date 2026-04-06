@@ -152,6 +152,8 @@ struct VisualizationState {
     bool  showSparseOverlay = true;
     bool  autoRun           = true;
     int   displayRefreshEveryNSteps = 1;
+    int   displayTargetRefreshHz = 120;
+    bool  displayRefreshOnStateChange = true;
     bool  unlimitedSimSpeed = true;
     bool  adaptiveSampling   = true;
     int   manualSamplingStride = 1;
@@ -437,9 +439,6 @@ void rebuildVariableInitializationSettings(
                 }
                 if (descriptor.hasDomainMax) {
                     setting.clampMax = descriptor.domainMax;
-                }
-                if ((descriptor.hasDomainMin || descriptor.hasDomainMax) && setting.restrictionMode == 0) {
-                    setting.restrictionMode = 1;
                 }
                 break;
             }
@@ -846,6 +845,8 @@ private:
     std::atomic<bool> simulationAutoRunEnabled_{false};
     std::atomic<bool> simulationWorkerBusy_{false};
     std::atomic<int>  simulationDisplayRefreshEveryNSteps_{1};
+    std::atomic<int>  simulationTargetRefreshHz_{120};
+    std::atomic<bool> simulationRefreshOnStateChange_{true};
     std::atomic<bool> simulationUnlimitedSpeed_{true};
     std::atomic<std::uint64_t> simulationLastDisplayRequestMs_{0};
     std::atomic<float> simulationLastBatchDurationMs_{0.0f};
@@ -886,6 +887,8 @@ private:
     std::atomic<float> snapshotDurationMsAtomic_{0.0f};
     std::atomic<int>   snapshotFrontIndex_{0};
     std::atomic<int>   snapshotGeneration_{0};
+    std::atomic<std::uint64_t> snapshotConsumedCount_{0};
+    std::atomic<std::uint64_t> snapshotConsumedWindowStartMs_{0};
     int consumedSnapshotGeneration_ = 0;
     std::array<RuntimeCheckpoint,2> snapshotBuffers_{};
     std::array<bool,2> snapshotBufferValid_{false,false};

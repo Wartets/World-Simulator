@@ -1256,10 +1256,24 @@
 
                     const auto initStart = std::chrono::steady_clock::now();
                     int appliedVariableCount = 0;
+                    const InitialConditionType modeType = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
+                    const std::string conwayTarget = panel_.conwayTargetVariable;
+                    const std::string grayTargetA = panel_.grayScottTargetVariableA;
+                    const std::string grayTargetB = panel_.grayScottTargetVariableB;
+                    const std::string wavesTarget = panel_.wavesTargetVariable;
                     for (const auto& setting : sessionUi_.variableInitializationSettings) {
                         if (!setting.enabled || setting.variableId.empty()) {
                             continue;
                         }
+
+                        const bool modeOwnsTarget =
+                            (modeType == InitialConditionType::Conway && setting.variableId == conwayTarget) ||
+                            (modeType == InitialConditionType::GrayScott && (setting.variableId == grayTargetA || setting.variableId == grayTargetB)) ||
+                            (modeType == InitialConditionType::Waves && setting.variableId == wavesTarget);
+                        if (modeOwnsTarget) {
+                            continue;
+                        }
+
                         const float restrictedValue = applyVariableRestriction(setting, setting.baseValue);
                         std::string patchMessage;
                         runtime_.applyManualPatch(

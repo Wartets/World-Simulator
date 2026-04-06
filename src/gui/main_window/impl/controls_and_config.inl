@@ -688,15 +688,25 @@ void drawPlaybackSection() {
             checkboxWithHint("Unlimited simulation speed", &viz_.unlimitedSimSpeed,
                 "Run the simulation thread at full speed.\n"
                 "Disable this to insert a small yield between batches and keep the UI more relaxed.");
+            sliderIntWithHint("Target display refresh (Hz)", &viz_.displayTargetRefreshHz, 15, 240,
+                "Upper target refresh rate for viewport updates during simulation.\n"
+                "Higher values reduce visual latency but can increase snapshot workload.");
+            checkboxWithHint("Refresh runtime view on each state change", &viz_.displayRefreshOnStateChange,
+                "When enabled, request a display snapshot after each committed simulation batch.\n"
+                "Best for continuous visual tracking; disable to maximize raw simulation throughput.");
             sliderIntWithHint("Steps between display updates", &viz_.displayRefreshEveryNSteps, 1, 1000,
                 "Refresh the display after every N simulation steps.\n"
                 "1 = update every step. Higher values favor simulation throughput over visual refresh rate.\n"
                 "A live latency cap still keeps the viewport refreshing regularly during fast auto-run.");
             const float estStepsPerSec = estimatedSimulationStepsPerSecond();
             const float estRefreshesPerSec = estimatedDisplayRefreshesPerSecond();
+            const float actualRefreshesPerSec = estimatedActualDisplayRefreshesPerSecond();
             if (estStepsPerSec > 0.0f) {
                 ImGui::TextDisabled("Estimated: ~%.0f sim steps/sec, ~%.1f display updates/sec (<= %.0f ms latency)",
                     estStepsPerSec, estRefreshesPerSec, displayRefreshLatencyCapMs());
+                if (actualRefreshesPerSec > 0.0f) {
+                    ImGui::TextDisabled("Observed runtime-view refresh: %.1f updates/sec", actualRefreshesPerSec);
+                }
             } else {
                 ImGui::TextDisabled("Estimated: waiting for a completed auto-run batch...");
             }
@@ -1511,14 +1521,24 @@ void drawMetricsSection() {
     checkboxWithHint("Unlimited simulation speed##metrics", &viz_.unlimitedSimSpeed,
         "Run the simulation thread unthrottled.\n"
         "Disable to yield between batches and reduce CPU pressure.");
+    sliderIntWithHint("Target display refresh (Hz)##metrics", &viz_.displayTargetRefreshHz, 15, 240,
+        "Upper target refresh rate for viewport updates during simulation.\n"
+        "Higher values reduce visual latency but can increase snapshot workload.");
+    checkboxWithHint("Refresh runtime view on each state change##metrics", &viz_.displayRefreshOnStateChange,
+        "When enabled, request a display snapshot after each committed simulation batch.\n"
+        "Disable only if raw simulation throughput is the priority.");
     sliderIntWithHint("Steps between display updates##metrics", &viz_.displayRefreshEveryNSteps, 1, 1000,
         "Refresh the display after every N simulation steps.\n"
         "A live latency cap keeps the display responsive even when N is large.");
     const float estStepsPerSec = estimatedSimulationStepsPerSecond();
     const float estRefreshesPerSec = estimatedDisplayRefreshesPerSecond();
+    const float actualRefreshesPerSec = estimatedActualDisplayRefreshesPerSecond();
     if (estStepsPerSec > 0.0f) {
         ImGui::TextDisabled("Estimated throughput: %.0f steps/sec, %.1f display updates/sec (<= %.0f ms latency)",
             estStepsPerSec, estRefreshesPerSec, displayRefreshLatencyCapMs());
+        if (actualRefreshesPerSec > 0.0f) {
+            ImGui::TextDisabled("Observed runtime-view refresh: %.1f updates/sec", actualRefreshesPerSec);
+        }
     }
     checkboxWithHint("Adaptive render sampling", &viz_.adaptiveSampling,
         "Automatically skip cells when zoomed out to keep rendering fast.");
@@ -2704,6 +2724,8 @@ void resetDisplayConfigToDefaults() {
     viz_.viewports                   = defaults.viewports;
     viz_.activeViewportEditor        = defaults.activeViewportEditor;
     viz_.displayRefreshEveryNSteps   = defaults.displayRefreshEveryNSteps;
+    viz_.displayTargetRefreshHz      = defaults.displayTargetRefreshHz;
+    viz_.displayRefreshOnStateChange = defaults.displayRefreshOnStateChange;
     viz_.unlimitedSimSpeed           = defaults.unlimitedSimSpeed;
     viz_.displayManager              = defaults.displayManager;
     viz_.generationPreviewDisplayType = defaults.generationPreviewDisplayType;
@@ -2740,6 +2762,8 @@ void saveDisplayPrefs() {
     out << "displayShallowWaterDepth="  << viz_.displayManager.shallowWaterDepth                 << "\n";
     out << "displayHighMoistureThreshold=" << viz_.displayManager.highMoistureThreshold          << "\n";
     out << "displayRefreshEveryNSteps=" << viz_.displayRefreshEveryNSteps                       << "\n";
+    out << "displayTargetRefreshHz="   << viz_.displayTargetRefreshHz                          << "\n";
+    out << "displayRefreshOnStateChange=" << static_cast<int>(viz_.displayRefreshOnStateChange) << "\n";
     out << "unlimitedSimSpeed="         << static_cast<int>(viz_.unlimitedSimSpeed)             << "\n";
     out << "viewportCount="             << viz_.viewports.size()                                 << "\n";
     out << "syncPan="                   << static_cast<int>(viewportManager_.syncPan())         << "\n";
@@ -2802,6 +2826,8 @@ void loadDisplayPrefs() {
             else if (key == "displayShallowWaterDepth") viz_.displayManager.shallowWaterDepth = std::stof(val);
             else if (key == "displayHighMoistureThreshold") viz_.displayManager.highMoistureThreshold = std::stof(val);
             else if (key == "displayRefreshEveryNSteps") viz_.displayRefreshEveryNSteps = std::stoi(val);
+            else if (key == "displayTargetRefreshHz")   viz_.displayTargetRefreshHz = std::stoi(val);
+            else if (key == "displayRefreshOnStateChange") viz_.displayRefreshOnStateChange = (std::stoi(val) != 0);
             else if (key == "unlimitedSimSpeed")       viz_.unlimitedSimSpeed = (std::stoi(val) != 0);
             else if (key == "viewportCount") {
                 const std::size_t requestedCount = clampedViewportCount(static_cast<std::size_t>(std::max(1, std::stoi(val))));
@@ -2886,6 +2912,7 @@ void loadDisplayPrefs() {
     viz_.displayManager.highMoistureThreshold = std::clamp(
         viz_.displayManager.highMoistureThreshold, 0.0f, 1.0f);
     viz_.displayRefreshEveryNSteps = std::clamp(viz_.displayRefreshEveryNSteps, 1, 1000);
+    viz_.displayTargetRefreshHz = std::clamp(viz_.displayTargetRefreshHz, 15, 240);
     ensureViewportStateConsistency();
     requestViewportEditorSelection(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, static_cast<int>(viz_.viewports.size()) - 1)));
     clampVisualizationIndices();
