@@ -37,28 +37,37 @@ void handleKeyboardShortcuts() {
         requestSnapshotRefresh();
     }
 
-    // F1-F4 -> switch active viewport editor
-    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) viz_.activeViewportEditor = 0;
-    if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) viz_.activeViewportEditor = 1;
-    if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) viz_.activeViewportEditor = 2;
-    if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) viz_.activeViewportEditor = 3;
+    ensureViewportStateConsistency();
+
+    // F1-F12 -> switch active viewport editor (when available)
+    static constexpr std::array<ImGuiKey, 12> kViewportHotkeys = {
+        ImGuiKey_F1, ImGuiKey_F2, ImGuiKey_F3, ImGuiKey_F4,
+        ImGuiKey_F5, ImGuiKey_F6, ImGuiKey_F7, ImGuiKey_F8,
+        ImGuiKey_F9, ImGuiKey_F10, ImGuiKey_F11, ImGuiKey_F12};
+    for (std::size_t i = 0; i < kViewportHotkeys.size(); ++i) {
+        if (ImGui::IsKeyPressed(kViewportHotkeys[i], false) && i < viz_.viewports.size()) {
+            requestViewportEditorSelection(i);
+        }
+    }
 
     // Escape -> return focus to viewport (clear ImGui input focus)
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::SetWindowFocus(nullptr);
 
     // +/- -> adjust active viewport zoom
+    const int maxViewportIndex = static_cast<int>(viz_.viewports.size()) - 1;
+    const std::size_t activeIndex = static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, std::max(0, maxViewportIndex)));
     if (ImGui::IsKeyDown(ImGuiKey_Equal)) {
-        const auto& cam = viewportManager_.camera(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)));
-        viewportManager_.setZoom(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)), cam.zoom * 1.02f);
+        const auto& cam = viewportManager_.camera(activeIndex);
+        viewportManager_.setZoom(activeIndex, cam.zoom * 1.02f);
     }
     if (ImGui::IsKeyDown(ImGuiKey_Minus)) {
-        const auto& cam = viewportManager_.camera(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)));
-        viewportManager_.setZoom(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)), cam.zoom * 0.98f);
+        const auto& cam = viewportManager_.camera(activeIndex);
+        viewportManager_.setZoom(activeIndex, cam.zoom * 0.98f);
     }
 
     // R -> reset active viewport zoom/pan
     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
-        viewportManager_.fit(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3)));
+        viewportManager_.fit(activeIndex);
     }
 }
 
@@ -77,6 +86,7 @@ void drawControlPanel() {
 
     if (ImGui::BeginTabBar("ControlTabs", ImGuiTabBarFlags_Reorderable)) {
         if (ImGui::BeginTabItem("Simulation"))  { drawSimulationTab();  ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Interventions")) { drawInterventionsTab(); ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Display"))     { drawDisplayTab();     ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Analysis"))    { drawAnalysisTab();    ImGui::EndTabItem(); }
         if (ImGui::BeginTabItem("Diagnostics")) { drawDiagnosticsTab(); ImGui::EndTabItem(); }
@@ -222,22 +232,6 @@ void drawSimulationTab() {
     PopSectionTint();
     ImGui::Spacing();
 
-    // Phase 6: Parameters and manual patching
-    PushSectionTint(9);
-    if (ImGui::CollapsingHeader("Parameter Control & Live Patching", ImGuiTreeNodeFlags_DefaultOpen)) {
-        drawParameterControlSection();
-    }
-    PopSectionTint();
-    ImGui::Spacing();
-
-    // Phase 6: Perturbation and forcing tools
-    PushSectionTint(10);
-    if (ImGui::CollapsingHeader("Perturbation & Forcing Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
-        drawPerturbationSection();
-    }
-    PopSectionTint();
-    ImGui::Spacing();
-
     // Checkpoints
     PushSectionTint(3);
     if (ImGui::CollapsingHeader("In-Memory Checkpoints")) {
@@ -250,6 +244,25 @@ void drawSimulationTab() {
     PushSectionTint(4);
     if (ImGui::CollapsingHeader("Numeric Guardrails")) {
         drawGuardrailsSection();
+    }
+    PopSectionTint();
+
+    ImGui::EndChild();
+}
+
+void drawInterventionsTab() {
+    ImGui::BeginChild("InterventionsTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
+
+    PushSectionTint(9);
+    if (ImGui::CollapsingHeader("Parameter Control & Live Patching", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawParameterControlSection();
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
+    PushSectionTint(10);
+    if (ImGui::CollapsingHeader("Perturbation & Forcing Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawPerturbationSection();
     }
     PopSectionTint();
 
@@ -880,7 +893,7 @@ void drawLayoutSection() {
             std::clamp(layout, 0, (int)std::size(layoutNames)-1));
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip("Number of simultaneous field viewports displayed.\nF1-F4 select the active viewport for editing.");
+        ImGui::SetTooltip("Layout preset for initial viewport arrangement.\nUse Viewport Settings tabs to add/remove views (F1-F12 select tab-matched views).");
 
     ImGui::SameLine(0,6);
     if (SecondaryButton("Refresh fields", ImVec2(120.0f, 24.0f))) refreshFieldNames();
@@ -941,30 +954,65 @@ void drawLayoutSection() {
 }
 
 void drawViewportSettingsSection() {
+    ensureViewportStateConsistency();
+
     if (viz_.fieldNames.empty()) {
         ImGui::TextDisabled("No fields available. Start the simulation or refresh.");
         return;
     }
     clampVisualizationIndices();
 
-    // Viewport selector tabs
-    int activeViewports = 1;
-    if (viz_.layout == ScreenLayout::SplitLeftRight ||
-        viz_.layout == ScreenLayout::SplitTopBottom) activeViewports = 2;
-    else if (viz_.layout == ScreenLayout::Quad) activeViewports = 4;
+    ImGui::TextDisabled("Open views: %d", static_cast<int>(viz_.viewports.size()));
+    ImGui::SameLine();
+    if (SecondaryButton("Add view", ImVec2(110.0f, 24.0f))) {
+        addViewportConfig();
+    }
+    ImGui::SameLine();
+    const bool canCloseActive = viz_.viewports.size() > 1u;
+    if (!canCloseActive) {
+        ImGui::BeginDisabled();
+    }
+    if (SecondaryButton("Close active", ImVec2(110.0f, 24.0f))) {
+        removeViewportConfig(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, static_cast<int>(viz_.viewports.size()) - 1)));
+    }
+    if (!canCloseActive) {
+        ImGui::EndDisabled();
+    }
 
-    viz_.activeViewportEditor = std::clamp(viz_.activeViewportEditor, 0, activeViewports-1);
+    viz_.activeViewportEditor = std::clamp(viz_.activeViewportEditor, 0, static_cast<int>(viz_.viewports.size()) - 1);
 
+    std::vector<std::size_t> closeRequests;
     if (ImGui::BeginTabBar("ViewportTabs")) {
-        for (int i = 0; i < activeViewports; ++i) {
-            const char* labels[] = {"View 1 [F1]","View 2 [F2]","View 3 [F3]","View 4 [F4]"};
-            if (ImGui::BeginTabItem(labels[i])) {
-                viz_.activeViewportEditor = i;
-                drawSingleViewportEditor(viz_.viewports[i], i);
+        for (std::size_t i = 0; i < viz_.viewports.size(); ++i) {
+            std::string label = "View " + std::to_string(i + 1u);
+            if (i < 12u) {
+                label += " [F" + std::to_string(i + 1u) + "]";
+            }
+            bool tabOpen = true;
+            const ImGuiTabItemFlags tabFlags = (viewportTabSelectionRequest_ == static_cast<int>(i))
+                ? ImGuiTabItemFlags_SetSelected
+                : ImGuiTabItemFlags_None;
+            if (ImGui::BeginTabItem(label.c_str(), &tabOpen, tabFlags)) {
+                viz_.activeViewportEditor = static_cast<int>(i);
+                drawSingleViewportEditor(viz_.viewports[i], static_cast<int>(i));
                 ImGui::EndTabItem();
             }
+            if (!tabOpen && viz_.viewports.size() > 1u) {
+                closeRequests.push_back(i);
+            }
         }
+
+        if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing)) {
+            addViewportConfig();
+        }
+
         ImGui::EndTabBar();
+    }
+
+    viewportTabSelectionRequest_ = -1;
+
+    for (auto it = closeRequests.rbegin(); it != closeRequests.rend(); ++it) {
+        removeViewportConfig(*it);
     }
 }
 
@@ -1105,11 +1153,13 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
         checkboxWithHint("Enable custom rules", &vp.customRuleEnabled,
             "Applies ordered rule blending over the heatmap output.");
         if (vp.customRuleEnabled) {
+            const int maxViewportIndex = std::max(0, static_cast<int>(viewportRenderRules_.size()) - 1);
+            const std::size_t rulesIndex = static_cast<std::size_t>(std::clamp(viewportIndex, 0, maxViewportIndex));
             if (SecondaryButton("Save rule preset", ImVec2(130.0f, 24.0f))) {
                 std::filesystem::create_directories(std::filesystem::path("profiles") / "render_presets");
                 RenderPreset preset;
                 preset.name = "viewport_" + std::to_string(viewportIndex + 1);
-                preset.rules = viewportRenderRules_[static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3))];
+                preset.rules = viewportRenderRules_[rulesIndex];
                 std::string msg;
                 const auto path = (std::filesystem::path("profiles") / "render_presets" / (preset.name + ".wsrender")).string();
                 if (saveRenderPreset(preset, path, msg)) appendLog(msg);
@@ -1122,13 +1172,13 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
                 const auto path = (std::filesystem::path("profiles") / "render_presets" /
                     ("viewport_" + std::to_string(viewportIndex + 1) + ".wsrender")).string();
                 if (loadRenderPreset(path, preset, msg)) {
-                    viewportRenderRules_[static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3))] = std::move(preset.rules);
+                    viewportRenderRules_[rulesIndex] = std::move(preset.rules);
                     appendLog(msg);
                 } else {
                     appendLog(msg);
                 }
             }
-            ImGui::TextDisabled("Active rules: %d", static_cast<int>(viewportRenderRules_[static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3))].size()));
+            ImGui::TextDisabled("Active rules: %d", static_cast<int>(viewportRenderRules_[rulesIndex].size()));
         }
     }
 
@@ -1137,21 +1187,23 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
 
     ImGui::Separator();
     ImGui::TextDisabled("Viewport camera");
-    const auto& cam = viewportManager_.camera(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)));
+    const int maxViewportIndex = std::max(0, static_cast<int>(viz_.viewports.size()) - 1);
+    const std::size_t clampedViewportIndex = static_cast<std::size_t>(std::clamp(viewportIndex, 0, maxViewportIndex));
+    const auto& cam = viewportManager_.camera(clampedViewportIndex);
     float zoom = cam.zoom;
     float panX = cam.panX;
     float panY = cam.panY;
     if (NumericSliderPair("Zoom##vpzoom", &zoom, 0.05f, 12.0f, "%.2f", 70.0f)) {
-        viewportManager_.setZoom(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)), zoom);
+        viewportManager_.setZoom(clampedViewportIndex, zoom);
     }
     if (NumericSliderPair("Pan X##vppx", &panX, -4000.0f, 4000.0f, "%.0f", 70.0f)) {
-        viewportManager_.setPan(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)), panX, panY);
+        viewportManager_.setPan(clampedViewportIndex, panX, panY);
     }
     if (NumericSliderPair("Pan Y##vppy", &panY, -4000.0f, 4000.0f, "%.0f", 70.0f)) {
-        viewportManager_.setPan(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)), panX, panY);
+        viewportManager_.setPan(clampedViewportIndex, panX, panY);
     }
     if (SecondaryButton("Fit viewport", ImVec2(120.0f, 22.0f))) {
-        viewportManager_.fit(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)));
+        viewportManager_.fit(clampedViewportIndex);
     }
     ImGui::SameLine();
     if (SecondaryButton("Screenshot", ImVec2(120.0f, 22.0f))) {
@@ -1160,7 +1212,7 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
         std::filesystem::create_directories(std::filesystem::path("checkpoints") / "screenshots");
         const auto out = (std::filesystem::path("checkpoints") / "screenshots" /
             ("viewport_" + std::to_string(viewportIndex + 1) + "_" + std::to_string(nowMs) + ".ppm")).string();
-        viewportManager_.requestScreenshot(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)), out);
+        viewportManager_.requestScreenshot(clampedViewportIndex, out);
     }
     bool syncPan = viewportManager_.syncPan();
     if (checkboxWithHint("Sync pan across viewports", &syncPan,
@@ -1249,7 +1301,9 @@ void drawOverlaySection() {
 }
 
 void drawOpticsSection() {
-    const std::size_t idx = static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, 3));
+    ensureViewportStateConsistency();
+    const int maxViewportIndex = std::max(0, static_cast<int>(viz_.viewports.size()) - 1);
+    const std::size_t idx = static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, maxViewportIndex));
     auto cam = viewportManager_.camera(idx);
     if (sliderFloatWithHint("Zoom", &cam.zoom, 0.05f, 12.0f, "%.2f",
         "Viewport zoom. Shortcuts: +/- keys.  R to reset.")) {
@@ -1924,7 +1978,7 @@ void drawShortcutsSection() {
         {"Right Arrow", "Step forward (when paused)"},
         {"R",          "Reset camera zoom and pan"},
         {"+  /  -",    "Zoom in / out"},
-        {"F1 - F4",    "Select viewport for editing"},
+        {"F1 - F12",    "Select viewport for editing (first 12 views)"},
         {"Escape",     "Return keyboard focus to viewport"},
     };
     ImGui::Columns(2, "shortcols", false);
@@ -2619,9 +2673,20 @@ void resetDisplayConfigToDefaults() {
     viz_.unlimitedSimSpeed           = defaults.unlimitedSimSpeed;
     viz_.displayManager              = defaults.displayManager;
     viz_.generationPreviewDisplayType = defaults.generationPreviewDisplayType;
+    viewportManager_.resize(viz_.viewports.size());
+    viewportManager_.setSyncPan(false);
+    viewportManager_.setSyncZoom(false);
+    for (std::size_t i = 0; i < viz_.viewports.size(); ++i) {
+        viewportManager_.fit(i);
+    }
+    viewportRenderRules_.assign(viz_.viewports.size(), {});
+    ensureViewportStateConsistency();
+    requestViewportEditorSelection(static_cast<std::size_t>(viz_.activeViewportEditor));
 }
 
 void saveDisplayPrefs() {
+    ensureViewportStateConsistency();
+
     const auto path = activeDisplayPrefsPath();
     if (path.empty()) return;
     std::error_code ec;
@@ -2642,12 +2707,13 @@ void saveDisplayPrefs() {
     out << "displayHighMoistureThreshold=" << viz_.displayManager.highMoistureThreshold          << "\n";
     out << "displayRefreshEveryNSteps=" << viz_.displayRefreshEveryNSteps                       << "\n";
     out << "unlimitedSimSpeed="         << static_cast<int>(viz_.unlimitedSimSpeed)             << "\n";
+    out << "viewportCount="             << viz_.viewports.size()                                 << "\n";
     out << "syncPan="                   << static_cast<int>(viewportManager_.syncPan())         << "\n";
     out << "syncZoom="                  << static_cast<int>(viewportManager_.syncZoom())        << "\n";
 
-    for (int i = 0; i < 4; ++i) {
+    for (std::size_t i = 0; i < viz_.viewports.size(); ++i) {
         const auto& vp = viz_.viewports[i];
-        const auto& cam = viewportManager_.camera(static_cast<std::size_t>(i));
+        const auto& cam = viewportManager_.camera(i);
         out << "vp" << i << "_primaryFieldIndex="  << vp.primaryFieldIndex             << "\n";
         out << "vp" << i << "_displayType="        << static_cast<int>(vp.displayType)  << "\n";
         out << "vp" << i << "_renderMode="         << static_cast<int>(vp.renderMode)   << "\n";
@@ -2678,6 +2744,8 @@ void saveDisplayPrefs() {
 }
 
 void loadDisplayPrefs() {
+    ensureViewportStateConsistency();
+
     const auto path = activeDisplayPrefsPath();
     if (path.empty()) return;
     std::ifstream in(path);
@@ -2701,13 +2769,40 @@ void loadDisplayPrefs() {
             else if (key == "displayHighMoistureThreshold") viz_.displayManager.highMoistureThreshold = std::stof(val);
             else if (key == "displayRefreshEveryNSteps") viz_.displayRefreshEveryNSteps = std::stoi(val);
             else if (key == "unlimitedSimSpeed")       viz_.unlimitedSimSpeed = (std::stoi(val) != 0);
+            else if (key == "viewportCount") {
+                const std::size_t requestedCount = clampedViewportCount(static_cast<std::size_t>(std::max(1, std::stoi(val))));
+                if (requestedCount < viz_.viewports.size()) {
+                    viz_.viewports.resize(requestedCount);
+                } else if (requestedCount > viz_.viewports.size()) {
+                    const std::size_t previousSize = viz_.viewports.size();
+                    viz_.viewports.reserve(requestedCount);
+                    for (std::size_t i = previousSize; i < requestedCount; ++i) {
+                        viz_.viewports.push_back(VisualizationState::makeDefaultViewportConfig(i));
+                    }
+                }
+                ensureViewportStateConsistency();
+            }
             else if (key == "syncPan") viewportManager_.setSyncPan(std::stoi(val) != 0);
             else if (key == "syncZoom") viewportManager_.setSyncZoom(std::stoi(val) != 0);
-            else if (key.size() > 3 && key[0]=='v' && key[1]=='p' && key[3]=='_') {
-                int vi = key[2] - '0';
-                if (vi < 0 || vi > 3) continue;
-                auto& vp = viz_.viewports[vi];
-                const std::string sub = key.substr(4);
+            else if (key.rfind("vp", 0) == 0) {
+                const std::size_t underscorePos = key.find('_', 2);
+                if (underscorePos == std::string::npos) {
+                    continue;
+                }
+                const std::string indexText = key.substr(2, underscorePos - 2);
+                if (indexText.empty()) {
+                    continue;
+                }
+                const int vi = std::stoi(indexText);
+                if (vi < 0) {
+                    continue;
+                }
+                const std::size_t viewportIndex = static_cast<std::size_t>(vi);
+                if (viewportIndex >= viz_.viewports.size()) {
+                    continue;
+                }
+                auto& vp = viz_.viewports[viewportIndex];
+                const std::string sub = key.substr(underscorePos + 1);
                 if      (sub == "primaryFieldIndex")  vp.primaryFieldIndex  = std::stoi(val);
                 else if (sub == "displayType")        vp.displayType        = static_cast<DisplayType>(std::stoi(val));
                 else if (sub == "renderMode")         vp.renderMode         = static_cast<ViewportRenderMode>(std::stoi(val));
@@ -2732,13 +2827,13 @@ void loadDisplayPrefs() {
                 else if (sub == "fixedRangeMin")      vp.fixedRangeMin      = std::stof(val);
                 else if (sub == "fixedRangeMax")      vp.fixedRangeMax      = std::stof(val);
                 else if (sub == "zoom") {
-                    viewportManager_.setZoom(static_cast<std::size_t>(vi), std::stof(val));
+                    viewportManager_.setZoom(viewportIndex, std::stof(val));
                 } else if (sub == "panX") {
-                    const auto c = viewportManager_.camera(static_cast<std::size_t>(vi));
-                    viewportManager_.setPan(static_cast<std::size_t>(vi), std::stof(val), c.panY);
+                    const auto c = viewportManager_.camera(viewportIndex);
+                    viewportManager_.setPan(viewportIndex, std::stof(val), c.panY);
                 } else if (sub == "panY") {
-                    const auto c = viewportManager_.camera(static_cast<std::size_t>(vi));
-                    viewportManager_.setPan(static_cast<std::size_t>(vi), c.panX, std::stof(val));
+                    const auto c = viewportManager_.camera(viewportIndex);
+                    viewportManager_.setPan(viewportIndex, c.panX, std::stof(val));
                 }
             }
         } catch (...) {}
@@ -2757,6 +2852,9 @@ void loadDisplayPrefs() {
     viz_.displayManager.highMoistureThreshold = std::clamp(
         viz_.displayManager.highMoistureThreshold, 0.0f, 1.0f);
     viz_.displayRefreshEveryNSteps = std::clamp(viz_.displayRefreshEveryNSteps, 1, 1000);
+    ensureViewportStateConsistency();
+    requestViewportEditorSelection(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, static_cast<int>(viz_.viewports.size()) - 1)));
+    clampVisualizationIndices();
 }
 
 #endif // WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT

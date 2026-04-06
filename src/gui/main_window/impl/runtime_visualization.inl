@@ -137,6 +137,109 @@ static void drawSparkline(ImDrawList* dl, const ImVec2 pos, const float w, const
 // Field history panel - shown as a floating window when requested
 bool showFieldHistoryWindow_ = false;
 
+static constexpr std::size_t kMaxDynamicViewportCount = 64;
+
+[[nodiscard]] std::size_t clampedViewportCount(const std::size_t requestedCount) const {
+    return std::clamp<std::size_t>(requestedCount, 1u, kMaxDynamicViewportCount);
+}
+
+[[nodiscard]] std::string runtimeViewportWindowName(const std::size_t index) const {
+    return "Runtime View " + std::to_string(index + 1u);
+}
+
+void ensureViewportStateConsistency() {
+    const std::size_t targetCount = clampedViewportCount(viz_.viewports.size());
+    if (viz_.viewports.empty()) {
+        viz_.viewports.push_back(VisualizationState::makeDefaultViewportConfig(0));
+    }
+    if (viz_.viewports.size() < targetCount) {
+        const std::size_t previousSize = viz_.viewports.size();
+        viz_.viewports.resize(targetCount);
+        for (std::size_t i = previousSize; i < targetCount; ++i) {
+            viz_.viewports[i] = VisualizationState::makeDefaultViewportConfig(i);
+        }
+    } else if (viz_.viewports.size() > targetCount) {
+        viz_.viewports.resize(targetCount);
+    }
+
+    if (viewportRasters_.size() > targetCount) {
+        for (std::size_t i = targetCount; i < viewportRasters_.size(); ++i) {
+            destroyRasterTexture(viewportRasters_[i]);
+        }
+    }
+    viewportRasters_.resize(targetCount);
+    rasterBuffers_.resize(targetCount);
+    renderCaches_.resize(targetCount);
+    viewportRenderRules_.resize(targetCount);
+    viewportManager_.resize(targetCount);
+
+    if (lastFocusedRuntimeViewport_ >= static_cast<int>(targetCount)) {
+        lastFocusedRuntimeViewport_ = -1;
+    }
+
+    if (viewportTabSelectionRequest_ >= 0) {
+        viewportTabSelectionRequest_ = std::clamp(viewportTabSelectionRequest_, 0, static_cast<int>(targetCount - 1u));
+    }
+
+    if (targetCount == 0) {
+        viz_.activeViewportEditor = 0;
+    } else {
+        viz_.activeViewportEditor = std::clamp(viz_.activeViewportEditor, 0, static_cast<int>(targetCount - 1u));
+    }
+}
+
+void requestViewportEditorSelection(const std::size_t index) {
+    ensureViewportStateConsistency();
+    if (viz_.viewports.empty()) {
+        viz_.activeViewportEditor = 0;
+        viewportTabSelectionRequest_ = -1;
+        return;
+    }
+
+    const std::size_t clampedIndex = std::min(index, viz_.viewports.size() - 1u);
+    viz_.activeViewportEditor = static_cast<int>(clampedIndex);
+    viewportTabSelectionRequest_ = static_cast<int>(clampedIndex);
+}
+
+void addViewportConfig() {
+    ensureViewportStateConsistency();
+    if (viz_.viewports.size() >= kMaxDynamicViewportCount) {
+        appendLog("viewport_add_rejected reason=max_viewports_reached");
+        return;
+    }
+    const std::size_t newIndex = viz_.viewports.size();
+    viz_.viewports.push_back(VisualizationState::makeDefaultViewportConfig(newIndex));
+    ensureViewportStateConsistency();
+    clampVisualizationIndices();
+    requestViewportEditorSelection(newIndex);
+    appendLog("viewport_added index=" + std::to_string(newIndex + 1u));
+}
+
+void removeViewportConfig(const std::size_t index) {
+    ensureViewportStateConsistency();
+    if (viz_.viewports.size() <= 1u || index >= viz_.viewports.size()) {
+        return;
+    }
+    destroyRasterTexture(viewportRasters_[index]);
+    viz_.viewports.erase(viz_.viewports.begin() + static_cast<std::ptrdiff_t>(index));
+    viewportRasters_.erase(viewportRasters_.begin() + static_cast<std::ptrdiff_t>(index));
+    rasterBuffers_.erase(rasterBuffers_.begin() + static_cast<std::ptrdiff_t>(index));
+    renderCaches_.erase(renderCaches_.begin() + static_cast<std::ptrdiff_t>(index));
+    viewportRenderRules_.erase(viewportRenderRules_.begin() + static_cast<std::ptrdiff_t>(index));
+    viewportManager_.resize(viz_.viewports.size());
+
+    const int removedIndex = static_cast<int>(index);
+    if (lastFocusedRuntimeViewport_ == removedIndex) {
+        lastFocusedRuntimeViewport_ = -1;
+    } else if (lastFocusedRuntimeViewport_ > removedIndex) {
+        --lastFocusedRuntimeViewport_;
+    }
+
+    requestViewportEditorSelection(static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, static_cast<int>(viz_.viewports.size() - 1u))));
+    clampVisualizationIndices();
+    appendLog("viewport_removed index=" + std::to_string(index + 1u));
+}
+
 void drawFieldHistoryWindow() {
     if (!showFieldHistoryWindow_ || fieldHistory_.empty()) return;
 
@@ -322,7 +425,13 @@ bool saveViewportScreenshot(const int viewportIndex, const std::string& outputPa
     m.viewportMin = ImVec2(ctr.x - vW * 0.5f, ctr.y - vH * 0.5f);
     m.viewportMax = ImVec2(ctr.x + vW * 0.5f, ctr.y + vH * 0.5f);
 
-    const auto& camera = viewportManager_.camera(static_cast<std::size_t>(std::clamp(viewportIndex, 0, 3)));
+    const std::size_t maxCameraIndex = viewportManager_.count() > 0u
+        ? (viewportManager_.count() - 1u)
+        : 0u;
+    const std::size_t clampedIndex = std::min(
+        static_cast<std::size_t>(std::max(0, viewportIndex)),
+        maxCameraIndex);
+    const auto& camera = viewportManager_.camera(clampedIndex);
     const float zoom = std::max(0.05f, camera.zoom);
     const float cW = vW * zoom, cH = vH * zoom;
     m.contentMin = ImVec2(ctr.x - cW * 0.5f + camera.panX,
@@ -426,7 +535,6 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
     if (!horizontal) {
         // Original vertical mode (for backward compatibility if needed)
         dl.AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(10, 12, 20, 220), 3.0f);
-        dl.AddRect(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(60, 70, 96, 255), 3.0f);
         auto drawLabel = [&](const float y, const char* text) {
             dl.AddText(ImVec2(pos.x - 4.0f, y), IM_COL32(205,215,235,230), text);
         };
@@ -438,7 +546,7 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
                 const float y0 = pos.y + h * (1.0f - t1);
                 const float y1 = pos.y + h * (1.0f - t0);
                 const ImU32 color = mapDisplayTypeColor(t0, type, palette);
-                dl.AddRectFilled(ImVec2(pos.x + 1.0f, y0), ImVec2(pos.x + w - 1.0f, y1), color);
+                dl.AddRectFilled(ImVec2(pos.x, y0), ImVec2(pos.x + w, y1), color);
             }
             char buf[32];
             std::snprintf(buf, sizeof(buf), "%.3g", maxV);
@@ -451,7 +559,6 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
 
     // Horizontal mode - optimized for top display
     dl.AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(10, 12, 20, 220), 2.0f);
-    dl.AddRect(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(60, 70, 96, 200), 1.5f);
 
     if (type == DisplayType::ScalarField || type == DisplayType::WaterDepth || type == DisplayType::WindField) {
         constexpr int kSteps = 48;  // More steps for horizontal gives smoother gradient
@@ -459,9 +566,9 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
             const float t0 = static_cast<float>(i) / static_cast<float>(kSteps);
             const float t1 = static_cast<float>(i + 1) / static_cast<float>(kSteps);
             const float x0 = pos.x + w * t0;
-            const float x1 = pos.x + w * t1;
+            const float x1 = (i == (kSteps - 1)) ? (pos.x + w) : (pos.x + w * t1);
             const ImU32 color = mapDisplayTypeColor(t0, type, palette);
-            dl.AddRectFilled(ImVec2(x0 + 1.0f, pos.y + 1.0f), ImVec2(x1 - 0.5f, pos.y + h - 1.0f), color);
+            dl.AddRectFilled(ImVec2(x0, pos.y), ImVec2(x1, pos.y + h), color);
         }
         return;
     }
@@ -473,8 +580,9 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
         const float boxW = w / static_cast<float>(labels.size());
         for (std::size_t i = 0; i < labels.size(); ++i) {
             const float x = pos.x + boxW * static_cast<float>(i);
+            const float x1 = (i + 1u == labels.size()) ? (pos.x + w) : (x + boxW);
             const int category = static_cast<int>(i);
-            dl.AddRectFilled(ImVec2(x + 1.0f, pos.y + 1.0f), ImVec2(x + boxW - 1.0f, pos.y + h - 1.0f),
+            dl.AddRectFilled(ImVec2(x, pos.y), ImVec2(x1, pos.y + h),
                              mapDisplayTypeColor(static_cast<float>(category), type, palette));
         }
         return;
@@ -488,7 +596,8 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
         const float boxW = w / static_cast<float>(labels.size());
         for (std::size_t i = 0; i < labels.size(); ++i) {
             const float x = pos.x + boxW * static_cast<float>(i);
-            dl.AddRectFilled(ImVec2(x + 1.0f, pos.y + 1.0f), ImVec2(x + boxW - 1.0f, pos.y + h - 1.0f),
+            const float x1 = (i + 1u == labels.size()) ? (pos.x + w) : (x + boxW);
+            dl.AddRectFilled(ImVec2(x, pos.y), ImVec2(x1, pos.y + h),
                              mapDisplayTypeColor(values[i], type, palette));
         }
         return;
@@ -501,8 +610,9 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
         const float boxW = w / static_cast<float>(labels.size());
         for (std::size_t i = 0; i < labels.size(); ++i) {
             const float x = pos.x + boxW * static_cast<float>(i);
+            const float x1 = (i + 1u == labels.size()) ? (pos.x + w) : (x + boxW);
             const int category = static_cast<int>(i);
-            dl.AddRectFilled(ImVec2(x + 1.0f, pos.y + 1.0f), ImVec2(x + boxW - 1.0f, pos.y + h - 1.0f),
+            dl.AddRectFilled(ImVec2(x, pos.y), ImVec2(x1, pos.y + h),
                              mapDisplayTypeColor(static_cast<float>(category), type, palette));
         }
     }
@@ -536,6 +646,8 @@ void drawViewport() {
 void drawSimulationCanvas() {
     if (!viz_.hasCachedCheckpoint) return;
 
+    ensureViewportStateConsistency();
+
     const auto& snapshot = viz_.cachedCheckpoint.stateSnapshot;
     if (snapshot.grid.width == 0 || snapshot.grid.height == 0 || snapshot.fields.empty()) return;
 
@@ -544,10 +656,7 @@ void drawSimulationCanvas() {
 
     clampVisualizationIndices();
 
-    int numVP = 1;
-    if (viz_.layout == ScreenLayout::SplitLeftRight ||
-        viz_.layout == ScreenLayout::SplitTopBottom) numVP = 2;
-    else if (viz_.layout == ScreenLayout::Quad)      numVP = 4;
+    const int numVP = static_cast<int>(viz_.viewports.size());
 
     // Display cache invalidation
     if (snapshotDisplayCacheGeneration_ != consumedSnapshotGeneration_) {
@@ -633,26 +742,57 @@ void drawSimulationCanvas() {
         if (vp.showContours || vp.renderMode == ViewportRenderMode::Contour) drawContourOverlay(windowDrawList, pMin, pMax, snapshot.grid, vp, i, c.primaryMin, c.primaryMax);
     };
 
-    constexpr std::array<const char*, 4> kViewportWindowNames = {
-        "Runtime View 1", "Runtime View 2", "Runtime View 3", "Runtime View 4"
-    };
-    for (int i = 0; i < 4; ++i) {
+    const float minViewportW = 320.0f;
+    const float minViewportH = 240.0f;
+    const ImVec2 defaultViewportSize = [&]() {
+        if (numVP <= 1) {
+            return ImVec2(940.0f, 700.0f);
+        }
+        if (numVP == 2) {
+            return ImVec2(760.0f, 520.0f);
+        }
+        return ImVec2(560.0f, 420.0f);
+    }();
+
+    std::vector<std::size_t> closedViewports;
+    int focusedRuntimeViewport = -1;
+    for (int i = 0; i < numVP; ++i) {
         ImGui::PushID(i);
-        ImGui::Begin(kViewportWindowNames[static_cast<std::size_t>(i)]);
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(minViewportW, minViewportH),
+            ImVec2(std::numeric_limits<float>::max(), std::numeric_limits<float>::max()));
+        ImGui::SetNextWindowSize(defaultViewportSize, ImGuiCond_FirstUseEver);
+        const std::string windowName = runtimeViewportWindowName(static_cast<std::size_t>(i));
+        bool windowOpen = true;
+        ImGui::Begin(windowName.c_str(), &windowOpen);
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+            focusedRuntimeViewport = i;
+        }
         const ImVec2 avail = ImGui::GetContentRegionAvail();
         const ImVec2 pMin = ImGui::GetCursorScreenPos();
         const ImVec2 pMax(pMin.x + std::max(1.0f, avail.x), pMin.y + std::max(1.0f, avail.y));
-        if (i < numVP) {
-            ImDrawList* windowDrawList = ImGui::GetWindowDrawList();
-            drawPanel(i, *windowDrawList, pMin, pMax);
-        } else {
-            ImGui::TextDisabled("Viewport disabled by current layout setting.");
-        }
+        ImDrawList* windowDrawList = ImGui::GetWindowDrawList();
+        drawPanel(i, *windowDrawList, pMin, pMax);
         ImGui::End();
+        if (!windowOpen) {
+            closedViewports.push_back(static_cast<std::size_t>(i));
+        }
         ImGui::PopID();
     }
 
-    for (int i = 0; i < numVP; ++i) {
+    for (auto it = closedViewports.rbegin(); it != closedViewports.rend(); ++it) {
+        removeViewportConfig(*it);
+    }
+
+    if (focusedRuntimeViewport != lastFocusedRuntimeViewport_) {
+        if (focusedRuntimeViewport >= 0) {
+            requestViewportEditorSelection(static_cast<std::size_t>(focusedRuntimeViewport));
+        }
+        lastFocusedRuntimeViewport_ = focusedRuntimeViewport;
+    }
+
+    const int screenshotViewportCount = static_cast<int>(viz_.viewports.size());
+    for (int i = 0; i < screenshotViewportCount; ++i) {
         const auto req = viewportManager_.consumeScreenshotRequest(static_cast<std::size_t>(i));
         if (!req.pending || req.outputPath.empty()) {
             continue;
@@ -760,7 +900,8 @@ void rebuildRasterTexture(int vi, const GridSpec grid,
     }
 
     if (vp.customRuleEnabled && vp.renderMode == ViewportRenderMode::CustomRule) {
-        const auto& rules = viewportRenderRules_[static_cast<std::size_t>(std::clamp(vi, 0, 3))];
+        const std::size_t rulesIndex = static_cast<std::size_t>(std::clamp(vi, 0, static_cast<int>(viewportRenderRules_.size()) - 1));
+        const auto& rules = viewportRenderRules_[rulesIndex];
         for (std::size_t i = 0; i < sampledValues.size(); ++i) {
             const float sample = sampledValues[i];
             if (!std::isfinite(sample)) {

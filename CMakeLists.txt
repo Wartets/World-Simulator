@@ -239,6 +239,14 @@ target_sources(profile_store_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
 )
+
+add_executable(viewport_manager_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/viewport_manager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/viewport_manager.cpp"
+)
+target_link_libraries(viewport_manager_test PRIVATE ws_core)
+add_test(NAME viewport_manager_test COMMAND viewport_manager_test)
+
 target_sources(full_pipeline_multi_model_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/display_manager.cpp

@@ -127,14 +127,23 @@ struct ViewportConfig {
 };
 
 struct VisualizationState {
+    static constexpr std::size_t kDefaultViewportCount = 2;
+
+    [[nodiscard]] static ViewportConfig makeDefaultViewportConfig(const std::size_t index) {
+        ViewportConfig cfg;
+        cfg.primaryFieldIndex = static_cast<int>(index);
+        cfg.colorMapMode = (index == 1u) ? ColorMapMode::Water : ColorMapMode::Turbo;
+        return cfg;
+    }
+
     ScreenLayout layout = ScreenLayout::SplitLeftRight;
-    std::array<ViewportConfig,4> viewports = [](){
-        std::array<ViewportConfig,4> a;
-        a[0].primaryFieldIndex = 0; a[0].colorMapMode = ColorMapMode::Turbo;
-        a[1].primaryFieldIndex = 1; a[1].colorMapMode = ColorMapMode::Water;
-        a[2].primaryFieldIndex = 2; a[2].colorMapMode = ColorMapMode::Turbo;
-        a[3].primaryFieldIndex = 3; a[3].colorMapMode = ColorMapMode::Turbo;
-        return a;
+    std::vector<ViewportConfig> viewports = []() {
+        std::vector<ViewportConfig> configs;
+        configs.reserve(kDefaultViewportCount);
+        for (std::size_t i = 0; i < kDefaultViewportCount; ++i) {
+            configs.push_back(makeDefaultViewportConfig(i));
+        }
+        return configs;
     }();
     int activeViewportEditor = 0;
 
@@ -799,8 +808,8 @@ private:
     std::string snapshotWorkerError_;
 
     // raster textures
-    std::array<RasterTexture,4>            viewportRasters_{};
-    std::array<std::vector<std::uint8_t>,4> rasterBuffers_{};
+    std::vector<RasterTexture> viewportRasters_{};
+    std::vector<std::vector<std::uint8_t>> rasterBuffers_{};
     RasterTexture         wizardPreviewTexture_{};
     std::vector<std::uint8_t> wizardPreviewPixels_{};
     std::uint64_t         wizardPreviewHash_     = 0;
@@ -808,17 +817,19 @@ private:
     int                   wizardPreviewH_         = 0;
     int                   wizardPreviewStride_    = 1;
     float                 wizardPreviewWaterLevel_ = 0.0f;
-    std::array<RenderCacheState,4> renderCaches_{};
+    std::vector<RenderCacheState> renderCaches_{};
     std::unordered_map<std::uint64_t, DisplayBuffer> snapshotDisplayCache_;
     int snapshotDisplayCacheGeneration_ = -1;
     int maxTextureSize_ = 0;
     int nextViewportRebuildCursor_ = 0;
+    int viewportTabSelectionRequest_ = -1;
+    int lastFocusedRuntimeViewport_ = -1;
 
     HeatmapRenderer heatmapRenderer_{};
-    ViewportManager viewportManager_{4};
+    ViewportManager viewportManager_{VisualizationState::kDefaultViewportCount};
     VectorRenderer  vectorRenderer_{};
     ContourRenderer contourRenderer_{};
-    std::array<std::vector<RenderRule>, 4> viewportRenderRules_{};
+    std::vector<std::vector<RenderRule>> viewportRenderRules_{};
     bool dockLayoutInitialized_ = false;
 
     // UI interaction state

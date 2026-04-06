@@ -4,15 +4,59 @@
 
 namespace ws::gui {
 
+namespace {
+
+void applyPanToAll(std::vector<ViewportCamera>& cameras, const float panX, const float panY) {
+    for (auto& camera : cameras) {
+        camera.panX = panX;
+        camera.panY = panY;
+    }
+}
+
+void applyZoomToAll(std::vector<ViewportCamera>& cameras, const float zoom) {
+    for (auto& camera : cameras) {
+        camera.zoom = zoom;
+    }
+}
+
+} // namespace
+
 ViewportManager::ViewportManager(const std::size_t count)
     : cameras_(count), screenshotRequests_(count) {}
 
+void ViewportManager::resize(const std::size_t count) {
+    if (count == cameras_.size()) {
+        return;
+    }
+
+    const ViewportCamera reference = cameras_.empty() ? ViewportCamera{} : cameras_.front();
+    cameras_.resize(count);
+    screenshotRequests_.resize(count);
+
+    if (cameras_.empty()) {
+        return;
+    }
+
+    if (syncPan_) {
+        applyPanToAll(cameras_, reference.panX, reference.panY);
+    }
+    if (syncZoom_) {
+        applyZoomToAll(cameras_, reference.zoom);
+    }
+}
+
 void ViewportManager::setSyncPan(const bool enabled) {
     syncPan_ = enabled;
+    if (syncPan_ && !cameras_.empty()) {
+        applyPanToAll(cameras_, cameras_.front().panX, cameras_.front().panY);
+    }
 }
 
 void ViewportManager::setSyncZoom(const bool enabled) {
     syncZoom_ = enabled;
+    if (syncZoom_ && !cameras_.empty()) {
+        applyZoomToAll(cameras_, cameras_.front().zoom);
+    }
 }
 
 void ViewportManager::setPan(const std::size_t viewportIndex, const float panX, const float panY) {

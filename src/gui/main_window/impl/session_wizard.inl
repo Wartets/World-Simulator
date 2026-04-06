@@ -1362,6 +1362,7 @@
         const ImGuiID dockspaceId = ImGui::GetID("RuntimeDockspace");
         ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
         if (!dockLayoutInitialized_) {
+            ensureViewportStateConsistency();
             dockLayoutInitialized_ = true;
             ImGui::DockBuilderRemoveNode(dockspaceId);
             ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
@@ -1372,10 +1373,18 @@
             ImGuiID dockBottomLeft = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.5f, nullptr, &dockLeft);
             ImGuiID dockTopRight = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Up, 0.55f, nullptr, &dockMain);
 
-            ImGui::DockBuilderDockWindow("Runtime View 1", dockLeft);
-            ImGui::DockBuilderDockWindow("Runtime View 2", dockBottomLeft);
-            ImGui::DockBuilderDockWindow("Runtime View 3", dockTopRight);
-            ImGui::DockBuilderDockWindow("Runtime View 4", dockMain);
+            for (std::size_t i = 0; i < viz_.viewports.size(); ++i) {
+                const std::string viewWindowName = runtimeViewportWindowName(i);
+                ImGuiID targetDock = dockMain;
+                if (i == 0u) {
+                    targetDock = dockLeft;
+                } else if (i == 1u) {
+                    targetDock = dockBottomLeft;
+                } else if (i == 2u) {
+                    targetDock = dockTopRight;
+                }
+                ImGui::DockBuilderDockWindow(viewWindowName.c_str(), targetDock);
+            }
             ImGui::DockBuilderDockWindow("Control Panel##main", dockMain);
             ImGui::DockBuilderFinish(dockspaceId);
         }

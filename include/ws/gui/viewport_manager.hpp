@@ -28,6 +28,9 @@ class ViewportManager {
 public:
     explicit ViewportManager(std::size_t count = 4);
 
+    void resize(std::size_t count);
+    [[nodiscard]] std::size_t count() const { return cameras_.size(); }
+
     void setSyncPan(bool enabled);
     void setSyncZoom(bool enabled);
 
