@@ -794,6 +794,15 @@
         const float drawX = minPos.x + (avail.x - drawW) * 0.5f;
         const float drawY = minPos.y + (avail.y - drawH) * 0.5f;
 
+        const ViewportConfig previewViewportConfig = [&]() {
+            if (viz_.viewports.empty()) {
+                return VisualizationState::makeDefaultViewportConfig(0);
+            }
+            const int maxViewportIndex = static_cast<int>(viz_.viewports.size()) - 1;
+            const std::size_t idx = static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, maxViewportIndex));
+            return viz_.viewports[idx];
+        }();
+
         std::uint64_t previewHash = 1469598103934665603ull;
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.seed));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(panel_.initialConditionTypeIndex));
@@ -803,14 +812,14 @@
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewBaseH));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewStride));
         previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(viz_.generationPreviewDisplayType));
-        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(viz_.displayManager.autoWaterLevel));
-        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.waterLevel));
-        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.autoWaterQuantile));
-        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.lowlandThreshold));
-        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.highlandThreshold));
-        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.waterPresenceThreshold));
-        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.shallowWaterDepth));
-        previewHash = hashCombine(previewHash, hashFloat(viz_.displayManager.highMoistureThreshold));
+        previewHash = hashCombine(previewHash, static_cast<std::uint64_t>(previewViewportConfig.displayManager.autoWaterLevel));
+        previewHash = hashCombine(previewHash, hashFloat(previewViewportConfig.displayManager.waterLevel));
+        previewHash = hashCombine(previewHash, hashFloat(previewViewportConfig.displayManager.autoWaterQuantile));
+        previewHash = hashCombine(previewHash, hashFloat(previewViewportConfig.displayManager.lowlandThreshold));
+        previewHash = hashCombine(previewHash, hashFloat(previewViewportConfig.displayManager.highlandThreshold));
+        previewHash = hashCombine(previewHash, hashFloat(previewViewportConfig.displayManager.waterPresenceThreshold));
+        previewHash = hashCombine(previewHash, hashFloat(previewViewportConfig.displayManager.shallowWaterDepth));
+        previewHash = hashCombine(previewHash, hashFloat(previewViewportConfig.displayManager.highMoistureThreshold));
         previewHash = hashCombine(previewHash, hashFloat(panel_.terrainBaseFrequency));
         previewHash = hashCombine(previewHash, hashFloat(panel_.terrainDetailFrequency));
         previewHash = hashCombine(previewHash, hashFloat(panel_.terrainWarpStrength));
@@ -1088,7 +1097,7 @@
                 previewWindU,
                 previewWindV,
                 viz_.generationPreviewDisplayType,
-                viz_.displayManager,
+                previewViewportConfig.displayManager,
                 "preview");
 
             wizardPreviewPixels_.assign(pixelCount * 4u, 0u);
@@ -1100,7 +1109,8 @@
                      viz_.generationPreviewDisplayType == DisplayType::WaterDepth ||
                      viz_.generationPreviewDisplayType == DisplayType::WindField) ? normalized : value,
                     viz_.generationPreviewDisplayType,
-                    ColorMapMode::Turbo);
+                    ColorMapMode::Turbo,
+                    previewViewportConfig);
                 std::uint8_t r = 0, g = 0, b = 0, a = 0;
                 unpackColor(color, r, g, b, a);
                 const std::size_t o = idx * 4u;
@@ -1139,7 +1149,7 @@
             const std::string channelLabel = "x_i: " + sessionUi_.selectedModelCellStateVariables[static_cast<std::size_t>(channelIndex)];
             dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 54.0f), IM_COL32(188, 200, 226, 255), channelLabel.c_str());
         }
-        const std::string autoLevel = "Water level: " + std::to_string(wizardPreviewWaterLevel_).substr(0, 5) + (viz_.displayManager.autoWaterLevel ? " (auto)" : " (manual)");
+        const std::string autoLevel = "Water level: " + std::to_string(wizardPreviewWaterLevel_).substr(0, 5) + (previewViewportConfig.displayManager.autoWaterLevel ? " (auto)" : " (manual)");
         dl->AddText(ImVec2(minPos.x + kS2, minPos.y + kS2 + 36.0f), IM_COL32(188, 200, 226, 255), autoLevel.c_str());
         if (wizardPreviewStride_ > 1) {
             const std::string quality = "Preview stride: 1/" + std::to_string(wizardPreviewStride_) + " for performance";

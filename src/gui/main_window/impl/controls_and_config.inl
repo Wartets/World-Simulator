@@ -892,101 +892,24 @@ void drawGuardrailsSection() {
 void drawDisplayTab() {
     ImGui::BeginChild("DispTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
-    PushSectionTint(5);
-    if (ImGui::CollapsingHeader("Layout & Viewports", ImGuiTreeNodeFlags_DefaultOpen))
-        drawLayoutSection();
-    PopSectionTint();
-    ImGui::Spacing();
-
     PushSectionTint(6);
-    if (ImGui::CollapsingHeader("Viewport Settings", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Per-View Display Settings", ImGuiTreeNodeFlags_DefaultOpen))
         drawViewportSettingsSection();
     PopSectionTint();
     ImGui::Spacing();
 
     PushSectionTint(7);
-    if (ImGui::CollapsingHeader("Global Overlays"))
+    if (ImGui::CollapsingHeader("Overlay & Domain (Per View)"))
         drawOverlaySection();
     PopSectionTint();
     ImGui::Spacing();
 
     PushSectionTint(8);
-    if (ImGui::CollapsingHeader("Camera & Optics"))
+    if (ImGui::CollapsingHeader("Camera & Optics (Per View)"))
         drawOpticsSection();
     PopSectionTint();
 
     ImGui::EndChild();
-}
-
-void drawLayoutSection() {
-    static constexpr const char* layoutNames[] = {
-        "Single view", "Split Left/Right", "Split Top/Bottom", "4-Way Quad"};
-    int layout = static_cast<int>(viz_.layout);
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("##layout", &layout, layoutNames,
-            static_cast<int>(std::size(layoutNames)))) {
-        viz_.layout = static_cast<ScreenLayout>(
-            std::clamp(layout, 0, (int)std::size(layoutNames)-1));
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip("Layout preset for initial viewport arrangement.\nUse Viewport Settings tabs to add/remove views (F1-F12 select tab-matched views).");
-
-    ImGui::SameLine(0,6);
-    if (SecondaryButton("Refresh fields", ImVec2(120.0f, 24.0f))) refreshFieldNames();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip("Re-query the runtime for the current list of named fields.");
-    ImGui::SameLine(0,4);
-    if (SecondaryButton("Save prefs", ImVec2(90.0f, 24.0f))) saveDisplayPrefs();
-
-    // Generation preview display type
-    ImGui::Spacing();
-    ImGui::TextDisabled("World generation preview style:");
-    static constexpr const char* dispTypeNames[] = {
-        "Scalar Field", "Surface Category", "Relative Elevation", "Surface Water", "Moisture Map"};
-    int previewMode = static_cast<int>(viz_.generationPreviewDisplayType);
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("##prevtype", &previewMode, dispTypeNames,
-            static_cast<int>(std::size(dispTypeNames)))) {
-        viz_.generationPreviewDisplayType = static_cast<DisplayType>(
-            std::clamp(previewMode, 0, (int)std::size(dispTypeNames)-1));
-    }
-
-    // Water-level controls
-    ImGui::Spacing();
-    ImGui::Separator();
-    checkboxWithHint("Auto water level", &viz_.displayManager.autoWaterLevel,
-        "Derive the water/land threshold from the terrain elevation distribution\n"
-        "at the configured quantile, rather than a fixed value.");
-    if (viz_.displayManager.autoWaterLevel) {
-        sliderFloatWithHint("Auto quantile", &viz_.displayManager.autoWaterQuantile,
-            0.05f, 0.95f, "%.3f",
-            "Terrain percentile used to place the waterline.\n"
-            "0.50 = median, 0.40 = 40th percentile (more ocean).");
-    } else {
-        sliderFloatWithHint("Manual water level", &viz_.displayManager.waterLevel,
-            0.0f, 1.0f, "%.3f",
-            "Fixed elevation threshold that separates water cells from land.\n"
-            "Cells below this value are rendered as water.");
-    }
-    sliderFloatWithHint("Lowland breakpoint", &viz_.displayManager.lowlandThreshold,
-        0.0f, 1.0f, "%.3f",
-        "Elevation below which land is classified as 'lowland/beach'.");
-    viz_.displayManager.highlandThreshold = std::max(
-        viz_.displayManager.highlandThreshold,
-        viz_.displayManager.lowlandThreshold + 0.01f);
-    sliderFloatWithHint("Highland breakpoint", &viz_.displayManager.highlandThreshold,
-        0.0f, 1.0f, "%.3f",
-        "Elevation above which land is classified as 'highland/mountain'.");
-    sliderFloatWithHint("Shallow water depth", &viz_.displayManager.shallowWaterDepth,
-        0.0f, 0.20f, "%.3f",
-        "Depth threshold used to split shallow coastal water from deeper ocean water.");
-    sliderFloatWithHint("Surface wetness threshold",
-        &viz_.displayManager.waterPresenceThreshold, 0.0f, 0.5f, "%.3f",
-        "Normalized surface-water threshold before above-water land is treated as wet shoreline.\n"
-        "Lower = more cells rendered as wet coastal terrain.");
-    sliderFloatWithHint("High humidity threshold", &viz_.displayManager.highMoistureThreshold,
-        0.0f, 1.0f, "%.3f",
-        "Humidity above which land is highlighted as wet in Surface Category mode.");
 }
 
 void drawViewportSettingsSection() {
@@ -1108,6 +1031,41 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
             "Surface Water - water depth visualization.\n"
             "Moisture Map - blended humidity and surface wetness.\n"
             "Wind Field - automatic vector-tagged axis field background and arrows.");
+
+    checkboxWithHint("Sparse overlay entries##vp", &vp.showSparseOverlay,
+        "Include sparse overlay values (event/input patches) in this view.");
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Domain classification (this view)");
+    checkboxWithHint("Auto water level##vp", &vp.displayManager.autoWaterLevel,
+        "Derive water/land threshold from terrain elevation distribution for this view.");
+    if (vp.displayManager.autoWaterLevel) {
+        sliderFloatWithHint("Auto quantile##vp", &vp.displayManager.autoWaterQuantile,
+            0.05f, 0.95f, "%.3f",
+            "Terrain percentile used to place waterline for this view.");
+    } else {
+        sliderFloatWithHint("Manual water level##vp", &vp.displayManager.waterLevel,
+            0.0f, 1.0f, "%.3f",
+            "Fixed elevation threshold separating water from land for this view.");
+    }
+    sliderFloatWithHint("Lowland breakpoint##vp", &vp.displayManager.lowlandThreshold,
+        0.0f, 1.0f, "%.3f",
+        "Elevation below which land is classified as lowland/beach.");
+    vp.displayManager.highlandThreshold = std::max(
+        vp.displayManager.highlandThreshold,
+        vp.displayManager.lowlandThreshold + 0.01f);
+    sliderFloatWithHint("Highland breakpoint##vp", &vp.displayManager.highlandThreshold,
+        0.0f, 1.0f, "%.3f",
+        "Elevation above which land is classified as highland/mountain.");
+    sliderFloatWithHint("Shallow water depth##vp", &vp.displayManager.shallowWaterDepth,
+        0.0f, 0.20f, "%.3f",
+        "Depth threshold for shallow coastal water versus deeper ocean.");
+    sliderFloatWithHint("Surface wetness threshold##vp", &vp.displayManager.waterPresenceThreshold,
+        0.0f, 0.5f, "%.3f",
+        "Normalized surface-water threshold for wet shoreline classification.");
+    sliderFloatWithHint("High humidity threshold##vp", &vp.displayManager.highMoistureThreshold,
+        0.0f, 1.0f, "%.3f",
+        "Humidity threshold used by moisture/surface-category modes.");
 
     // Color map
     const bool windFieldMode = (vp.displayType == DisplayType::WindField);
@@ -1308,38 +1266,56 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
 }
 
 void drawOverlaySection() {
-    checkboxWithHint("Domain boundary", &visuals_.showBoundary,
-        "Draw a border rectangle around the simulation domain.");
-    if (visuals_.showBoundary) {
+    ensureViewportStateConsistency();
+    const int maxViewportIndex = std::max(0, static_cast<int>(viz_.viewports.size()) - 1);
+    const std::size_t idx = static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, maxViewportIndex));
+    auto& vp = viz_.viewports[idx];
+
+    ImGui::TextDisabled("Editing overlay controls for View %d", static_cast<int>(idx + 1u));
+
+    checkboxWithHint("Domain boundary", &vp.showBoundary,
+        "Draw a border rectangle around the simulation domain for this view.");
+    if (vp.showBoundary) {
         ImGui::Indent();
-        sliderFloatWithHint("Opacity##bo", &visuals_.boundaryOpacity, 0.0f, 1.0f, "%.2f",
+        sliderFloatWithHint("Opacity##bo", &vp.boundaryOpacity, 0.0f, 1.0f, "%.2f",
             "Boundary line alpha.");
-        sliderFloatWithHint("Thickness##bt", &visuals_.boundaryThickness, 0.5f, 6.0f, "%.1f",
+        sliderFloatWithHint("Thickness##bt", &vp.boundaryThickness, 0.5f, 6.0f, "%.1f",
             "Boundary line width in pixels.");
         ImGui::Unindent();
     }
 
-    checkboxWithHint("Cell grid lines", &visuals_.showGrid,
-        "Draw lines between cells. Visible only when cells are large enough.");
-    if (visuals_.showGrid) {
+    checkboxWithHint("Cell grid lines", &vp.showGrid,
+        "Draw lines between cells in this view only. Visible when cells are large enough.");
+    if (vp.showGrid) {
         ImGui::Indent();
-        sliderFloatWithHint("Grid opacity##go", &visuals_.gridOpacity, 0.0f, 1.0f, "%.2f",
+        sliderFloatWithHint("Grid opacity##go", &vp.gridOpacity, 0.0f, 1.0f, "%.2f",
             "Grid line transparency.");
+        sliderFloatWithHint("Grid thickness##gt", &vp.gridLineThickness, 0.5f, 3.0f, "%.2f",
+            "Grid line width in pixels.");
         ImGui::Unindent();
-        viz_.showCellGrid = true;
-    } else {
-        viz_.showCellGrid = false;
     }
 
-    checkboxWithHint("Sparse overlay entries", &viz_.showSparseOverlay,
-        "Include sparse overlay values (event patches, input patches) in the display.\n"
-        "These appear as single-cell overrides on top of the base field.");
+    checkboxWithHint("Sparse overlay entries", &vp.showSparseOverlay,
+        "Include sparse overlay values (event/input patches) in this view.");
+
+    if (SecondaryButton("Apply overlay settings to all views", ImVec2(-1.0f, 24.0f))) {
+        for (auto& view : viz_.viewports) {
+            view.showBoundary = vp.showBoundary;
+            view.boundaryOpacity = vp.boundaryOpacity;
+            view.boundaryThickness = vp.boundaryThickness;
+            view.showGrid = vp.showGrid;
+            view.gridOpacity = vp.gridOpacity;
+            view.gridLineThickness = vp.gridLineThickness;
+            view.showSparseOverlay = vp.showSparseOverlay;
+        }
+    }
 }
 
 void drawOpticsSection() {
     ensureViewportStateConsistency();
     const int maxViewportIndex = std::max(0, static_cast<int>(viz_.viewports.size()) - 1);
     const std::size_t idx = static_cast<std::size_t>(std::clamp(viz_.activeViewportEditor, 0, maxViewportIndex));
+    auto& vp = viz_.viewports[idx];
     auto cam = viewportManager_.camera(idx);
     if (sliderFloatWithHint("Zoom", &cam.zoom, 0.05f, 12.0f, "%.2f",
         "Viewport zoom. Shortcuts: +/- keys.  R to reset.")) {
@@ -1357,14 +1333,27 @@ void drawOpticsSection() {
         viewportManager_.fit(idx);
     }
     ImGui::Separator();
-    sliderFloatWithHint("Brightness", &visuals_.brightness, 0.1f, 3.0f, "%.2f",
+    sliderFloatWithHint("Brightness", &vp.brightness, 0.1f, 3.0f, "%.2f",
         "Post-colormap brightness multiplier.");
-    sliderFloatWithHint("Contrast",   &visuals_.contrast,   0.1f, 3.0f, "%.2f",
+    sliderFloatWithHint("Contrast",   &vp.contrast,   0.1f, 3.0f, "%.2f",
         "Post-colormap contrast around mid-gray.");
-    sliderFloatWithHint("Gamma",      &visuals_.gamma,       0.2f, 3.0f, "%.2f",
+    sliderFloatWithHint("Gamma",      &vp.gamma,       0.2f, 3.0f, "%.2f",
         "Display gamma correction applied after contrast/brightness.");
-    checkboxWithHint("Invert colors", &visuals_.invertColors,
+    checkboxWithHint("Invert colors", &vp.invertColors,
         "Invert the color mapping (useful for white-background screenshots).");
+
+    if (SecondaryButton("Apply camera/optics to all views", ImVec2(-1.0f, 24.0f))) {
+        const auto referenceCam = viewportManager_.camera(idx);
+        for (std::size_t i = 0; i < viz_.viewports.size(); ++i) {
+            auto& view = viz_.viewports[i];
+            view.brightness = vp.brightness;
+            view.contrast = vp.contrast;
+            view.gamma = vp.gamma;
+            view.invertColors = vp.invertColors;
+            viewportManager_.setZoom(i, referenceCam.zoom);
+            viewportManager_.setPan(i, referenceCam.panX, referenceCam.panY);
+        }
+    }
 }
 
 // Tab: Analysis
@@ -2727,7 +2716,6 @@ void resetDisplayConfigToDefaults() {
     viz_.displayTargetRefreshHz      = defaults.displayTargetRefreshHz;
     viz_.displayRefreshOnStateChange = defaults.displayRefreshOnStateChange;
     viz_.unlimitedSimSpeed           = defaults.unlimitedSimSpeed;
-    viz_.displayManager              = defaults.displayManager;
     viz_.generationPreviewDisplayType = defaults.generationPreviewDisplayType;
     viewportManager_.resize(viz_.viewports.size());
     viewportManager_.setSyncPan(false);
@@ -2753,14 +2741,6 @@ void saveDisplayPrefs() {
 
     out << "layout="                    << static_cast<int>(viz_.layout)                        << "\n";
     out << "generationPreviewDisplayType=" << static_cast<int>(viz_.generationPreviewDisplayType) << "\n";
-    out << "displayAutoWaterLevel="     << static_cast<int>(viz_.displayManager.autoWaterLevel)  << "\n";
-    out << "displayWaterThreshold="     << viz_.displayManager.waterLevel                        << "\n";
-    out << "displayWaterQuantile="      << viz_.displayManager.autoWaterQuantile                 << "\n";
-    out << "displayLowlandThreshold="   << viz_.displayManager.lowlandThreshold                  << "\n";
-    out << "displayHighlandThreshold="  << viz_.displayManager.highlandThreshold                 << "\n";
-    out << "displayWaterPresenceThreshold=" << viz_.displayManager.waterPresenceThreshold        << "\n";
-    out << "displayShallowWaterDepth="  << viz_.displayManager.shallowWaterDepth                 << "\n";
-    out << "displayHighMoistureThreshold=" << viz_.displayManager.highMoistureThreshold          << "\n";
     out << "displayRefreshEveryNSteps=" << viz_.displayRefreshEveryNSteps                       << "\n";
     out << "displayTargetRefreshHz="   << viz_.displayTargetRefreshHz                          << "\n";
     out << "displayRefreshOnStateChange=" << static_cast<int>(viz_.displayRefreshOnStateChange) << "\n";
@@ -2782,6 +2762,15 @@ void saveDisplayPrefs() {
         out << "vp" << i << "_heatmapPowerExponent=" << vp.heatmapPowerExponent << "\n";
         out << "vp" << i << "_heatmapQuantileLow=" << vp.heatmapQuantileLow << "\n";
         out << "vp" << i << "_heatmapQuantileHigh=" << vp.heatmapQuantileHigh << "\n";
+        out << "vp" << i << "_showSparseOverlay=" << static_cast<int>(vp.showSparseOverlay) << "\n";
+        out << "vp" << i << "_displayAutoWaterLevel=" << static_cast<int>(vp.displayManager.autoWaterLevel) << "\n";
+        out << "vp" << i << "_displayWaterThreshold=" << vp.displayManager.waterLevel << "\n";
+        out << "vp" << i << "_displayWaterQuantile=" << vp.displayManager.autoWaterQuantile << "\n";
+        out << "vp" << i << "_displayLowlandThreshold=" << vp.displayManager.lowlandThreshold << "\n";
+        out << "vp" << i << "_displayHighlandThreshold=" << vp.displayManager.highlandThreshold << "\n";
+        out << "vp" << i << "_displayWaterPresenceThreshold=" << vp.displayManager.waterPresenceThreshold << "\n";
+        out << "vp" << i << "_displayShallowWaterDepth=" << vp.displayManager.shallowWaterDepth << "\n";
+        out << "vp" << i << "_displayHighMoistureThreshold=" << vp.displayManager.highMoistureThreshold << "\n";
         out << "vp" << i << "_showWindMagnitudeBackground=" << vp.showWindMagnitudeBackground << "\n";
         out << "vp" << i << "_showVectorField="    << vp.showVectorField                << "\n";
         out << "vp" << i << "_vectorXFieldIndex="  << vp.vectorXFieldIndex              << "\n";
@@ -2795,6 +2784,16 @@ void saveDisplayPrefs() {
         out << "vp" << i << "_showLegend="         << vp.showLegend                    << "\n";
         out << "vp" << i << "_fixedRangeMin="      << vp.fixedRangeMin                 << "\n";
         out << "vp" << i << "_fixedRangeMax="      << vp.fixedRangeMax                 << "\n";
+        out << "vp" << i << "_brightness="         << vp.brightness                    << "\n";
+        out << "vp" << i << "_contrast="           << vp.contrast                      << "\n";
+        out << "vp" << i << "_gamma="              << vp.gamma                         << "\n";
+        out << "vp" << i << "_invertColors="       << static_cast<int>(vp.invertColors) << "\n";
+        out << "vp" << i << "_showGrid="           << static_cast<int>(vp.showGrid) << "\n";
+        out << "vp" << i << "_gridOpacity="        << vp.gridOpacity << "\n";
+        out << "vp" << i << "_gridLineThickness="  << vp.gridLineThickness << "\n";
+        out << "vp" << i << "_showBoundary="       << static_cast<int>(vp.showBoundary) << "\n";
+        out << "vp" << i << "_boundaryOpacity="    << vp.boundaryOpacity << "\n";
+        out << "vp" << i << "_boundaryThickness="  << vp.boundaryThickness << "\n";
         out << "vp" << i << "_zoom="               << cam.zoom                         << "\n";
         out << "vp" << i << "_panX="               << cam.panX                         << "\n";
         out << "vp" << i << "_panY="               << cam.panY                         << "\n";
@@ -2817,14 +2816,55 @@ void loadDisplayPrefs() {
         try {
             if (key == "layout")                       viz_.layout = static_cast<ScreenLayout>(std::stoi(val));
             else if (key == "generationPreviewDisplayType") viz_.generationPreviewDisplayType = static_cast<DisplayType>(std::stoi(val));
-            else if (key == "displayAutoWaterLevel")   viz_.displayManager.autoWaterLevel = (std::stoi(val) != 0);
-            else if (key == "displayWaterThreshold")   viz_.displayManager.waterLevel = std::stof(val);
-            else if (key == "displayWaterQuantile")    viz_.displayManager.autoWaterQuantile = std::stof(val);
-            else if (key == "displayLowlandThreshold") viz_.displayManager.lowlandThreshold = std::stof(val);
-            else if (key == "displayHighlandThreshold")viz_.displayManager.highlandThreshold = std::stof(val);
-            else if (key == "displayWaterPresenceThreshold") viz_.displayManager.waterPresenceThreshold = std::stof(val);
-            else if (key == "displayShallowWaterDepth") viz_.displayManager.shallowWaterDepth = std::stof(val);
-            else if (key == "displayHighMoistureThreshold") viz_.displayManager.highMoistureThreshold = std::stof(val);
+            // Legacy global display keys: apply to all views for backward compatibility.
+            else if (key == "displayAutoWaterLevel") {
+                const bool enabled = (std::stoi(val) != 0);
+                for (auto& view : viz_.viewports) {
+                    view.displayManager.autoWaterLevel = enabled;
+                }
+            }
+            else if (key == "displayWaterThreshold") {
+                const float v = std::stof(val);
+                for (auto& view : viz_.viewports) {
+                    view.displayManager.waterLevel = v;
+                }
+            }
+            else if (key == "displayWaterQuantile") {
+                const float v = std::stof(val);
+                for (auto& view : viz_.viewports) {
+                    view.displayManager.autoWaterQuantile = v;
+                }
+            }
+            else if (key == "displayLowlandThreshold") {
+                const float v = std::stof(val);
+                for (auto& view : viz_.viewports) {
+                    view.displayManager.lowlandThreshold = v;
+                }
+            }
+            else if (key == "displayHighlandThreshold") {
+                const float v = std::stof(val);
+                for (auto& view : viz_.viewports) {
+                    view.displayManager.highlandThreshold = v;
+                }
+            }
+            else if (key == "displayWaterPresenceThreshold") {
+                const float v = std::stof(val);
+                for (auto& view : viz_.viewports) {
+                    view.displayManager.waterPresenceThreshold = v;
+                }
+            }
+            else if (key == "displayShallowWaterDepth") {
+                const float v = std::stof(val);
+                for (auto& view : viz_.viewports) {
+                    view.displayManager.shallowWaterDepth = v;
+                }
+            }
+            else if (key == "displayHighMoistureThreshold") {
+                const float v = std::stof(val);
+                for (auto& view : viz_.viewports) {
+                    view.displayManager.highMoistureThreshold = v;
+                }
+            }
             else if (key == "displayRefreshEveryNSteps") viz_.displayRefreshEveryNSteps = std::stoi(val);
             else if (key == "displayTargetRefreshHz")   viz_.displayTargetRefreshHz = std::stoi(val);
             else if (key == "displayRefreshOnStateChange") viz_.displayRefreshOnStateChange = (std::stoi(val) != 0);
@@ -2873,6 +2913,15 @@ void loadDisplayPrefs() {
                 else if (sub == "heatmapPowerExponent") vp.heatmapPowerExponent = std::stof(val);
                 else if (sub == "heatmapQuantileLow") vp.heatmapQuantileLow = std::stof(val);
                 else if (sub == "heatmapQuantileHigh") vp.heatmapQuantileHigh = std::stof(val);
+                else if (sub == "showSparseOverlay") vp.showSparseOverlay = (std::stoi(val) != 0);
+                else if (sub == "displayAutoWaterLevel") vp.displayManager.autoWaterLevel = (std::stoi(val) != 0);
+                else if (sub == "displayWaterThreshold") vp.displayManager.waterLevel = std::stof(val);
+                else if (sub == "displayWaterQuantile") vp.displayManager.autoWaterQuantile = std::stof(val);
+                else if (sub == "displayLowlandThreshold") vp.displayManager.lowlandThreshold = std::stof(val);
+                else if (sub == "displayHighlandThreshold") vp.displayManager.highlandThreshold = std::stof(val);
+                else if (sub == "displayWaterPresenceThreshold") vp.displayManager.waterPresenceThreshold = std::stof(val);
+                else if (sub == "displayShallowWaterDepth") vp.displayManager.shallowWaterDepth = std::stof(val);
+                else if (sub == "displayHighMoistureThreshold") vp.displayManager.highMoistureThreshold = std::stof(val);
                 else if (sub == "showWindMagnitudeBackground") vp.showWindMagnitudeBackground = (std::stoi(val) != 0);
                 else if (sub == "showVectorField")    vp.showVectorField    = (std::stoi(val) != 0);
                 else if (sub == "vectorXFieldIndex")  vp.vectorXFieldIndex  = std::stoi(val);
@@ -2886,6 +2935,16 @@ void loadDisplayPrefs() {
                 else if (sub == "showLegend")         vp.showLegend         = (std::stoi(val) != 0);
                 else if (sub == "fixedRangeMin")      vp.fixedRangeMin      = std::stof(val);
                 else if (sub == "fixedRangeMax")      vp.fixedRangeMax      = std::stof(val);
+                else if (sub == "brightness")         vp.brightness         = std::stof(val);
+                else if (sub == "contrast")           vp.contrast           = std::stof(val);
+                else if (sub == "gamma")              vp.gamma              = std::stof(val);
+                else if (sub == "invertColors")       vp.invertColors       = (std::stoi(val) != 0);
+                else if (sub == "showGrid")           vp.showGrid           = (std::stoi(val) != 0);
+                else if (sub == "gridOpacity")        vp.gridOpacity        = std::stof(val);
+                else if (sub == "gridLineThickness")  vp.gridLineThickness  = std::stof(val);
+                else if (sub == "showBoundary")       vp.showBoundary       = (std::stoi(val) != 0);
+                else if (sub == "boundaryOpacity")    vp.boundaryOpacity    = std::stof(val);
+                else if (sub == "boundaryThickness")  vp.boundaryThickness  = std::stof(val);
                 else if (sub == "zoom") {
                     viewportManager_.setZoom(viewportIndex, std::stof(val));
                 } else if (sub == "panX") {
@@ -2899,18 +2958,27 @@ void loadDisplayPrefs() {
         } catch (...) {}
     }
     // clamp after load
-    viz_.displayManager.waterLevel = std::clamp(viz_.displayManager.waterLevel, 0.0f, 1.0f);
-    viz_.displayManager.autoWaterQuantile = std::clamp(viz_.displayManager.autoWaterQuantile, 0.0f, 1.0f);
-    viz_.displayManager.lowlandThreshold  = std::clamp(viz_.displayManager.lowlandThreshold,  0.0f, 1.0f);
-    viz_.displayManager.highlandThreshold = std::clamp(
-        viz_.displayManager.highlandThreshold,
-        viz_.displayManager.lowlandThreshold + 0.01f, 1.0f);
-    viz_.displayManager.waterPresenceThreshold = std::clamp(
-        viz_.displayManager.waterPresenceThreshold, 0.0f, 1.0f);
-    viz_.displayManager.shallowWaterDepth = std::clamp(
-        viz_.displayManager.shallowWaterDepth, 0.0f, 0.5f);
-    viz_.displayManager.highMoistureThreshold = std::clamp(
-        viz_.displayManager.highMoistureThreshold, 0.0f, 1.0f);
+    for (auto& vp : viz_.viewports) {
+        vp.displayManager.waterLevel = std::clamp(vp.displayManager.waterLevel, 0.0f, 1.0f);
+        vp.displayManager.autoWaterQuantile = std::clamp(vp.displayManager.autoWaterQuantile, 0.0f, 1.0f);
+        vp.displayManager.lowlandThreshold  = std::clamp(vp.displayManager.lowlandThreshold,  0.0f, 1.0f);
+        vp.displayManager.highlandThreshold = std::clamp(
+            vp.displayManager.highlandThreshold,
+            vp.displayManager.lowlandThreshold + 0.01f, 1.0f);
+        vp.displayManager.waterPresenceThreshold = std::clamp(
+            vp.displayManager.waterPresenceThreshold, 0.0f, 1.0f);
+        vp.displayManager.shallowWaterDepth = std::clamp(
+            vp.displayManager.shallowWaterDepth, 0.0f, 0.5f);
+        vp.displayManager.highMoistureThreshold = std::clamp(
+            vp.displayManager.highMoistureThreshold, 0.0f, 1.0f);
+        vp.brightness = std::clamp(vp.brightness, 0.1f, 3.0f);
+        vp.contrast = std::clamp(vp.contrast, 0.1f, 3.0f);
+        vp.gamma = std::clamp(vp.gamma, 0.2f, 3.0f);
+        vp.gridOpacity = std::clamp(vp.gridOpacity, 0.0f, 1.0f);
+        vp.gridLineThickness = std::clamp(vp.gridLineThickness, 0.5f, 3.0f);
+        vp.boundaryOpacity = std::clamp(vp.boundaryOpacity, 0.0f, 1.0f);
+        vp.boundaryThickness = std::clamp(vp.boundaryThickness, 0.5f, 6.0f);
+    }
     viz_.displayRefreshEveryNSteps = std::clamp(viz_.displayRefreshEveryNSteps, 1, 1000);
     viz_.displayTargetRefreshHz = std::clamp(viz_.displayTargetRefreshHz, 15, 240);
     ensureViewportStateConsistency();

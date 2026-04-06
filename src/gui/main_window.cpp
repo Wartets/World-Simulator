@@ -65,23 +65,6 @@ namespace {
 
 enum class OverlayIcon { None, Play, Pause };
 
-struct VisualParams {
-    float zoom        = 1.0f;
-    float panX        = 0.0f;
-    float panY        = 0.0f;
-    float brightness  = 1.0f;
-    float contrast    = 1.0f;
-    float gamma       = 1.0f;
-    bool  invertColors = false;
-    bool  showGrid    = false;
-    float gridOpacity = 0.35f;
-    float gridLineThickness = 1.0f;
-    bool  showBoundary      = true;
-    float boundaryOpacity   = 0.85f;
-    float boundaryThickness = 1.2f;
-    bool  boundaryAnimate   = true;
-};
-
 using PanelState = main_window::PanelState;
 
 struct OverlayState {
@@ -99,6 +82,10 @@ struct ViewportConfig {
     DisplayType displayType = DisplayType::ScalarField;
     ViewportRenderMode renderMode = ViewportRenderMode::Heatmap;
 
+    bool showSparseOverlay = true;
+
+    DisplayManagerParams displayManager{};
+
     NormalizationMode normalizationMode = NormalizationMode::StickyPerField;
     ColorMapMode      colorMapMode      = ColorMapMode::Turbo;
     HeatmapNormalization heatmapNormalization = HeatmapNormalization::Linear;
@@ -113,6 +100,18 @@ struct ViewportConfig {
     bool showLegend      = true;
     bool showRangeDetails = true;
     bool showWindMagnitudeBackground = true;
+
+    float brightness = 1.0f;
+    float contrast = 1.0f;
+    float gamma = 1.0f;
+    bool invertColors = false;
+
+    bool  showGrid = false;
+    float gridOpacity = 0.35f;
+    float gridLineThickness = 1.0f;
+    bool  showBoundary = true;
+    float boundaryOpacity = 0.85f;
+    float boundaryThickness = 1.2f;
 
     bool  showVectorField  = false;
     int   vectorXFieldIndex = 0;
@@ -148,8 +147,6 @@ struct VisualizationState {
     }();
     int activeViewportEditor = 0;
 
-    bool  showCellGrid      = false;
-    bool  showSparseOverlay = true;
     bool  autoRun           = true;
     int   displayRefreshEveryNSteps = 1;
     int   displayTargetRefreshHz = 120;
@@ -160,7 +157,6 @@ struct VisualizationState {
     int   maxRenderedCells    = 220000;
 
     DisplayType       generationPreviewDisplayType = DisplayType::SurfaceCategory;
-    DisplayManagerParams displayManager{};
 
     std::vector<std::string> fieldNames;
     RuntimeCheckpoint cachedCheckpoint{};
@@ -873,7 +869,6 @@ private:
     AccessibilityConfig  accessibility_{};
     PanelState           panel_{};
     session_manager::SessionUiState sessionUi_{};
-    VisualParams         visuals_{};
     VisualizationState   viz_{};
     OverlayState         overlay_{};
     std::vector<std::string> logs_;

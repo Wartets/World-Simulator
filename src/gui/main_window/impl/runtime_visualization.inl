@@ -387,22 +387,28 @@ bool saveViewportScreenshot(const int viewportIndex, const std::string& outputPa
     h = hashCombine(h, static_cast<std::uint64_t>(vp.displayType));
     h = hashCombine(h, static_cast<std::uint64_t>(vp.normalizationMode));
     h = hashCombine(h, static_cast<std::uint64_t>(vp.colorMapMode));
-    h = hashCombine(h, static_cast<std::uint64_t>(viz_.showSparseOverlay));
+    h = hashCombine(h, static_cast<std::uint64_t>(vp.showSparseOverlay));
     h = hashCombine(h, hashFloat(vp.fixedRangeMin));
     h = hashCombine(h, hashFloat(vp.fixedRangeMax));
-    h = hashCombine(h, static_cast<std::uint64_t>(viz_.displayManager.autoWaterLevel));
-    h = hashCombine(h, hashFloat(viz_.displayManager.waterLevel));
-    h = hashCombine(h, hashFloat(viz_.displayManager.autoWaterQuantile));
-    h = hashCombine(h, hashFloat(viz_.displayManager.lowlandThreshold));
-    h = hashCombine(h, hashFloat(viz_.displayManager.highlandThreshold));
-    h = hashCombine(h, hashFloat(viz_.displayManager.waterPresenceThreshold));
-    h = hashCombine(h, hashFloat(viz_.displayManager.shallowWaterDepth));
-    h = hashCombine(h, hashFloat(viz_.displayManager.highMoistureThreshold));
+    h = hashCombine(h, static_cast<std::uint64_t>(vp.displayManager.autoWaterLevel));
+    h = hashCombine(h, hashFloat(vp.displayManager.waterLevel));
+    h = hashCombine(h, hashFloat(vp.displayManager.autoWaterQuantile));
+    h = hashCombine(h, hashFloat(vp.displayManager.lowlandThreshold));
+    h = hashCombine(h, hashFloat(vp.displayManager.highlandThreshold));
+    h = hashCombine(h, hashFloat(vp.displayManager.waterPresenceThreshold));
+    h = hashCombine(h, hashFloat(vp.displayManager.shallowWaterDepth));
+    h = hashCombine(h, hashFloat(vp.displayManager.highMoistureThreshold));
     h = hashCombine(h, static_cast<std::uint64_t>(vp.showWindMagnitudeBackground));
-    h = hashCombine(h, hashFloat(visuals_.brightness));
-    h = hashCombine(h, hashFloat(visuals_.contrast));
-    h = hashCombine(h, hashFloat(visuals_.gamma));
-    h = hashCombine(h, static_cast<std::uint64_t>(visuals_.invertColors));
+    h = hashCombine(h, hashFloat(vp.brightness));
+    h = hashCombine(h, hashFloat(vp.contrast));
+    h = hashCombine(h, hashFloat(vp.gamma));
+    h = hashCombine(h, static_cast<std::uint64_t>(vp.invertColors));
+    h = hashCombine(h, static_cast<std::uint64_t>(vp.showGrid));
+    h = hashCombine(h, hashFloat(vp.gridOpacity));
+    h = hashCombine(h, hashFloat(vp.gridLineThickness));
+    h = hashCombine(h, static_cast<std::uint64_t>(vp.showBoundary));
+    h = hashCombine(h, hashFloat(vp.boundaryOpacity));
+    h = hashCombine(h, hashFloat(vp.boundaryThickness));
     return h;
 }
 
@@ -471,9 +477,9 @@ bool saveViewportScreenshot(const int viewportIndex, const std::string& outputPa
 }
 
 // Color mapping
-[[nodiscard]] ImU32 mapColor(const float t, const ColorMapMode mode) const {
-    const float v = applyDisplayTransfer(t, visuals_.brightness, visuals_.contrast,
-                                          visuals_.gamma, visuals_.invertColors);
+[[nodiscard]] ImU32 mapColor(const float t, const ColorMapMode mode, const ViewportConfig& vp) const {
+    const float v = applyDisplayTransfer(t, vp.brightness, vp.contrast,
+                                          vp.gamma, vp.invertColors);
     switch (mode) {
         case ColorMapMode::Grayscale: return colormapGrayscale(v);
         case ColorMapMode::Diverging: return colormapDiverging(v);
@@ -483,8 +489,9 @@ bool saveViewportScreenshot(const int viewportIndex, const std::string& outputPa
 }
 
 [[nodiscard]] ImU32 mapDisplayTypeColor(const float value, const DisplayType type,
-                                         const ColorMapMode palette) const {
-    if (type == DisplayType::ScalarField) return mapColor(value, palette);
+                                         const ColorMapMode palette,
+                                         const ViewportConfig& vp) const {
+    if (type == DisplayType::ScalarField) return mapColor(value, palette, vp);
 
     if (type == DisplayType::SurfaceCategory) {
         switch (static_cast<int>(std::round(value))) {
@@ -525,13 +532,14 @@ bool saveViewportScreenshot(const int viewportIndex, const std::string& outputPa
     // WaterDepth
     const float d = std::clamp(value, 0.0f, 1.0f);
     if (d <= 0.001f) return IM_COL32(0,0,0,255);
-    return colormapWater(applyDisplayTransfer(d, visuals_.brightness, visuals_.contrast,
-                                               visuals_.gamma, visuals_.invertColors));
+    return colormapWater(applyDisplayTransfer(d, vp.brightness, vp.contrast,
+                                               vp.gamma, vp.invertColors));
 }
 
 void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float h,
                    const DisplayType type, const ColorMapMode palette,
-                   const float minV, const float maxV, bool horizontal = true) const {
+                   const float minV, const float maxV, const ViewportConfig& vp,
+                   bool horizontal = true) const {
     if (!horizontal) {
         // Original vertical mode (for backward compatibility if needed)
         dl.AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), IM_COL32(10, 12, 20, 220), 3.0f);
@@ -545,7 +553,7 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
                 const float t1 = static_cast<float>(i + 1) / static_cast<float>(kSteps);
                 const float y0 = pos.y + h * (1.0f - t1);
                 const float y1 = pos.y + h * (1.0f - t0);
-                const ImU32 color = mapDisplayTypeColor(t0, type, palette);
+                const ImU32 color = mapDisplayTypeColor(t0, type, palette, vp);
                 dl.AddRectFilled(ImVec2(pos.x, y0), ImVec2(pos.x + w, y1), color);
             }
             char buf[32];
@@ -567,7 +575,7 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
             const float t1 = static_cast<float>(i + 1) / static_cast<float>(kSteps);
             const float x0 = pos.x + w * t0;
             const float x1 = (i == (kSteps - 1)) ? (pos.x + w) : (pos.x + w * t1);
-            const ImU32 color = mapDisplayTypeColor(t0, type, palette);
+            const ImU32 color = mapDisplayTypeColor(t0, type, palette, vp);
             dl.AddRectFilled(ImVec2(x0, pos.y), ImVec2(x1, pos.y + h), color);
         }
         return;
@@ -583,7 +591,7 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
             const float x1 = (i + 1u == labels.size()) ? (pos.x + w) : (x + boxW);
             const int category = static_cast<int>(i);
             dl.AddRectFilled(ImVec2(x, pos.y), ImVec2(x1, pos.y + h),
-                             mapDisplayTypeColor(static_cast<float>(category), type, palette));
+                             mapDisplayTypeColor(static_cast<float>(category), type, palette, vp));
         }
         return;
     }
@@ -598,7 +606,7 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
             const float x = pos.x + boxW * static_cast<float>(i);
             const float x1 = (i + 1u == labels.size()) ? (pos.x + w) : (x + boxW);
             dl.AddRectFilled(ImVec2(x, pos.y), ImVec2(x1, pos.y + h),
-                             mapDisplayTypeColor(values[i], type, palette));
+                             mapDisplayTypeColor(values[i], type, palette, vp));
         }
         return;
     }
@@ -613,7 +621,7 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
             const float x1 = (i + 1u == labels.size()) ? (pos.x + w) : (x + boxW);
             const int category = static_cast<int>(i);
             dl.AddRectFilled(ImVec2(x, pos.y), ImVec2(x1, pos.y + h),
-                             mapDisplayTypeColor(static_cast<float>(category), type, palette));
+                             mapDisplayTypeColor(static_cast<float>(category), type, palette, vp));
         }
     }
 }
@@ -633,12 +641,7 @@ void applyTheme(const bool rebuildFonts) {
 
 // Viewport clear + background
 void drawViewport() {
-    float base = 0.05f * visuals_.brightness;
-    float b = std::clamp(base * visuals_.contrast, 0.0f, 1.0f);
-    if (visuals_.invertColors) b = 1.0f - b;
-    glClearColor(std::clamp(b * 0.90f, 0.0f, 1.0f),
-                 std::clamp(b * 0.95f, 0.0f, 1.0f),
-                 std::clamp(b * 1.15f, 0.0f, 1.0f), 1.0f);
+    glClearColor(0.08f, 0.09f, 0.11f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
@@ -694,15 +697,15 @@ void drawSimulationCanvas() {
         std::uint64_t dKey = 1469598103934665603ull;
         dKey = hashCombine(dKey, static_cast<std::uint64_t>(vp.primaryFieldIndex));
         dKey = hashCombine(dKey, static_cast<std::uint64_t>(vp.displayType));
-        dKey = hashCombine(dKey, static_cast<std::uint64_t>(viz_.showSparseOverlay));
-        dKey = hashCombine(dKey, static_cast<std::uint64_t>(viz_.displayManager.autoWaterLevel));
-        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.waterLevel));
-        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.autoWaterQuantile));
-        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.lowlandThreshold));
-        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.highlandThreshold));
-        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.waterPresenceThreshold));
-        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.shallowWaterDepth));
-        dKey = hashCombine(dKey, hashFloat(viz_.displayManager.highMoistureThreshold));
+        dKey = hashCombine(dKey, static_cast<std::uint64_t>(vp.showSparseOverlay));
+        dKey = hashCombine(dKey, static_cast<std::uint64_t>(vp.displayManager.autoWaterLevel));
+        dKey = hashCombine(dKey, hashFloat(vp.displayManager.waterLevel));
+        dKey = hashCombine(dKey, hashFloat(vp.displayManager.autoWaterQuantile));
+        dKey = hashCombine(dKey, hashFloat(vp.displayManager.lowlandThreshold));
+        dKey = hashCombine(dKey, hashFloat(vp.displayManager.highlandThreshold));
+        dKey = hashCombine(dKey, hashFloat(vp.displayManager.waterPresenceThreshold));
+        dKey = hashCombine(dKey, hashFloat(vp.displayManager.shallowWaterDepth));
+        dKey = hashCombine(dKey, hashFloat(vp.displayManager.highMoistureThreshold));
         dKey = hashCombine(dKey, static_cast<std::uint64_t>(vp.showWindMagnitudeBackground));
         dKey = hashCombine(dKey, displayTagSignature(fieldDisplayTags_));
 
@@ -710,7 +713,7 @@ void drawSimulationCanvas() {
         if (it == snapshotDisplayCache_.end()) {
             DisplayBuffer buf = buildDisplayBufferFromSnapshot(
                 snapshot, vp.primaryFieldIndex, vp.displayType,
-                viz_.showSparseOverlay, viz_.displayManager, fieldDisplayTags_);
+                vp.showSparseOverlay, vp.displayManager, fieldDisplayTags_);
             it = snapshotDisplayCache_.emplace(dKey, std::move(buf)).first;
         }
         const DisplayBuffer& db = it->second;
@@ -889,7 +892,7 @@ void rebuildRasterTexture(int vi, const GridSpec grid,
                     const float t = std::clamp((val - pMin) / std::max(0.0001f, pMax - pMin), 0.0f, 1.0f);
                     color = mapDisplayTypeColor(
                         (vp.displayType == DisplayType::WaterDepth) ? t : val,
-                        vp.displayType, vp.colorMapMode);
+                        vp.displayType, vp.colorMapMode, vp);
                 }
             }
             std::uint8_t r,g,b,a;
@@ -946,10 +949,10 @@ void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, 
     }
 
     // Grid lines
-    if (visuals_.showGrid && viz_.showCellGrid &&
+    if (vp.showGrid &&
         m.cellW * m.samplingStride >= 4.0f && m.cellH * m.samplingStride >= 4.0f) {
-        const int alpha = static_cast<int>(std::clamp(visuals_.gridOpacity, 0.0f, 1.0f) * 180.0f);
-        const float th  = std::max(0.5f, visuals_.gridLineThickness);
+        const int alpha = static_cast<int>(std::clamp(vp.gridOpacity, 0.0f, 1.0f) * 180.0f);
+        const float th  = std::max(0.5f, vp.gridLineThickness);
         const int strd  = std::max(1, m.samplingStride);
         for (std::uint32_t x = 0; x <= grid.width; x += strd) {
             const float px = m.contentMin.x + m.cellW * x;
@@ -966,10 +969,10 @@ void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, 
     dl.PopClipRect();
 
     // Boundary
-    if (visuals_.showBoundary) {
-        const int alpha = static_cast<int>(std::clamp(visuals_.boundaryOpacity, 0.0f, 1.0f) * 255.0f);
+    if (vp.showBoundary) {
+        const int alpha = static_cast<int>(std::clamp(vp.boundaryOpacity, 0.0f, 1.0f) * 255.0f);
         dl.AddRect(m.viewportMin, m.viewportMax,
-            IM_COL32(90,105,140,alpha), 2.0f, 0, std::max(0.5f, visuals_.boundaryThickness));
+            IM_COL32(90,105,140,alpha), 2.0f, 0, std::max(0.5f, vp.boundaryThickness));
     }
 
     // Title
@@ -994,7 +997,7 @@ void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, 
         const float colorbarH = 16.0f;
         const ImVec2 colorbarPos(infoLeft, colorbarY);
         
-        drawLegendBar(dl, colorbarPos, colorbarW, colorbarH, vp.displayType, vp.colorMapMode, minV, maxV, true);
+        drawLegendBar(dl, colorbarPos, colorbarW, colorbarH, vp.displayType, vp.colorMapMode, minV, maxV, vp, true);
 
         // Min/max labels below colorbar, left and right aligned
         char minBuf[24], maxBuf[24];
@@ -1050,8 +1053,8 @@ void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
     if (vp.vectorXFieldIndex >= (int)fields.size() ||
         vp.vectorYFieldIndex >= (int)fields.size()) return;
 
-    const auto xVals = mergedFieldValues(fields[vp.vectorXFieldIndex], viz_.showSparseOverlay);
-    const auto yVals = mergedFieldValues(fields[vp.vectorYFieldIndex], viz_.showSparseOverlay);
+    const auto xVals = mergedFieldValues(fields[vp.vectorXFieldIndex], vp.showSparseOverlay);
+    const auto yVals = mergedFieldValues(fields[vp.vectorYFieldIndex], vp.showSparseOverlay);
 
     float xMin,xMax,yMin,yMax;
     minMaxFinite(xVals, xMin, xMax);
@@ -1073,8 +1076,8 @@ void drawWindFieldOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
         windUIdx >= static_cast<int>(fields.size()) ||
         windVIdx >= static_cast<int>(fields.size())) return;
 
-    const auto xVals = mergedFieldValues(fields[static_cast<std::size_t>(windUIdx)], viz_.showSparseOverlay);
-    const auto yVals = mergedFieldValues(fields[static_cast<std::size_t>(windVIdx)], viz_.showSparseOverlay);
+    const auto xVals = mergedFieldValues(fields[static_cast<std::size_t>(windUIdx)], vp.showSparseOverlay);
+    const auto yVals = mergedFieldValues(fields[static_cast<std::size_t>(windVIdx)], vp.showSparseOverlay);
     const ViewMapping m = makeViewMapping(min, max, grid, viewportIndex);
     VectorRenderConfig config{};
     config.stride = std::max(std::max(1, vp.vectorStride), m.samplingStride);
@@ -1094,7 +1097,7 @@ void drawContourOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
         return;
     }
 
-    const auto values = mergedFieldValues(fields[static_cast<std::size_t>(vp.primaryFieldIndex)], viz_.showSparseOverlay);
+    const auto values = mergedFieldValues(fields[static_cast<std::size_t>(vp.primaryFieldIndex)], vp.showSparseOverlay);
     const ViewMapping m = makeViewMapping(min, max, grid, viewportIndex);
     ContourRenderConfig cfg{};
     cfg.interval = std::max(1e-4f, vp.contourInterval);
