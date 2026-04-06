@@ -410,15 +410,28 @@ void Runtime::start() {
                     return std::nullopt;
                 };
 
+                const auto resolveSeedTargetAny = [&](std::initializer_list<const char*> semanticKeys) -> std::optional<std::string> {
+                    for (const char* semanticKey : semanticKeys) {
+                        if (semanticKey == nullptr || semanticKey[0] == '\0') {
+                            continue;
+                        }
+                        if (const auto resolved = resolveSeedTarget(semanticKey); resolved.has_value()) {
+                            return resolved;
+                        }
+                    }
+                    return std::nullopt;
+                };
+
                 const auto terrainElevationVar = resolveSeedTarget("generation.elevation");
                 const auto hydrologyWaterVar = resolveSeedTarget("hydrology.water");
                 const auto temperatureVar = resolveSeedTarget("temperature.current");
-                const auto humidityVar = resolveSeedTarget("humidity.current");
+                const auto humidityVar = resolveSeedTargetAny({"humidity.current", "fire.moisture", "fire.humidity", "ecology.moisture", "biology.moisture"});
                 const auto windAxisXVar = resolveSeedTarget("wind.vector.axis_x");
                 const auto windAxisYVar = resolveSeedTarget("wind.vector.axis_y");
                 const auto climateVar = resolveSeedTarget("climate.current");
                 const auto soilFertilityVar = resolveSeedTarget("soil.fertility");
-                const auto vegetationVar = resolveSeedTarget("vegetation.current");
+                const auto vegetationVar = resolveSeedTargetAny({"vegetation.current", "fire.vegetation", "fire.fuel", "ecology.vegetation", "biology.vegetation"});
+                const auto fireStateVar = resolveSeedTargetAny({"fire.state", "fire.current", "fire.burning", "ecology.fire_state", "simulation.fire_state"});
                 const auto resourcesVar = resolveSeedTarget("resources.current");
                 const auto eventSignalVar = resolveSeedTarget("events.signal");
                 const auto eventWaterDeltaVar = resolveSeedTarget("events.water_delta");
@@ -552,6 +565,12 @@ void Runtime::start() {
                         const float vegetation = std::clamp(0.25f + 0.55f * fertility * humidity, 0.0f, 1.0f);
                         const float resources = std::clamp(0.15f + 0.55f * vegetation + 0.15f * water + 0.15f * biomeNoise, 0.0f, 1.0f);
                         const float eventSignal = std::clamp(0.15f + 0.85f * fbm2D(noiseSeedA, domainX * 10.0f + 3.0f, domainY * 10.0f + 5.0f, 3, 2.1f, 0.58f), 0.0f, 1.0f);
+                        const float ignitionNoise = hash01(
+                            DeterministicHash::combine(config_.seed, 0xF17E5101ULL),
+                            static_cast<int>(x),
+                            static_cast<int>(y));
+                        const bool ignite = (vegetation > 0.55f) && (humidity < 0.45f) && (ignitionNoise > 0.9975f);
+                        const float fireState = ignite ? 1.0f : 0.0f;
 
                         const auto writeIfResolved = [&](const std::optional<std::string>& variableName, const float value) {
                             if (variableName.has_value()) {
@@ -568,6 +587,7 @@ void Runtime::start() {
                         writeIfResolved(climateVar, climate);
                         writeIfResolved(soilFertilityVar, fertility);
                         writeIfResolved(vegetationVar, vegetation);
+                        writeIfResolved(fireStateVar, fireState);
                         writeIfResolved(resourcesVar, resources);
                         writeIfResolved(eventSignalVar, eventSignal);
                         writeIfResolved(eventWaterDeltaVar, 0.0f);

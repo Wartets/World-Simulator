@@ -1126,6 +1126,42 @@ void refreshFieldNames() {
         }
         for (auto& vp : viz_.viewports) vp.stickyRanges.clear();
         clampVisualizationIndices();
+
+        const auto fieldExists = [&](const char* name) {
+            if (name == nullptr || name[0] == '\0') {
+                return false;
+            }
+            return std::find(viz_.fieldNames.begin(), viz_.fieldNames.end(), std::string(name)) != viz_.fieldNames.end();
+        };
+
+        const std::string& firstField = viz_.fieldNames.front();
+        if (!fieldExists(panel_.summaryVariable)) {
+            std::snprintf(panel_.summaryVariable, sizeof(panel_.summaryVariable), "%s", firstField.c_str());
+        }
+        if (!fieldExists(panel_.manualPatchVariable)) {
+            std::snprintf(panel_.manualPatchVariable, sizeof(panel_.manualPatchVariable), "%s", firstField.c_str());
+        }
+        if (!fieldExists(panel_.perturbationVariable)) {
+            std::snprintf(panel_.perturbationVariable, sizeof(panel_.perturbationVariable), "%s", firstField.c_str());
+        }
+
+        if (panel_.initialConditionTypeIndex == static_cast<int>(InitialConditionType::Conway) &&
+            !fieldExists(panel_.conwayTargetVariable)) {
+            std::snprintf(panel_.conwayTargetVariable, sizeof(panel_.conwayTargetVariable), "%s", firstField.c_str());
+        }
+        if (panel_.initialConditionTypeIndex == static_cast<int>(InitialConditionType::Waves) &&
+            !fieldExists(panel_.wavesTargetVariable)) {
+            std::snprintf(panel_.wavesTargetVariable, sizeof(panel_.wavesTargetVariable), "%s", firstField.c_str());
+        }
+        if (panel_.initialConditionTypeIndex == static_cast<int>(InitialConditionType::GrayScott)) {
+            if (!fieldExists(panel_.grayScottTargetVariableA)) {
+                std::snprintf(panel_.grayScottTargetVariableA, sizeof(panel_.grayScottTargetVariableA), "%s", firstField.c_str());
+            }
+            if (!fieldExists(panel_.grayScottTargetVariableB)) {
+                const std::string& secondField = viz_.fieldNames.size() > 1 ? viz_.fieldNames[1] : viz_.fieldNames[0];
+                std::snprintf(panel_.grayScottTargetVariableB, sizeof(panel_.grayScottTargetVariableB), "%s", secondField.c_str());
+            }
+        }
     } else if (!msg.empty()) {
         std::snprintf(viz_.lastRuntimeError, sizeof(viz_.lastRuntimeError), "%s", msg.c_str());
     }

@@ -178,7 +178,7 @@ func spread_fire() {
     
     // Random ignition check (lightning)
     %random_ignite = And(%is_unburned, %has_vegetation)
-    %random_ignite = And(%random_ignite, Compare(%ignition_base, %spread_threshold, "<"))
+    %random_ignite = And(%random_ignite, Compare(%ignition_base, %spread_threshold, ">"))
     
     // Final fire state
     %new_state = Select(%ignite, 1, %fire_state)
@@ -195,12 +195,21 @@ func spread_fire() {
 @interaction(burnout_cells)
 func burnout_cells() {
     %fire_state = Load("fire_state", 0, 0)
+    %veg = Load("vegetation", 0, 0)
+    %dt = GlobalLoad("dt")
     
-    // If currently burning (state = 1), become burned (state = 2)
+    // Burning cells consume fuel and only burn out once fuel is mostly exhausted.
     %is_burning = Compare(%fire_state, 1, "==")
-    %new_state = Select(%is_burning, 2, %fire_state)
+    %burn_rate = 0.25
+    %burn_amount = Mul(%burn_rate, %dt)
+    %veg_after_burn = Max(Sub(%veg, %burn_amount), 0.0)
+    %fuel_exhausted = Compare(%veg_after_burn, 0.02, "<=")
+    %to_burned = And(%is_burning, %fuel_exhausted)
+    %new_state = Select(%to_burned, 2, %fire_state)
+    %final_veg = Select(%is_burning, %veg_after_burn, %veg)
     
     Store("fire_state", %new_state)
+    Store("vegetation", %final_veg)
 }
 
 // ============================================================

@@ -16,6 +16,7 @@ struct PanelState {
     std::uint64_t runUntilTarget = 100;
     bool showAdvancedStepping = false;
     float playbackSpeed = 1.0f;
+    bool playbackSpeedDirty = false;
     std::uint64_t seekTargetStep = 0;
     int backwardStepCount = 1;
     int checkpointIntervalSteps = 100;
@@ -49,13 +50,13 @@ struct PanelState {
     float shelfDepth = 0.20f;
 
     int initialConditionTypeIndex = 0;
-    char conwayTargetVariable[128] = "vegetation_v";
+    char conwayTargetVariable[128] = "";
     float conwayAliveProbability = 0.5f;
     float conwayAliveValue = 1.0f;
     float conwayDeadValue = 0.0f;
     int conwaySmoothingPasses = 0;
-    char grayScottTargetVariableA[128] = "resource_stock_r";
-    char grayScottTargetVariableB[128] = "vegetation_v";
+    char grayScottTargetVariableA[128] = "";
+    char grayScottTargetVariableB[128] = "";
     float grayScottBackgroundA = 1.0f;
     float grayScottBackgroundB = 0.0f;
     float grayScottSpotValueA = 0.0f;
@@ -78,6 +79,8 @@ struct PanelState {
     char parameterPresetName[128] = "default_runtime";
     int selectedParameterIndex = 0;
     float parameterValue = 0.0f;
+    bool parameterValueDirty = false;
+    char selectedParameterName[128] = "";
     char manualPatchVariable[128] = "";
     bool manualPatchGlobal = false;
     int manualPatchX = 0;

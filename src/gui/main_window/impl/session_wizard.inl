@@ -1247,6 +1247,7 @@
                 std::string message;
                 if (runtime_.createWorld(worldName, runtime_.config(), message)) {
                     appendLog(message);
+                    syncPanelFromConfig();
                     refreshFieldNames();
                     resetDisplayConfigToDefaults();
                     loadDisplayPrefs();

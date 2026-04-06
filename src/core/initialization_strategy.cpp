@@ -188,6 +188,7 @@ void applyWaves(StateStore& stateStore, const RuntimeConfig& config) {
 } // namespace
 
 void applyNonTerrainInitialization(StateStore& stateStore, const RuntimeConfig& config) {
+    static_cast<void>(stateStore);
     switch (config.initialConditions.type) {
         case InitialConditionType::Conway:
             applyConway(stateStore, config);
@@ -198,11 +199,20 @@ void applyNonTerrainInitialization(StateStore& stateStore, const RuntimeConfig& 
         case InitialConditionType::Waves:
             applyWaves(stateStore, config);
             return;
+        case InitialConditionType::Voronoi:
+        case InitialConditionType::Clustering:
+        case InitialConditionType::SparseRandom:
+        case InitialConditionType::GradientField:
+        case InitialConditionType::Checkerboard:
+        case InitialConditionType::RadialPattern:
+        case InitialConditionType::MultiScale:
+        case InitialConditionType::DiffusionLimit:
         case InitialConditionType::Blank:
             return;
         case InitialConditionType::Terrain:
-        default:
             throw std::invalid_argument("applyNonTerrainInitialization called with terrain mode");
+        default:
+            return;
     }
 }
 

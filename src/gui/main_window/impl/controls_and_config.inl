@@ -271,6 +271,8 @@ void drawInterventionsTab() {
 
 void drawParameterControlSection() {
     if (!runtime_.isRunning()) {
+        panel_.parameterValueDirty = false;
+        panel_.selectedParameterName[0] = '\0';
         ImGui::TextDisabled("Start the simulation to edit runtime parameters.");
         return;
     }
@@ -287,26 +289,38 @@ void drawParameterControlSection() {
         panel_.selectedParameterIndex = std::clamp(panel_.selectedParameterIndex, 0, static_cast<int>(controls.size() - 1));
         const auto& selected = controls[static_cast<std::size_t>(panel_.selectedParameterIndex)];
 
+        const bool selectionChanged = (std::string(panel_.selectedParameterName) != selected.name);
+        if (selectionChanged || !panel_.parameterValueDirty) {
+            panel_.parameterValue = selected.value;
+            std::snprintf(panel_.selectedParameterName, sizeof(panel_.selectedParameterName), "%s", selected.name.c_str());
+            panel_.parameterValueDirty = false;
+        }
+
         if (ImGui::BeginCombo("Writable parameter##phase6", selected.name.c_str())) {
             for (int i = 0; i < static_cast<int>(controls.size()); ++i) {
                 const bool selectedItem = (i == panel_.selectedParameterIndex);
                 if (ImGui::Selectable(controls[static_cast<std::size_t>(i)].name.c_str(), selectedItem)) {
                     panel_.selectedParameterIndex = i;
                     panel_.parameterValue = controls[static_cast<std::size_t>(i)].value;
+                    std::snprintf(panel_.selectedParameterName, sizeof(panel_.selectedParameterName), "%s", controls[static_cast<std::size_t>(i)].name.c_str());
+                    panel_.parameterValueDirty = false;
                 }
             }
             ImGui::EndCombo();
         }
 
         const auto& active = controls[static_cast<std::size_t>(panel_.selectedParameterIndex)];
-        sliderFloatWithHint("Parameter value", &panel_.parameterValue, active.minValue, active.maxValue, "%.5f",
-            "Applies a deterministic global forcing update by queueing input patches for the target field.");
+        if (sliderFloatWithHint("Parameter value", &panel_.parameterValue, active.minValue, active.maxValue, "%.5f",
+            "Applies a deterministic global forcing update by queueing input patches for the target field.")) {
+            panel_.parameterValueDirty = true;
+        }
         ImGui::TextDisabled("Target field: %s  | units: %s", active.targetVariable.c_str(), active.units.c_str());
 
         if (PrimaryButton("Apply parameter", ImVec2(-1.0f, 26.0f))) {
             std::string setMsg;
             runtime_.setParameterValue(active.name, panel_.parameterValue, "ui_parameter_update", setMsg);
             appendLog(setMsg);
+            panel_.parameterValueDirty = false;
         }
     } else {
         ImGui::TextDisabled("No writable parameter controls are registered.");
@@ -587,6 +601,7 @@ void drawTierSelector() {
             if (runtime_.restart(msg)) {
                 viz_.autoRun = false;
                 appendLog(msg);
+                syncPanelFromConfig();
                 requestSnapshotRefresh();
                 enterSimulationPaused();
             } else {
@@ -615,6 +630,7 @@ void drawPlaybackSection() {
             std::string msg;
             if (runtime_.start(msg)) {
                 viz_.autoRun = true; appendLog(msg);
+                syncPanelFromConfig();
                 refreshFieldNames(); requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Play);
             } else appendLog(msg);
@@ -738,15 +754,25 @@ void drawStepControlsSection() {
 
 void drawTimeControlSection() {
     if (!runtime_.isRunning()) {
+        panel_.playbackSpeedDirty = false;
         ImGui::TextDisabled("Start the simulation to use time controls.");
         return;
     }
 
-    sliderFloatWithHint("Playback speed", &panel_.playbackSpeed, 0.1f, 8.0f, "%.2fx",
-        "Logical playback multiplier used by time control tools.");
+    if (!panel_.playbackSpeedDirty) {
+        panel_.playbackSpeed = runtime_.playbackSpeed();
+    }
+
+    if (sliderFloatWithHint("Playback speed", &panel_.playbackSpeed, 0.1f, 8.0f, "%.2fx",
+        "Logical playback multiplier used by time control tools.")) {
+        panel_.playbackSpeedDirty = true;
+    }
     if (PrimaryButton("Apply speed", ImVec2(140.0f, 24.0f))) {
         std::string msg;
-        runtime_.setPlaybackSpeed(panel_.playbackSpeed, msg);
+        if (runtime_.setPlaybackSpeed(panel_.playbackSpeed, msg)) {
+            panel_.playbackSpeed = runtime_.playbackSpeed();
+            panel_.playbackSpeedDirty = false;
+        }
         appendLog(msg);
     }
 
@@ -1945,7 +1971,9 @@ void drawProfilesSection() {
     if (PrimaryButton("Load##prof", ImVec2(w3, 26.0f))) {
         std::string msg;
         if (runtime_.loadProfile(panel_.profileName, msg)) {
-            syncPanelFromConfig(); refreshFieldNames(); requestSnapshotRefresh();
+            syncPanelFromConfig();
+            refreshFieldNames();
+            requestSnapshotRefresh();
         }
         appendLog(msg);
     }
@@ -2083,8 +2111,7 @@ void drawWorldGenerationSection() {
         confidencePct);
     ImGui::TextDisabled("%s", humanizeToken(recommendation.rationale).c_str());
 
-    const float recommendationButtonW = (ImGui::GetContentRegionAvail().x - kS2) * 0.5f;
-    if (SecondaryButton("Apply recommended defaults", ImVec2(recommendationButtonW, 24.0f))) {
+    if (SecondaryButton("Apply recommended defaults", ImVec2(-1.0f, 24.0f))) {
         const InitialConditionType runtimeMode = fallbackRuntimeSupportedMode(refinedRecommendation);
         applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, runtimeMode, true);
         applyAutoVariableBindingsForMode(panel_, modelCellVars, runtimeMode);
@@ -2098,7 +2125,7 @@ void drawWorldGenerationSection() {
         rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
     }
     DelayedTooltip("Sets generation mode and parameters using model-aware defaults from metadata analysis.");
-    ImGui::SameLine();
+
     checkboxWithHint(
         "Show only viable modes",
         &sessionUi_.generationShowOnlyViableModes,
@@ -2141,6 +2168,7 @@ void drawWorldGenerationSection() {
 
     const InitialConditionType selectedMode = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
     const char* selectedLabel = generationModeLabel(selectedMode);
+    ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::BeginCombo("Generation Mode", selectedLabel)) {
         for (const auto modeType : kAllGenerationModes) {
             const bool viable = isModeViable(modeType);
@@ -2524,6 +2552,10 @@ void syncPanelFromConfig() {
     panel_.waveDropCount = c.initialConditions.waves.dropCount;
     panel_.waveDropJitter = c.initialConditions.waves.dropJitter;
     panel_.waveRingFrequency = c.initialConditions.waves.ringFrequency;
+    panel_.playbackSpeed = runtime_.playbackSpeed();
+    panel_.playbackSpeedDirty = false;
+    panel_.parameterValueDirty = false;
+    panel_.selectedParameterName[0] = '\0';
 }
 
 void applyConfigFromPanel() {
@@ -2654,6 +2686,7 @@ void openSelectedWorld() {
     std::string msg;
     if (runtime_.openWorld(world.worldName, msg)) {
         appendLog(msg);
+        syncPanelFromConfig();
         refreshFieldNames();
         resetDisplayConfigToDefaults();
         loadDisplayPrefs();

@@ -270,7 +270,7 @@ constexpr float kPageMaxWidth = 1600.0f;
         return mode;
     }
     if (mode == InitialConditionType::SparseRandom || mode == InitialConditionType::Clustering) {
-        return InitialConditionType::Conway;
+        return InitialConditionType::Terrain;
     }
     if (mode == InitialConditionType::GradientField || mode == InitialConditionType::RadialPattern) {
         return InitialConditionType::Waves;
@@ -309,7 +309,7 @@ constexpr float kPageMaxWidth = 1600.0f;
         return InitialConditionType::Waves;
     }
     if (containsToken(modelId, {"forest_fire"})) {
-        return InitialConditionType::SparseRandom;
+        return InitialConditionType::Terrain;
     }
     if (containsToken(modelId, {"predator_prey"})) {
         return InitialConditionType::Clustering;
@@ -472,7 +472,8 @@ void applyGenerationAdvisorRecommendations(
     const initialization::ModelVariableCatalog& catalog,
     const std::vector<ParameterControl>& parameters) {
     const auto modeRec = GenerationAdvisor::recommendGenerationMode(catalog, parameters);
-    applyGenerationDefaultsForMode(panel, catalog, modeRec.recommendedType, true);
+    const InitialConditionType runtimeMode = fallbackRuntimeSupportedMode(modeRec.recommendedType);
+    applyGenerationDefaultsForMode(panel, catalog, runtimeMode, true);
 }
 
 // GLFW window creation
@@ -629,13 +630,14 @@ public:
                     const InitialConditionType refinedMode = refineRecommendedModeForKnownModels(
                         sessionUi_.selectedModelCatalog,
                         modeRec.recommendedType);
-                    sessionUi_.generationModeIndex = static_cast<int>(refinedMode);
+                    const InitialConditionType runtimeMode = fallbackRuntimeSupportedMode(refinedMode);
+                    sessionUi_.generationModeIndex = static_cast<int>(runtimeMode);
 
-                    applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, refinedMode, true);
-                    applyAutoVariableBindingsForMode(panel_, sessionUi_.selectedModelCellStateVariables, refinedMode);
+                    applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, runtimeMode, true);
+                    applyAutoVariableBindingsForMode(panel_, sessionUi_.selectedModelCellStateVariables, runtimeMode);
 
-                    viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(refinedMode);
-                    sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(refinedMode);
+                    viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(runtimeMode);
+                    sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(runtimeMode);
                     sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
                         sessionUi_.selectedModelCellStateVariables,
                         {"water", "state", "concentration", "temperature", "vegetation"},
@@ -644,7 +646,7 @@ public:
                     rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
 
                     std::string recLog = "Auto-recommended: " +
-                        std::string(generationModeLabel(refinedMode)) +
+                        std::string(generationModeLabel(runtimeMode)) +
                         " (" + std::to_string(static_cast<int>(modeRec.confidence * 100.0f)) + "% confidence, reason=" +
                         humanizeToken(modeRec.rationale) + ")";
                     appendLog(recLog);
