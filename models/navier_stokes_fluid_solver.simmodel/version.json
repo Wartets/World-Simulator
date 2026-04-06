@@ -1,5 +1,5 @@
 {
-  "format_version": "1.0.0",
+  "format_version": "1.0.1",
   "minimum_engine_version": "1.0.0",
   "__description__": "Tracks the version of the .simmodel spec and the minimum required runtime version to parse this file structure and IR logic."
 }

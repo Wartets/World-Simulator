@@ -6,7 +6,7 @@
   "creation_date": "2026-04-02",
   "tags": ["biology", "ecology", "reaction-diffusion", "predator-prey", "population-dynamics", "2d", "grid-simulation"],
   "initialization_guidance": {
-    "preferred_mode": "terrain",
+    "preferred_mode": "gray_scott",
     "expected_start_data_type": "dual_population_fields",
     "supported_modes": ["gray_scott", "terrain", "blank"],
     "preferred_display_variable": "prey_density",

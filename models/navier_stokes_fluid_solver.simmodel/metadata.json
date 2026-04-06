@@ -6,7 +6,7 @@
   "creation_date": "2026-04-02",
   "tags": ["fluid_dynamics", "navier-stokes", "pde", "incompressible", "2d", "computational-physics"],
   "initialization_guidance": {
-    "preferred_mode": "terrain",
+    "preferred_mode": "waves",
     "expected_start_data_type": "velocity_pressure_fields",
     "supported_modes": ["waves", "terrain", "blank"],
     "preferred_display_variable": "velocity_x",

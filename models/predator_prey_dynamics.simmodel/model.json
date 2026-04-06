@@ -1,7 +1,7 @@
 {
   "__comment_intro__": "Predator-Prey Dynamics (Spatiotemporal). Reaction-diffusion system modeling predator-prey interactions using Lotka-Volterra equations with spatial diffusion. Demonstrates ecological population dynamics on a 2D grid.",
   "id": "predator_prey_dynamics",
-  "version": "1.0.0",
+  "version": "1.0.1",
 
   "grid": {
     "dimensions": 2,

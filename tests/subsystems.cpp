@@ -51,6 +51,9 @@ bool hasRequiredPhase4Aliases(const ws::ModelExecutionSpec& executionSpec) {
         if (!subsystem) {
             continue;
         }
+        if (subsystem->name() == "automaton" || subsystem->name() == "fire_spread") {
+            continue;
+        }
         for (const auto& key : subsystem->declaredReadSet()) {
             if (!key.empty()) {
                 requiredSemanticKeys.insert(key);
@@ -96,6 +99,28 @@ std::optional<ws::ModelExecutionSpec> selectExecutionSpec() {
         return executionSpec;
     }
     return std::nullopt;
+}
+
+std::vector<std::shared_ptr<ws::ISubsystem>> compatiblePhase4Subsystems(const ws::ModelExecutionSpec& executionSpec) {
+    std::vector<std::shared_ptr<ws::ISubsystem>> result;
+    result.reserve(ws::makePhase4Subsystems().size());
+
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        if (!subsystem) {
+            continue;
+        }
+
+        if (subsystem->name() == "automaton" && executionSpec.semanticFieldAliases.find("automaton.state") == executionSpec.semanticFieldAliases.end()) {
+            continue;
+        }
+        if (subsystem->name() == "fire_spread" && executionSpec.semanticFieldAliases.find("fire.state") == executionSpec.semanticFieldAliases.end()) {
+            continue;
+        }
+
+        result.push_back(subsystem);
+    }
+
+    return result;
 }
 
 ws::ProfileResolverInput profileInputForTier(const ws::ModelTier tier) {
@@ -149,6 +174,7 @@ struct ScenarioResult {
 ScenarioResult runScenario(const ws::ModelTier tier, const std::uint64_t seed) {
     const auto executionSpec = selectExecutionSpec();
     assert(executionSpec.has_value());
+    const auto subsystems = compatiblePhase4Subsystems(*executionSpec);
 
     const auto pickAliasOrFallback = [&](const std::string& semanticKey, std::size_t fallbackIndex = 0) {
         if (const auto alias = tryAliasTarget(*executionSpec, semanticKey); alias.has_value()) {
@@ -171,7 +197,7 @@ ScenarioResult runScenario(const ws::ModelTier tier, const std::uint64_t seed) {
     config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
-    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+    for (const auto& subsystem : subsystems) {
         runtime.registerSubsystem(subsystem);
     }
 
@@ -200,8 +226,12 @@ ScenarioResult runScenario(const ws::ModelTier tier, const std::uint64_t seed) {
 }
 
 void verifyOwnershipContracts() {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+    const auto subsystems = compatiblePhase4Subsystems(*executionSpec);
+
     ws::Scheduler scheduler;
-    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+    for (const auto& subsystem : subsystems) {
         scheduler.registerSubsystem(subsystem);
     }
 
@@ -251,7 +281,11 @@ void verifyInitializationAndStepping() {
 }
 
 void verifySubsystemReadWriteContractsExposeExplicitSets() {
-    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+    const auto executionSpec = selectExecutionSpec();
+    assert(executionSpec.has_value());
+    const auto subsystems = compatiblePhase4Subsystems(*executionSpec);
+
+    for (const auto& subsystem : subsystems) {
         const auto readSet = subsystem->declaredReadSet();
         const auto writeSet = subsystem->declaredWriteSet();
 

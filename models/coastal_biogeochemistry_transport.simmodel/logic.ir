@@ -36,18 +36,30 @@ func transport_tracers() {
     // Salinity with boundary relaxation and lateral diffusion
     %s = Load("salinity", 0, 0)
     %lap_s = Laplacian("salinity")
+    %s_e = Load("salinity", 1, 0)
+    %s_w = Load("salinity", -1, 0)
+    %s_n = Load("salinity", 0, 1)
+    %s_s = Load("salinity", 0, -1)
     %s_ocean = GlobalLoad("ocean_salinity")
     %s_river = GlobalLoad("river_salinity")
     %shore = Load("shore_distance_factor", 0, 0)
     %s_bc = Add(Mul(%shore, %s_ocean), Mul(Sub(1.0, %shore), %s_river))
-    %s_tendency = Add(Mul(%k_h, %lap_s), Mul(0.0006, Sub(%s_bc, %s)))
+    %s_adv_x = Mul(%u, Sub(%s_e, %s_w))
+    %s_adv_y = Mul(0.25, Mul(%mix, Sub(%s_n, %s_s)))
+    %s_tendency = Add(Add(Mul(%k_h, %lap_s), Mul(0.0006, Sub(%s_bc, %s))), Mul(-0.05, Add(%s_adv_x, %s_adv_y)))
     %s_next = Add(%s, Mul(%dt, %s_tendency))
 
     // Temperature diffusion + reference relaxation
     %t = Load("temperature", 0, 0)
     %lap_t = Laplacian("temperature")
+    %t_e = Load("temperature", 1, 0)
+    %t_w = Load("temperature", -1, 0)
+    %t_n = Load("temperature", 0, 1)
+    %t_s = Load("temperature", 0, -1)
     %t_ref = GlobalLoad("background_temperature")
-    %t_tendency = Add(Mul(Add(%k_h, Mul(0.3, %mix)), %lap_t), Mul(0.00018, Sub(%t_ref, %t)))
+    %t_adv_x = Mul(%u, Sub(%t_e, %t_w))
+    %t_adv_y = Mul(0.20, Mul(%mix, Sub(%t_n, %t_s)))
+    %t_tendency = Add(Add(Mul(Add(%k_h, Mul(0.3, %mix)), %lap_t), Mul(0.00018, Sub(%t_ref, %t))), Mul(-0.04, Add(%t_adv_x, %t_adv_y)))
     %t_next = Add(%t, Mul(%dt, %t_tendency))
 
     // Generic transport update for biogeochemical tracers
@@ -63,13 +75,44 @@ func transport_tracers() {
     %lap_o2 = Laplacian("oxygen")
     %lap_ss = Laplacian("suspended_sediment")
 
+    %n_e = Load("nitrate", 1, 0)
+    %n_w = Load("nitrate", -1, 0)
+    %n_n = Load("nitrate", 0, 1)
+    %n_s = Load("nitrate", 0, -1)
+
+    %p_e = Load("phytoplankton", 1, 0)
+    %p_w = Load("phytoplankton", -1, 0)
+    %p_n = Load("phytoplankton", 0, 1)
+    %p_s = Load("phytoplankton", 0, -1)
+
+    %d_e = Load("detritus", 1, 0)
+    %d_w = Load("detritus", -1, 0)
+    %d_n = Load("detritus", 0, 1)
+    %d_s = Load("detritus", 0, -1)
+
+    %o2_e = Load("oxygen", 1, 0)
+    %o2_w = Load("oxygen", -1, 0)
+    %o2_n = Load("oxygen", 0, 1)
+    %o2_s = Load("oxygen", 0, -1)
+
+    %ss_e = Load("suspended_sediment", 1, 0)
+    %ss_w = Load("suspended_sediment", -1, 0)
+    %ss_n = Load("suspended_sediment", 0, 1)
+    %ss_s = Load("suspended_sediment", 0, -1)
+
     %tr_coeff = Add(%k_h, Mul(0.2, %mix))
 
-    %n_next = Add(%n, Mul(%dt, Mul(%tr_coeff, %lap_n)))
-    %p_next = Add(%p, Mul(%dt, Mul(%tr_coeff, %lap_p)))
-    %d_next = Add(%d, Mul(%dt, Mul(%tr_coeff, %lap_d)))
-    %o2_next = Add(%o2, Mul(%dt, Mul(%tr_coeff, %lap_o2)))
-    %ss_next = Add(%ss, Mul(%dt, Mul(%tr_coeff, %lap_ss)))
+    %n_adv = Add(Mul(%u, Sub(%n_e, %n_w)), Mul(0.15, Mul(%mix, Sub(%n_n, %n_s))))
+    %p_adv = Add(Mul(%u, Sub(%p_e, %p_w)), Mul(0.15, Mul(%mix, Sub(%p_n, %p_s))))
+    %d_adv = Add(Mul(%u, Sub(%d_e, %d_w)), Mul(0.15, Mul(%mix, Sub(%d_n, %d_s))))
+    %o2_adv = Add(Mul(%u, Sub(%o2_e, %o2_w)), Mul(0.15, Mul(%mix, Sub(%o2_n, %o2_s))))
+    %ss_adv = Add(Mul(%u, Sub(%ss_e, %ss_w)), Mul(0.15, Mul(%mix, Sub(%ss_n, %ss_s))))
+
+    %n_next = Add(%n, Mul(%dt, Add(Mul(%tr_coeff, %lap_n), Mul(-0.05, %n_adv))))
+    %p_next = Add(%p, Mul(%dt, Add(Mul(%tr_coeff, %lap_p), Mul(-0.05, %p_adv))))
+    %d_next = Add(%d, Mul(%dt, Add(Mul(%tr_coeff, %lap_d), Mul(-0.05, %d_adv))))
+    %o2_next = Add(%o2, Mul(%dt, Add(Mul(%tr_coeff, %lap_o2), Mul(-0.05, %o2_adv))))
+    %ss_next = Add(%ss, Mul(%dt, Add(Mul(%tr_coeff, %lap_ss), Mul(-0.05, %ss_adv))))
 
     Store("salinity", %s_next)
     Store("temperature", %t_next)

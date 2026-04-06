@@ -104,7 +104,7 @@ func update_thermal_state() {
     %surface_tendency = Add(Mul(0.00045, %energy_balance), %diffusion_term)
 
     %canopy_relax = Mul(0.00015, Sub(%ts, %tc))
-    %canopy_tendency = Add(canopy_relax, Mul(0.00003, Sub(GlobalLoad("air_temperature_ref"), %tc)))
+    %canopy_tendency = Add(%canopy_relax, Mul(0.00003, Sub(GlobalLoad("air_temperature_ref"), %tc)))
 
     %storage_tendency = Sub(Mul(0.40, %energy_balance), Mul(0.003, %storage))
 

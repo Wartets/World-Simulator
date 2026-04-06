@@ -1,7 +1,7 @@
 {
   "__comment_intro__": "Urban Microclimate Resilience. Coupled thermo-hydrologic city-scale simulation in strict SI-compatible units.",
   "id": "urban_microclimate_resilience",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "grid": {
     "dimensions": 2,
     "topology": "cartesian",

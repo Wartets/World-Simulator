@@ -1,5 +1,6 @@
 ﻿#include "ws/core/subsystems/subsystems.hpp"
 #include "ws/core/field_resolver.hpp"
+#include "ws/core/determinism.hpp"
 #include "ws/core/openmp_support.hpp"
 
 #include <algorithm>
@@ -14,6 +15,21 @@ namespace {
 
 float clampRange(const float value, const float low, const float high) {
     return std::clamp(value, low, high);
+}
+
+std::uint64_t mix64(std::uint64_t value) {
+    value += 0x9e3779b97f4a7c15ull;
+    value = (value ^ (value >> 30u)) * 0xbf58476d1ce4e5b9ull;
+    value = (value ^ (value >> 27u)) * 0x94d049bb133111ebull;
+    return value ^ (value >> 31u);
+}
+
+float hash01(const std::uint64_t seed, const int x, const int y) {
+    std::uint64_t h = DeterministicHash::combine(seed, DeterministicHash::hashPod(x));
+    h = DeterministicHash::combine(h, DeterministicHash::hashPod(y));
+    h = mix64(h);
+    const std::uint32_t top24 = static_cast<std::uint32_t>((h >> 40u) & 0xFFFFFFu);
+    return static_cast<float>(top24) / static_cast<float>(0xFFFFFFu);
 }
 
 StateStore::FieldHandle resolveReadHandle(
@@ -82,6 +98,113 @@ void CellularAutomatonSubsystem::step(const StateStore& stateStore, StateStore::
             const bool alive = current[idx] >= 0.5f;
             const bool nextAlive = (neighbors == 3) || (alive && neighbors == 2);
             writePtr[idx] = nextAlive ? 1.0f : 0.0f;
+        }
+    }
+}
+
+std::string ForestFireSubsystem::name() const { return "fire_spread"; }
+std::vector<std::string> ForestFireSubsystem::declaredReadSet() const {
+    return {"fire.state", "fire.vegetation", "fire.moisture", "fire.wind_factor"};
+}
+std::vector<std::string> ForestFireSubsystem::declaredWriteSet() const {
+    return {"fire.state", "fire.vegetation", "fire.burning_neighbors"};
+}
+
+void ForestFireSubsystem::initialize(const StateStore&, StateStore::WriteSession&, const ModelProfile&) {}
+
+void ForestFireSubsystem::step(
+    const StateStore& stateStore,
+    StateStore::WriteSession& writeSession,
+    const ModelProfile&,
+    const std::uint64_t stepIndex) {
+    const auto fireReadHandle = resolveReadHandle(stateStore, "fire.state", name());
+    const auto vegetationReadHandle = resolveReadHandle(stateStore, "fire.vegetation", name());
+    const auto moistureReadHandle = resolveReadHandle(stateStore, "fire.moisture", name());
+    const auto windFactorReadHandle = resolveReadHandle(stateStore, "fire.wind_factor", name());
+    const auto fireWriteHandle = resolveWriteHandle(stateStore, writeSession, "fire.state", name());
+    const auto vegetationWriteHandle = resolveWriteHandle(stateStore, writeSession, "fire.vegetation", name());
+    const auto neighborsWriteHandle = resolveWriteHandle(stateStore, writeSession, "fire.burning_neighbors", name());
+
+    const GridSpec& grid = stateStore.grid();
+    const std::size_t logicalCount = static_cast<std::size_t>(grid.width) * static_cast<std::size_t>(grid.height);
+    const float* fireReadPtr = stateStore.scalarFieldRawPtr(fireReadHandle);
+    const float* vegetationReadPtr = stateStore.scalarFieldRawPtr(vegetationReadHandle);
+    const float* moistureReadPtr = stateStore.scalarFieldRawPtr(moistureReadHandle);
+    const float* windFactorReadPtr = stateStore.scalarFieldRawPtr(windFactorReadHandle);
+    float* fireWritePtr = stateStore.scalarFieldRawPtrMut(fireWriteHandle);
+    float* vegetationWritePtr = stateStore.scalarFieldRawPtrMut(vegetationWriteHandle);
+    float* neighborsWritePtr = stateStore.scalarFieldRawPtrMut(neighborsWriteHandle);
+
+    std::vector<float> fireCurrent(fireReadPtr, fireReadPtr + static_cast<std::ptrdiff_t>(logicalCount));
+    std::vector<float> vegetationCurrent(vegetationReadPtr, vegetationReadPtr + static_cast<std::ptrdiff_t>(logicalCount));
+    std::vector<float> moistureCurrent(moistureReadPtr, moistureReadPtr + static_cast<std::ptrdiff_t>(logicalCount));
+    std::vector<float> windFactorCurrent(windFactorReadPtr, windFactorReadPtr + static_cast<std::ptrdiff_t>(logicalCount));
+
+    const auto sampleBurning = [&](const std::int64_t x, const std::int64_t y) -> int {
+        const Cell resolved = stateStore.resolveBoundary(CellSigned{x, y});
+        const std::size_t idx = static_cast<std::size_t>(resolved.y) * static_cast<std::size_t>(grid.width) + static_cast<std::size_t>(resolved.x);
+        return (fireCurrent[idx] >= 0.5f && fireCurrent[idx] < 1.5f) ? 1 : 0;
+    };
+
+    const std::uint64_t rngSeed = DeterministicHash::combine(stepIndex + 1u, 0xF17E5101ULL);
+    const float baseSpread = 0.60f;
+    const float burnRate = 0.25f;
+    const float regrowthRate = 0.001f;
+    const float spontaneousIgnition = 0.0001f;
+
+    const std::int64_t width = static_cast<std::int64_t>(grid.width);
+    const std::int64_t height = static_cast<std::int64_t>(grid.height);
+    WS_OMP_PARALLEL_FOR
+    for (std::int64_t y = 0; y < height; ++y) {
+        const std::size_t rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(grid.width);
+        for (std::int64_t x = 0; x < width; ++x) {
+            int burningNeighbors = 0;
+            burningNeighbors += sampleBurning(x - 1, y - 1);
+            burningNeighbors += sampleBurning(x, y - 1);
+            burningNeighbors += sampleBurning(x + 1, y - 1);
+            burningNeighbors += sampleBurning(x - 1, y);
+            burningNeighbors += sampleBurning(x + 1, y);
+            burningNeighbors += sampleBurning(x - 1, y + 1);
+            burningNeighbors += sampleBurning(x, y + 1);
+            burningNeighbors += sampleBurning(x + 1, y + 1);
+
+            const std::size_t idx = rowOffset + static_cast<std::size_t>(x);
+            const float moisture = clampRange(moistureCurrent[idx], 0.0f, 1.0f);
+            float vegetation = clampRange(vegetationCurrent[idx], 0.0f, 1.0f);
+            float fireState = fireCurrent[idx];
+            float nextState = fireState;
+
+            if (fireState >= 0.5f && fireState < 1.5f) {
+                const float burnAmount = burnRate * (0.65f + 0.35f * (1.0f - moisture));
+                vegetation = std::max(0.0f, vegetation - burnAmount);
+                if (vegetation <= 0.02f) {
+                    nextState = 2.0f;
+                } else {
+                    nextState = 1.0f;
+                }
+            } else if (fireState < 0.5f) {
+                const float fuel = clampRange((vegetation - 0.08f) / 0.92f, 0.0f, 1.0f);
+                const float dryness = 1.0f - moisture;
+                const float neighborhoodInfluence = static_cast<float>(burningNeighbors) / 8.0f;
+                const float localWindFactor = clampRange(windFactorCurrent[idx], 0.0f, 1.0f);
+                const float windMultiplier = 1.0f + 0.5f * localWindFactor;
+                const float spreadChance = clampRange(baseSpread * neighborhoodInfluence * fuel * dryness * windMultiplier, 0.0f, 1.0f);
+                const float ignitionChance = clampRange(spontaneousIgnition * fuel * dryness, 0.0f, 1.0f);
+                const float randomDraw = hash01(rngSeed, static_cast<int>(x), static_cast<int>(y));
+
+                if ((burningNeighbors > 0 && randomDraw < spreadChance) || randomDraw < ignitionChance) {
+                    nextState = 1.0f;
+                } else {
+                    nextState = 0.0f;
+                }
+            } else {
+                vegetation = std::min(1.0f, vegetation + regrowthRate * (0.4f + 0.6f * moisture));
+                nextState = (vegetation > 0.20f) ? 0.0f : 2.0f;
+            }
+
+            fireWritePtr[idx] = nextState;
+            vegetationWritePtr[idx] = vegetation;
+            neighborsWritePtr[idx] = static_cast<float>(burningNeighbors);
         }
     }
 }
@@ -657,6 +780,7 @@ void EventSubsystem::step(const StateStore& stateStore, StateStore::WriteSession
 std::vector<std::shared_ptr<ISubsystem>> makePhase4Subsystems() {
     return {
         std::make_shared<CellularAutomatonSubsystem>(),
+        std::make_shared<ForestFireSubsystem>(),
         std::make_shared<GenerationSubsystem>(),
         std::make_shared<HydrologySubsystem>(),
         std::make_shared<TemperatureSubsystem>(),

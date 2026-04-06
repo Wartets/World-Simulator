@@ -277,6 +277,237 @@ void test_model_execution_spec_loader() {
     std::filesystem::remove_all(fixtureModelDir.parent_path());
 }
 
+void test_forest_fire_execution_aliases() {
+    const std::filesystem::path sourceModelDir = resolveModelDir("forest_fire_propagation.simmodel");
+    if (!std::filesystem::exists(sourceModelDir)) {
+        std::cout << "Skipping forest fire execution alias test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    const auto fixtureModelDir = create_model_fixture_with_valid_ir(sourceModelDir, "forest_fire_aliases");
+    assert(!fixtureModelDir.empty());
+
+    ModelExecutionSpec executionSpec;
+    std::string message;
+    const bool ok = initialization::loadModelExecutionSpec(fixtureModelDir, executionSpec, message);
+    assert(ok);
+    assert(!executionSpec.cellScalarVariableIds.empty());
+
+    const auto automatonAlias = executionSpec.semanticFieldAliases.find("automaton.state");
+    assert(automatonAlias == executionSpec.semanticFieldAliases.end());
+
+    const auto conwayAlias = executionSpec.semanticFieldAliases.find("initialization.conway.target");
+    assert(conwayAlias != executionSpec.semanticFieldAliases.end());
+    assert(conwayAlias->second == "fire_state");
+
+    const auto fireStateAlias = executionSpec.semanticFieldAliases.find("fire.state");
+    assert(fireStateAlias != executionSpec.semanticFieldAliases.end());
+    assert(fireStateAlias->second == "fire_state");
+
+    const auto windFactorAlias = executionSpec.semanticFieldAliases.find("fire.wind_factor");
+    assert(windFactorAlias != executionSpec.semanticFieldAliases.end());
+    assert(windFactorAlias->second == "wind_factor");
+
+    const auto burningNeighborsAlias = executionSpec.semanticFieldAliases.find("fire.burning_neighbors");
+    assert(burningNeighborsAlias != executionSpec.semanticFieldAliases.end());
+    assert(burningNeighborsAlias->second == "burning_neighbors");
+
+    std::filesystem::remove_all(fixtureModelDir.parent_path());
+    std::cout << "Forest fire execution alias test passed.\n";
+}
+
+void test_forest_fire_parameter_consistency() {
+    const std::filesystem::path modelDir = resolveModelDir("forest_fire_propagation.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping forest fire parameter consistency test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    const auto modelJson = read_text_file(modelDir / "model.json");
+    const auto metadataJson = read_text_file(modelDir / "metadata.json");
+    assert(!modelJson.empty());
+    assert(!metadataJson.empty());
+
+    const auto model = nlohmann::json::parse(modelJson);
+    const auto metadata = nlohmann::json::parse(metadataJson);
+
+    assert(model.contains("variables") && model["variables"].is_array());
+    assert(metadata.contains("initialization_guidance") && metadata["initialization_guidance"].is_object());
+
+    const auto& guidance = metadata["initialization_guidance"];
+    assert(guidance.contains("preferred_mode") && guidance["preferred_mode"].get<std::string>() == "conway");
+    assert(guidance.contains("supported_modes") && guidance["supported_modes"].is_array());
+
+    bool hasConwayMode = false;
+    for (const auto& mode : guidance["supported_modes"]) {
+        if (mode.is_string() && mode.get<std::string>() == "conway") {
+            hasConwayMode = true;
+            break;
+        }
+    }
+    assert(hasConwayMode);
+
+    assert(guidance.contains("parameter_overrides") && guidance["parameter_overrides"].is_object());
+    const auto& overrides = guidance["parameter_overrides"];
+    assert(overrides.contains("conwayAliveProbability"));
+    assert(overrides.contains("conwaySmoothingPasses"));
+
+    const double aliveProbability = overrides["conwayAliveProbability"].get<double>();
+    const double smoothingPasses = overrides["conwaySmoothingPasses"].get<double>();
+    assert(aliveProbability >= 0.0 && aliveProbability <= 1.0);
+    assert(smoothingPasses >= 0.0);
+
+    double spreadProb = -1.0;
+    double ignitionProb = -1.0;
+    double regrowthRate = -1.0;
+    for (const auto& variable : model["variables"]) {
+        if (!variable.is_object() || !variable.contains("id") || !variable["id"].is_string()) {
+            continue;
+        }
+        const auto id = variable["id"].get<std::string>();
+        if (!variable.contains("initial_value") || !variable["initial_value"].is_number()) {
+            continue;
+        }
+        const double value = variable["initial_value"].get<double>();
+        if (id == "spread_prob") {
+            spreadProb = value;
+        } else if (id == "base_ignition_prob") {
+            ignitionProb = value;
+        } else if (id == "regrowth_rate") {
+            regrowthRate = value;
+        }
+    }
+
+    assert(spreadProb >= 0.0 && spreadProb <= 1.0);
+    assert(ignitionProb >= 0.0 && ignitionProb <= 1.0);
+    assert(regrowthRate >= 0.0);
+
+    assert(metadata.contains("runtime_field_aliases") && metadata["runtime_field_aliases"].is_object());
+    const auto& aliases = metadata["runtime_field_aliases"];
+    assert(aliases.contains("fire.burning_neighbors"));
+    assert(aliases["fire.burning_neighbors"].get<std::string>() == "burning_neighbors");
+    assert(!aliases.contains("automaton.state"));
+
+    std::cout << "Forest fire parameter consistency test passed.\n";
+}
+
+void test_coastal_model_metadata_and_aliases() {
+    const std::filesystem::path modelDir = resolveModelDir("coastal_biogeochemistry_transport.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping coastal model metadata test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    const auto modelPath = modelDir / "model.json";
+    const auto metadataPath = modelDir / "metadata.json";
+
+    std::ifstream modelIn(modelPath);
+    std::ifstream metadataIn(metadataPath);
+    assert(modelIn.is_open());
+    assert(metadataIn.is_open());
+
+    const nlohmann::json model = nlohmann::json::parse(modelIn);
+    const nlohmann::json metadata = nlohmann::json::parse(metadataIn);
+
+    assert(model.contains("version") && model["version"].is_string());
+    assert(model["version"].get<std::string>() == "1.0.4");
+
+    assert(metadata.contains("initialization_guidance") && metadata["initialization_guidance"].is_object());
+    const auto& guidance = metadata["initialization_guidance"];
+    assert(guidance.contains("preferred_mode") && guidance["preferred_mode"].is_string());
+    assert(guidance["preferred_mode"].get<std::string>() == "terrain");
+    assert(guidance.contains("preferred_display_variable") && guidance["preferred_display_variable"].is_string());
+    assert(guidance["preferred_display_variable"].get<std::string>() == "salinity");
+    assert(guidance.contains("supported_modes") && guidance["supported_modes"].is_array());
+    assert(std::find(guidance["supported_modes"].begin(), guidance["supported_modes"].end(), nlohmann::json("waves")) != guidance["supported_modes"].end());
+
+    assert(metadata.contains("runtime_field_aliases") && metadata["runtime_field_aliases"].is_object());
+    const auto& aliases = metadata["runtime_field_aliases"];
+    assert(aliases.contains("generation.elevation"));
+    assert(aliases["generation.elevation"].get<std::string>() == "bathymetry_depth");
+    assert(aliases.contains("initialization.waves.target"));
+    assert(aliases["initialization.waves.target"].get<std::string>() == "current_speed");
+    assert(aliases.contains("events.signal"));
+    assert(aliases["events.signal"].get<std::string>() == "oxygen_deficit");
+
+    std::cout << "Coastal model metadata and alias test passed.\n";
+}
+
+void test_coastal_model_parameter_controls() {
+    const std::filesystem::path modelDir = resolveModelDir("coastal_biogeochemistry_transport.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping coastal model parameter control test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    std::vector<ParameterControl> controls;
+    std::string message;
+    const bool ok = initialization::loadModelParameterControls(modelDir, controls, message);
+    assert(ok);
+    assert(!controls.empty());
+
+    auto findControl = [&](const std::string& target) -> const ParameterControl* {
+        for (const auto& control : controls) {
+            if (control.targetVariable == target) {
+                return &control;
+            }
+        }
+        return nullptr;
+    };
+
+    const auto* bathymetry = findControl("bathymetry_depth");
+    const auto* seagrass = findControl("seagrass_fraction");
+    const auto* shore = findControl("shore_distance_factor");
+
+    assert(bathymetry != nullptr);
+    assert(seagrass != nullptr);
+    assert(shore != nullptr);
+    assert(bathymetry->defaultValue == 12.0f);
+    assert(seagrass->defaultValue == 0.22f);
+    assert(shore->defaultValue == 0.58f);
+
+    std::cout << "Coastal model parameter control test passed.\n";
+}
+
+void test_coastal_model_execution_spec() {
+    const std::filesystem::path modelDir = resolveModelDir("coastal_biogeochemistry_transport.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping coastal model execution spec test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    ModelExecutionSpec executionSpec;
+    std::string message;
+    const bool ok = initialization::loadModelExecutionSpec(modelDir, executionSpec, message);
+    assert(ok);
+    assert(!executionSpec.cellScalarVariableIds.empty());
+    assert(std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "bathymetry_depth") != executionSpec.cellScalarVariableIds.end());
+    assert(std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "seagrass_fraction") != executionSpec.cellScalarVariableIds.end());
+    assert(std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "shore_distance_factor") != executionSpec.cellScalarVariableIds.end());
+    assert(executionSpec.semanticFieldAliases.at("generation.elevation") == "bathymetry_depth");
+    assert(executionSpec.semanticFieldAliases.at("initialization.waves.target") == "current_speed");
+
+    std::cout << "Coastal model execution spec test passed.\n";
+}
+
+void test_coastal_model_parser_smoke() {
+    const std::filesystem::path modelDir = resolveModelDir("coastal_biogeochemistry_transport.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping coastal model parser smoke test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    try {
+        auto ctx = ModelParser::load(modelDir);
+        assert(!ctx.flatbuffers_bin.empty());
+        assert(ctx.ir_program != nullptr);
+        std::cout << "Coastal model parser smoke test passed.\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Coastal model parser smoke test failed: " << e.what() << "\n";
+        assert(false);
+    }
+}
+
 void test_model_display_spec_loader() {
     const std::filesystem::path sourceModelDir = resolveModelDir("environmental_model_2d.simmodel");
     if (!std::filesystem::exists(sourceModelDir)) {
@@ -481,6 +712,12 @@ int main() {
     test_model_variable_catalog_loader();
     test_model_parameter_controls_loader();
     test_model_execution_spec_loader();
+    test_forest_fire_execution_aliases();
+    test_forest_fire_parameter_consistency();
+    test_coastal_model_metadata_and_aliases();
+    test_coastal_model_parameter_controls();
+    test_coastal_model_execution_spec();
+    test_coastal_model_parser_smoke();
     test_model_display_spec_loader();
     test_model_binding_plan_uses_catalog_metadata();
     test_extended_variable_metadata_schema_loader();

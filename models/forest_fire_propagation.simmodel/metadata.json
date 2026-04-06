@@ -6,11 +6,15 @@
   "creation_date": "2026-04-02",
   "tags": ["biology", "ecology", "cellular_automaton", "forest_fire", "stochastic", "2d", "grid-simulation"],
   "initialization_guidance": {
-    "preferred_mode": "terrain",
+    "preferred_mode": "conway",
     "expected_start_data_type": "mixed_cell_fields",
-    "supported_modes": ["terrain", "blank"],
+    "supported_modes": ["conway", "terrain", "blank"],
     "preferred_display_variable": "fire_state",
     "parameter_overrides": {
+      "conwayAliveProbability": 0.12,
+      "conwayAliveValue": 1.0,
+      "conwayDeadValue": 0.0,
+      "conwaySmoothingPasses": 0.0,
       "seaLevel": 0.30,
       "humidityFromWater": 0.22,
       "biomeNoiseStrength": 0.62,
@@ -42,6 +46,7 @@
     }
   },
   "runtime_field_aliases": {
+    "initialization.conway.target": "fire_state",
     "fire.vegetation": "vegetation",
     "fire.fuel": "vegetation",
     "fire.moisture": "moisture",
@@ -49,6 +54,8 @@
     "fire.state": "fire_state",
     "fire.current": "fire_state",
     "fire.burning": "fire_state",
+    "fire.wind_factor": "wind_factor",
+    "fire.burning_neighbors": "burning_neighbors",
     "ecology.vegetation": "vegetation",
     "ecology.moisture": "moisture",
     "ecology.fire_state": "fire_state",

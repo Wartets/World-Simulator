@@ -1,7 +1,7 @@
 {
   "__comment_intro__": "Navier-Stokes Fluid Solver (2D). Incompressible fluid flow simulation solving the Navier-Stokes equations using a projection method. Implements velocity advection, viscous diffusion, and pressure correction for 2D incompressible flow.",
   "id": "navier_stokes_fluid_solver",
-  "version": "1.0.0",
+  "version": "1.0.1",
 
   "grid": {
     "dimensions": 2,

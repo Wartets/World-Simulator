@@ -1,5 +1,5 @@
 {
-  "format_version": "1.0.0",
+  "format_version": "1.0.4",
   "minimum_engine_version": "1.0.0",
   "__description__": "Tracks .simmodel schema compatibility for the coastal biogeochemistry model."
 }

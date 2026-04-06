@@ -1,7 +1,7 @@
 {
   "__comment_intro__": "Forest Fire Propagation. Stochastic cellular automaton modeling fire spread based on vegetation density, wind direction, wind strength, and moisture content. Uses probabilistic ignition and spread rules.",
   "id": "forest_fire_propagation",
-  "version": "1.0.1",
+  "version": "1.0.5",
 
   "grid": {
     "dimensions": 2,

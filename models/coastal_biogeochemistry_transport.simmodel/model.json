@@ -1,7 +1,7 @@
 {
   "__comment_intro__": "Coastal Biogeochemistry and Transport. Multiphysics estuary model coupling advection-diffusion, ecosystem productivity, and oxygen stress dynamics.",
   "id": "coastal_biogeochemistry_transport",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "grid": {
     "dimensions": 2,
     "topology": "cartesian",
@@ -46,9 +46,9 @@
     { "id": "oxygen", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Dissolved oxygen concentration." },
     { "id": "suspended_sediment", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "non_negative", "description": "Suspended particulate concentration." },
 
-    { "id": "bathymetry_depth", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "non_negative", "description": "Local depth." },
-    { "id": "seagrass_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Benthic vegetation cover." },
-    { "id": "shore_distance_factor", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Relative distance from shore influences mixing and nutrient loading." },
+    { "id": "bathymetry_depth", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "non_negative", "initial_value": 12.0, "description": "Local depth." },
+    { "id": "seagrass_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "initial_value": 0.22, "description": "Benthic vegetation cover." },
+    { "id": "shore_distance_factor", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "initial_value": 0.58, "description": "Relative distance from shore influences mixing and nutrient loading." },
 
     { "id": "current_speed", "role": "derived", "support": "cell", "type": "f32", "units": "m/s", "domain": "non_negative", "description": "Derived flow speed estimate." },
     { "id": "vertical_mixing", "role": "derived", "support": "cell", "type": "f32", "units": "m^2/s", "domain": "non_negative", "description": "Derived turbulent mixing intensity." },
