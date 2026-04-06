@@ -646,6 +646,7 @@ public:
 
             sessionUi_.generationBindingPlan = initialization::InitializationBindingPlan{};
             sessionUi_.allowUnresolvedGenerationBindings = false;
+            sessionUi_.allowHeavyInitializationWork = false;
             sessionUi_.generationShowOnlyViableModes = false;
             if (sessionUi_.selectedModelCellStateVariables.empty()) {
                 sessionUi_.generationPreviewSourceIndex = 0;

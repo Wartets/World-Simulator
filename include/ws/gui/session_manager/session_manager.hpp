@@ -33,6 +33,7 @@ struct SessionUiState {
     initialization::InitializationBindingPlan generationBindingPlan{};
     std::vector<std::string> selectedModelCellStateVariables;
     bool allowUnresolvedGenerationBindings = false;
+    bool allowHeavyInitializationWork = false;
     bool generationShowOnlyViableModes = false;
     int generationPreviewSourceIndex = 0;
     int generationPreviewChannelIndex = 0;

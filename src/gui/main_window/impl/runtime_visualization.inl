@@ -1297,6 +1297,18 @@ void tickAutoRun() {
             requestSnapshotRefresh();
             lastAutoRunWatchdogLogSec_ = nowSec;
         }
+
+        if (viz_.framesSinceSnapshot > 900 && !snapshotRequestPending_.load()) {
+            viz_.autoRun = false;
+            cancelPendingSimulationSteps();
+            appendLog("auto_run_protective_pause reason=snapshot_stall");
+            std::snprintf(
+                viz_.lastRuntimeError,
+                sizeof(viz_.lastRuntimeError),
+                "%s",
+                "Playback paused: snapshot pipeline stalled. Review diagnostics log.");
+            return;
+        }
     }
 
     if (uiParameterChangedThisFrame_) requestSnapshotRefresh();

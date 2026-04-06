@@ -561,6 +561,7 @@
             std::vector<std::string> blocking;
             std::vector<std::string> warnings;
             int enabledVariableInitializers = 0;
+            std::uint64_t estimatedGlobalWrites = 0;
         };
 
         const auto collectVerificationReport = [&]() {
@@ -617,6 +618,27 @@
                 }
             }
 
+            const std::uint64_t cellCount =
+                static_cast<std::uint64_t>(std::max(1, panel_.gridWidth)) *
+                static_cast<std::uint64_t>(std::max(1, panel_.gridHeight));
+            report.estimatedGlobalWrites =
+                cellCount * static_cast<std::uint64_t>(std::max(0, report.enabledVariableInitializers));
+
+            static constexpr std::uint64_t kWarnWrites = 2'000'000ull;
+            static constexpr std::uint64_t kBlockWrites = 8'000'000ull;
+            if (report.estimatedGlobalWrites >= kWarnWrites) {
+                std::ostringstream warn;
+                warn << "Large x_i initialization workload detected (" << report.estimatedGlobalWrites
+                     << " cell writes).";
+                report.warnings.push_back(warn.str());
+            }
+            if (report.estimatedGlobalWrites >= kBlockWrites && !sessionUi_.allowHeavyInitializationWork) {
+                std::ostringstream block;
+                block << "x_i initialization workload exceeds safe interactive threshold (" << report.estimatedGlobalWrites
+                      << " writes). Enable expert heavy workload override if intentional.";
+                report.blocking.push_back(block.str());
+            }
+
             if (report.enabledVariableInitializers == 0) {
                 report.warnings.push_back("No per-variable x_i initializers are enabled.");
             }
@@ -635,10 +657,16 @@
         ImGui::Spacing();
         SectionHeader("Preflight verification", "Full readiness checks before world creation.");
         ImGui::TextDisabled(
-            "Checks: %d blocking, %d warning, %d enabled x_i initializers",
+            "Checks: %d blocking, %d warning, %d enabled x_i initializers, %llu estimated x_i writes",
             static_cast<int>(verification.blocking.size()),
             static_cast<int>(verification.warnings.size()),
-            verification.enabledVariableInitializers);
+            verification.enabledVariableInitializers,
+            static_cast<unsigned long long>(verification.estimatedGlobalWrites));
+
+        checkboxWithHint(
+            "Expert override heavy initialization workload",
+            &sessionUi_.allowHeavyInitializationWork,
+            "Allows creating worlds with very large x_i initialization write counts. Use only when expected; may increase create-time stall risk.");
 
         if (verification.blocking.empty()) {
             ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Blocking checks: PASS");
@@ -1224,6 +1252,8 @@
                     loadDisplayPrefs();
                     enterSimulationPaused();
 
+                    const auto initStart = std::chrono::steady_clock::now();
+                    int appliedVariableCount = 0;
                     for (const auto& setting : sessionUi_.variableInitializationSettings) {
                         if (!setting.enabled || setting.variableId.empty()) {
                             continue;
@@ -1237,6 +1267,23 @@
                             "wizard_variable_init",
                             patchMessage);
                         appendLog(patchMessage);
+                        ++appliedVariableCount;
+                    }
+
+                    const float initMs = static_cast<float>(
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - initStart).count());
+                    const std::uint64_t cellCount =
+                        static_cast<std::uint64_t>(std::max(1, panel_.gridWidth)) *
+                        static_cast<std::uint64_t>(std::max(1, panel_.gridHeight));
+                    const std::uint64_t estimatedWrites =
+                        cellCount * static_cast<std::uint64_t>(std::max(0, appliedVariableCount));
+                    {
+                        std::ostringstream perf;
+                        perf << "wizard_variable_init_complete vars=" << appliedVariableCount
+                             << " estimated_writes=" << estimatedWrites
+                             << " duration_ms=" << static_cast<int>(initMs);
+                        appendLog(perf.str());
                     }
 
                     sessionUi_.needsRefresh = true;
