@@ -4,6 +4,37 @@
   "author": "Colin Bossu Reaubourg",
   "creation_date": "2026-04-01",
   "tags": ["chemistry", "reaction-diffusion", "turing-patterns", "pde", "continuous"],
+  "initialization_guidance": {
+    "preferred_mode": "gray_scott",
+    "expected_start_data_type": "dual_concentration_fields",
+    "supported_modes": ["gray_scott", "terrain", "blank"],
+    "preferred_display_variable": "v_concentration",
+    "parameter_overrides": {
+      "grayScottBackgroundA": 1.0,
+      "grayScottBackgroundB": 0.0,
+      "grayScottSpotValueA": 0.0,
+      "grayScottSpotValueB": 1.0,
+      "grayScottSpotCount": 10.0,
+      "grayScottSpotRadius": 14.0,
+      "grayScottSpotJitter": 0.16
+    },
+    "variable_defaults": {
+      "u_concentration": {
+        "enabled": true,
+        "base_value": 1.0,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      },
+      "v_concentration": {
+        "enabled": true,
+        "base_value": 0.0,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      }
+    }
+  },
   "runtime_field_aliases": {
     "chemistry.concentration_a": "u_concentration",
     "chemistry.concentration_b": "v_concentration",

@@ -5,6 +5,45 @@
   "author": "Colin Bossu Réaubourg",
   "creation_date": "2026-04-02",
   "tags": ["fluid_dynamics", "navier-stokes", "pde", "incompressible", "2d", "computational-physics"],
+  "initialization_guidance": {
+    "preferred_mode": "terrain",
+    "expected_start_data_type": "velocity_pressure_fields",
+    "supported_modes": ["waves", "terrain", "blank"],
+    "preferred_display_variable": "velocity_x",
+    "parameter_overrides": {
+      "waveBaseline": 0.0,
+      "waveDropAmplitude": 0.65,
+      "waveDropRadius": 18.0,
+      "waveDropCount": 3.0,
+      "waveDropJitter": 0.22,
+      "waveRingFrequency": 1.6,
+      "terrainWarpStrength": 0.32,
+      "terrainAmplitude": 0.35
+    },
+    "variable_defaults": {
+      "velocity_x": {
+        "enabled": true,
+        "base_value": 0.22,
+        "restriction_mode": "clamp",
+        "min": -1000.0,
+        "max": 1000.0
+      },
+      "velocity_y": {
+        "enabled": true,
+        "base_value": 0.0,
+        "restriction_mode": "clamp",
+        "min": -1000.0,
+        "max": 1000.0
+      },
+      "pressure": {
+        "enabled": true,
+        "base_value": 101325.0,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000000.0
+      }
+    }
+  },
   "runtime_field_aliases": {
     "fluid.velocity_x": "velocity_x",
     "fluid.velocity_y": "velocity_y",
@@ -21,6 +60,7 @@
     "advection.velocity_y": "velocity_y",
     "diffusion.velocity_x": "velocity_x",
     "diffusion.velocity_y": "velocity_y",
-    "projection.pressure": "pressure"
+    "projection.pressure": "pressure",
+    "initialization.waves.target": "velocity_x"
   }
 }

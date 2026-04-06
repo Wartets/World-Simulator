@@ -5,6 +5,58 @@
   "author": "Colin Bossu Reaubourg",
   "creation_date": "2026-04-01",
   "tags": ["environment", "2d", "template", "weather", "biosphere"],
+  "initialization_guidance": {
+    "preferred_mode": "terrain",
+    "expected_start_data_type": "continuous_field",
+    "supported_modes": ["terrain", "gray_scott", "waves", "blank"],
+    "preferred_display_variable": "leaf_area_index",
+    "parameter_overrides": {
+      "terrainBaseFrequency": 1.35,
+      "terrainDetailFrequency": 5.4,
+      "seaLevel": 0.42,
+      "humidityFromWater": 0.75,
+      "biomeNoiseStrength": 0.55,
+      "grayScottBackgroundA": 0.45,
+      "grayScottBackgroundB": 0.35
+    },
+    "variable_defaults": {
+      "temperature": {
+        "enabled": true,
+        "base_value": 289.0,
+        "restriction_mode": "clamp",
+        "min": 200.0,
+        "max": 330.0
+      },
+      "water_vapor_density": {
+        "enabled": true,
+        "base_value": 0.0065,
+        "restriction_mode": "clamp",
+        "min": 0.00001,
+        "max": 0.03
+      },
+      "water_height": {
+        "enabled": true,
+        "base_value": 1.8,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 4000.0
+      },
+      "soil_water_fraction": {
+        "enabled": true,
+        "base_value": 0.38,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      },
+      "leaf_area_index": {
+        "enabled": true,
+        "base_value": 1.4,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 10.0
+      }
+    }
+  },
   "runtime_field_aliases": {
     "terrain_elevation_h": "altitude",
     "surface_water_w": "water_height",

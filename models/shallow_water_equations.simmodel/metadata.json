@@ -5,6 +5,50 @@
   "author": "Colin Bossu Réaubourg",
   "creation_date": "2026-04-02",
   "tags": ["fluid_dynamics", "shallow_water", "hydrostatic", "waves", "tsunami", "2d", "hydrology"],
+  "initialization_guidance": {
+    "preferred_mode": "waves",
+    "expected_start_data_type": "height_velocity_fields",
+    "supported_modes": ["waves", "terrain", "blank"],
+    "preferred_display_variable": "water_height",
+    "parameter_overrides": {
+      "waveBaseline": 10.0,
+      "waveDropAmplitude": 1.8,
+      "waveDropRadius": 22.0,
+      "waveDropCount": 4.0,
+      "waveDropJitter": 0.35,
+      "waveRingFrequency": 1.25
+    },
+    "variable_defaults": {
+      "water_height": {
+        "enabled": true,
+        "base_value": 10.0,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 10000.0
+      },
+      "surface_elevation": {
+        "enabled": true,
+        "base_value": 10.0,
+        "restriction_mode": "clamp",
+        "min": -5000.0,
+        "max": 10000.0
+      },
+      "velocity_x": {
+        "enabled": true,
+        "base_value": 0.15,
+        "restriction_mode": "clamp",
+        "min": -1000.0,
+        "max": 1000.0
+      },
+      "velocity_y": {
+        "enabled": true,
+        "base_value": 0.0,
+        "restriction_mode": "clamp",
+        "min": -1000.0,
+        "max": 1000.0
+      }
+    }
+  },
   "runtime_field_aliases": {
     "hydro.water_height": "water_height",
     "hydro.depth": "water_height",

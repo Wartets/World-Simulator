@@ -11,6 +11,72 @@
     "oxygen",
     "sediment-transport"
   ],
+  "initialization_guidance": {
+    "preferred_mode": "terrain",
+    "expected_start_data_type": "continuous_field",
+    "supported_modes": ["terrain", "waves", "blank"],
+    "preferred_display_variable": "oxygen",
+    "parameter_overrides": {
+      "terrainBaseFrequency": 0.95,
+      "terrainDetailFrequency": 3.4,
+      "seaLevel": 0.55,
+      "humidityFromWater": 0.92,
+      "waveBaseline": 0.0105,
+      "waveDropAmplitude": 0.0024,
+      "waveDropRadius": 14.0
+    },
+    "variable_defaults": {
+      "salinity": {
+        "enabled": true,
+        "base_value": 28.0,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000000000.0
+      },
+      "temperature": {
+        "enabled": true,
+        "base_value": 288.0,
+        "restriction_mode": "clamp",
+        "min": 268.0,
+        "max": 313.0
+      },
+      "nitrate": {
+        "enabled": true,
+        "base_value": 0.00003,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000000000.0
+      },
+      "phytoplankton": {
+        "enabled": true,
+        "base_value": 0.00002,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000000000.0
+      },
+      "detritus": {
+        "enabled": true,
+        "base_value": 0.00004,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000000000.0
+      },
+      "oxygen": {
+        "enabled": true,
+        "base_value": 0.0098,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000000000.0
+      },
+      "suspended_sediment": {
+        "enabled": true,
+        "base_value": 0.00012,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000000000.0
+      }
+    }
+  },
   "runtime_field_aliases": {
     "hydrodynamics.salinity": "salinity",
     "hydrodynamics.temperature": "temperature",

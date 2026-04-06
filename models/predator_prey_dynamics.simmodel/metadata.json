@@ -5,6 +5,40 @@
   "author": "Colin Bossu Réaubourg",
   "creation_date": "2026-04-02",
   "tags": ["biology", "ecology", "reaction-diffusion", "predator-prey", "population-dynamics", "2d", "grid-simulation"],
+  "initialization_guidance": {
+    "preferred_mode": "terrain",
+    "expected_start_data_type": "dual_population_fields",
+    "supported_modes": ["gray_scott", "terrain", "blank"],
+    "preferred_display_variable": "prey_density",
+    "parameter_overrides": {
+      "grayScottBackgroundA": 45.0,
+      "grayScottBackgroundB": 10.0,
+      "grayScottSpotValueA": 80.0,
+      "grayScottSpotValueB": 18.0,
+      "grayScottSpotCount": 7.0,
+      "grayScottSpotRadius": 11.0,
+      "grayScottSpotJitter": 0.28,
+      "terrainBaseFrequency": 1.1,
+      "terrainDetailFrequency": 4.2,
+      "terrainAmplitude": 0.85
+    },
+    "variable_defaults": {
+      "prey_density": {
+        "enabled": true,
+        "base_value": 42.0,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000.0
+      },
+      "predator_density": {
+        "enabled": true,
+        "base_value": 12.0,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000.0
+      }
+    }
+  },
   "runtime_field_aliases": {
     "ecology.prey": "prey_density",
     "ecology.predator": "predator_density",
@@ -17,6 +51,8 @@
     "population.prey": "prey_density",
     "population.predator": "predator_density",
     "dynamics.prey": "prey_density",
-    "dynamics.predator": "predator_density"
+    "dynamics.predator": "predator_density",
+    "initialization.gray_scott.target_a": "prey_density",
+    "initialization.gray_scott.target_b": "predator_density"
   }
 }

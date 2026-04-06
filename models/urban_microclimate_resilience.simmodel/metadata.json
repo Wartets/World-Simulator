@@ -11,6 +11,52 @@
     "coupled-system",
     "pde"
   ],
+  "initialization_guidance": {
+    "preferred_mode": "terrain",
+    "expected_start_data_type": "continuous_field",
+    "supported_modes": ["terrain", "waves", "blank"],
+    "preferred_display_variable": "surface_temperature",
+    "parameter_overrides": {
+      "terrainBaseFrequency": 1.8,
+      "terrainDetailFrequency": 5.8,
+      "terrainWarpStrength": 0.45,
+      "seaLevel": 0.40,
+      "humidityFromWater": 0.68,
+      "waveBaseline": 300.0,
+      "waveDropAmplitude": 3.0,
+      "waveDropRadius": 26.0
+    },
+    "variable_defaults": {
+      "surface_temperature": {
+        "enabled": true,
+        "base_value": 302.0,
+        "restriction_mode": "clamp",
+        "min": 230.0,
+        "max": 360.0
+      },
+      "canopy_temperature": {
+        "enabled": true,
+        "base_value": 299.0,
+        "restriction_mode": "clamp",
+        "min": 230.0,
+        "max": 360.0
+      },
+      "soil_moisture": {
+        "enabled": true,
+        "base_value": 0.34,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      },
+      "storage_heat": {
+        "enabled": true,
+        "base_value": 12000.0,
+        "restriction_mode": "non_negative",
+        "min": 0.0,
+        "max": 1000000000.0
+      }
+    }
+  },
   "runtime_field_aliases": {
     "urban.temperature": "surface_temperature",
     "urban.current": "surface_temperature",

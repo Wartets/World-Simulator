@@ -5,6 +5,25 @@
   "author": "Colin Bossu Reaubourg",
   "creation_date": "2026-04-01",
   "tags": ["cellular_automaton", "conway", "2d", "discrete", "boolean"],
+  "initialization_guidance": {
+    "preferred_mode": "conway",
+    "expected_start_data_type": "binary_state",
+    "supported_modes": ["conway", "blank"],
+    "preferred_display_variable": "living",
+    "parameter_overrides": {
+      "conwayAliveProbability": 0.35,
+      "conwaySmoothingPasses": 0.0
+    },
+    "variable_defaults": {
+      "living": {
+        "enabled": true,
+        "base_value": 0.0,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      }
+    }
+  },
   "runtime_field_aliases": {
     "automaton.state": "living",
     "automaton.current": "living",
