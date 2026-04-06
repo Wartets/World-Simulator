@@ -1053,18 +1053,18 @@ bool Runtime::applyManualPatch(
         return false;
     }
 
-    RuntimeInputFrame inputFrame;
-    if (cell.has_value()) {
-        inputFrame.scalarPatches.push_back(ScalarWritePatch{variableName, *cell, newValue});
-    } else {
-        inputFrame.scalarPatches.reserve(static_cast<std::size_t>(config_.grid.cellCount()));
+    if (!cell.has_value()) {
+        StateStore::WriteSession writer(stateStore_, "runtime_manual_patch", std::vector<std::string>{variableName});
         for (std::uint32_t y = 0; y < config_.grid.height; ++y) {
             for (std::uint32_t x = 0; x < config_.grid.width; ++x) {
-                inputFrame.scalarPatches.push_back(ScalarWritePatch{variableName, Cell{x, y}, newValue});
+                writer.setScalar(variableName, Cell{x, y}, newValue);
             }
         }
+    } else {
+        RuntimeInputFrame inputFrame;
+        inputFrame.scalarPatches.push_back(ScalarWritePatch{variableName, *cell, newValue});
+        queueInput(std::move(inputFrame));
     }
-    queueInput(std::move(inputFrame));
 
     ManualEventRecord record;
     record.step = stateStore_.header().stepIndex;
@@ -1078,7 +1078,11 @@ bool Runtime::applyManualPatch(
     record.kind = ManualEventKind::CellEdit;
     eventQueue_.recordManualEvent(record);
 
-    message = "manual_patch_queued variable=" + variableName;
+    if (cell.has_value()) {
+        message = "manual_patch_queued variable=" + variableName;
+    } else {
+        message = "manual_patch_applied_global variable=" + variableName;
+    }
     return true;
 }
 

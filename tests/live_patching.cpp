@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -199,6 +200,31 @@ void verifyParameterControlAndManualPatch() {
     assert(manualEvents.size() >= 1);
 }
 
+void verifyGlobalManualPatchAppliesImmediately() {
+    auto fixture = makeRuntimeFixture();
+    auto& runtime = fixture.runtime;
+
+    std::string message;
+    const bool globalPatchOk = runtime.applyManualPatch(
+        fixture.patchVariable,
+        std::nullopt,
+        0.42f,
+        "global_init",
+        message);
+    assert(globalPatchOk);
+
+    const auto checkpoint = runtime.createCheckpoint("global_patch_probe", true).stateSnapshot;
+    const auto it = std::find_if(checkpoint.fields.begin(), checkpoint.fields.end(), [&](const auto& f) {
+        return f.spec.name == fixture.patchVariable;
+    });
+    assert(it != checkpoint.fields.end());
+    assert(!it->values.empty());
+    for (const float v : it->values) {
+        assert(std::isfinite(v));
+        assert(v == 0.42f);
+    }
+}
+
 void verifyPerturbationAndCheckpointPersistence() {
     auto fixture = makeRuntimeFixture();
     auto& runtime = fixture.runtime;
@@ -234,6 +260,7 @@ void verifyPerturbationAndCheckpointPersistence() {
 
 int main() {
     verifyParameterControlAndManualPatch();
+    verifyGlobalManualPatchAppliesImmediately();
     verifyPerturbationAndCheckpointPersistence();
     return 0;
 }

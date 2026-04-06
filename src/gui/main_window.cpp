@@ -757,6 +757,8 @@ private:
     std::mutex asyncStateMutex_;
     std::string asyncErrorMessage_;
     bool asyncErrorPending_ = false;
+    std::string asyncWarningMessage_;
+    bool asyncWarningPending_ = false;
 
     ModelSelector      modelSelector_{};
     ModelEditorWindow  modelEditor_{"Model Editor"};
@@ -822,6 +824,7 @@ private:
     bool   uiParameterChangedThisFrame_    = false;
     bool   uiParameterInteractingThisFrame_ = false;
     double uiInteractionHotUntilSec_       = 0.0;
+    double lastAutoRunWatchdogLogSec_ = -1.0;
 
     RuntimeService runtime_;
     ConstraintMonitor constraintMonitor_{};

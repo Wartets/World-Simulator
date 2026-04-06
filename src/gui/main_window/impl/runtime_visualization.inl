@@ -1058,6 +1058,7 @@ void stopSimulationWorker() {
 void simulationWorkerLoop() {
     int adaptiveBatchSize = 1;
     int stepsUntilDisplayRefresh = std::max(1, simulationDisplayRefreshEveryNSteps_.load());
+    std::uint64_t nextSlowBatchWarningMs = 0;
 
         while (true) {
             {
@@ -1092,6 +1093,21 @@ void simulationWorkerLoop() {
                             std::chrono::steady_clock::now() - t0).count());
                     simulationLastBatchDurationMs_.store(batchMs);
                     simulationLastBatchSteps_.store(stepsToRun);
+
+                    const std::uint64_t nowMs = monotonicNowMs();
+                    if (batchMs > 250.0f && nowMs >= nextSlowBatchWarningMs) {
+                        std::ostringstream warn;
+                        warn << "simulation_batch_slow duration_ms=" << static_cast<int>(batchMs)
+                             << " steps=" << stepsToRun
+                             << " refresh_interval=" << refreshInterval
+                             << " unlimited_speed=" << (unlimitedSpeed ? "yes" : "no");
+                        {
+                            std::lock_guard<std::mutex> lock(asyncStateMutex_);
+                            asyncWarningMessage_ = warn.str();
+                            asyncWarningPending_ = true;
+                        }
+                        nextSlowBatchWarningMs = nowMs + 1500ull;
+                    }
 
                     if (!ok) {
                         std::lock_guard<std::mutex> lock(asyncStateMutex_);
@@ -1256,12 +1272,31 @@ void tickAutoRun() {
           asyncErrorPending_ = false;
       } }
 
+    { std::lock_guard<std::mutex> lk(asyncStateMutex_);
+      if (asyncWarningPending_) {
+          appendLog(asyncWarningMessage_);
+          asyncWarningPending_ = false;
+      } }
+
     simulationDisplayRefreshEveryNSteps_.store(std::max(1, viz_.displayRefreshEveryNSteps));
     simulationUnlimitedSpeed_.store(viz_.unlimitedSimSpeed);
 
     if (!viz_.autoRun || !runtime_.isRunning() || runtime_.isPaused()) {
         cancelPendingSimulationSteps();
         return;
+    }
+
+    if (viz_.framesSinceSnapshot > 180) {
+        const double nowSec = glfwGetTime();
+        if (lastAutoRunWatchdogLogSec_ < 0.0 || (nowSec - lastAutoRunWatchdogLogSec_) > 1.5) {
+            std::ostringstream warn;
+            warn << "snapshot_watchdog_lag frames_since_snapshot=" << viz_.framesSinceSnapshot
+                 << " pending=" << (snapshotRequestPending_.load() ? "yes" : "no")
+                 << " batch_ms=" << simulationLastBatchDurationMs_.load();
+            appendLog(warn.str());
+            requestSnapshotRefresh();
+            lastAutoRunWatchdogLogSec_ = nowSec;
+        }
     }
 
     if (uiParameterChangedThisFrame_) requestSnapshotRefresh();
