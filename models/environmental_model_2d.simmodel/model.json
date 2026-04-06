@@ -1,7 +1,7 @@
 ﻿{
   "__comment_intro__": "This is the editable JSON version of the model structure. It contains NO calculations, only the definitions of domains, variables, and the topological graph of execution stages/interactions. This replaces the old YAML configuration. The actual logic is located in logic.ir.",
   "id": "environmental_model_2d",
-  "version": "2.0.0",
+  "version": "2.0.1",
 
   "grid": {
     "dimensions": 2,
@@ -63,7 +63,7 @@
     { "id": "beneficial_precipitation_flux", "role": "parameter", "support": "global", "type": "f32", "units": "m/s", "initial_value": 2.0e-7, "description": "Rainfall level considered sufficient for maximal climatic fertility." },
 
     { "__comment_block__": "--- CELL VARIABLES ---" },
-    { "id": "altitude", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "altitude_m", "description": "Terrain elevation." },
+    { "id": "altitude", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "altitude_m", "initial_value": 0.0, "description": "Terrain elevation." },
     { "id": "temperature", "role": "state", "support": "cell", "type": "f32", "units": "K", "domain": "temperature_k", "description": "Surface-level air temperature." },
     { "id": "pressure", "role": "derived", "support": "cell", "type": "f32", "units": "kg/(m*s^2)", "domain": "pressure_kg_per_m_s2", "description": "Atmospheric pressure." },
     { "id": "water_vapor_density", "role": "state", "support": "cell", "type": "f32", "units": "kg/m^3", "domain": "water_vapor_density_kg_per_m3", "description": "Water vapor mass density carried by the air." },

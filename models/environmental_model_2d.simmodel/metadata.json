@@ -20,6 +20,13 @@
       "grayScottBackgroundB": 0.35
     },
     "variable_defaults": {
+      "altitude": {
+        "enabled": true,
+        "base_value": 0.0,
+        "restriction_mode": "clamp",
+        "min": -4000.0,
+        "max": 4000.0
+      },
       "temperature": {
         "enabled": true,
         "base_value": 289.0,
@@ -40,6 +47,13 @@
         "restriction_mode": "non_negative",
         "min": 0.0,
         "max": 4000.0
+      },
+      "soil_mineral_fraction": {
+        "enabled": true,
+        "base_value": 0.5,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
       },
       "soil_water_fraction": {
         "enabled": true,

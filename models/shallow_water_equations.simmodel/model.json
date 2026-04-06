@@ -1,7 +1,7 @@
 {
   "__comment_intro__": "Shallow Water Equations (2D). Depth-averaged hydrostatic flow simulation for water surface waves, tsunami propagation, and river hydraulics. Uses explicit finite volume method with wet/dry handling.",
   "id": "shallow_water_equations",
-  "version": "1.0.0",
+  "version": "1.0.1",
 
   "grid": {
     "dimensions": 2,
@@ -78,7 +78,7 @@
       "__comment_block__": "--- CELL VARIABLES (PARAMETER/BATHYMETRY) ---"
     },
     {
-      "id": "bathymetry", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "bathymetry_domain",
+      "id": "bathymetry", "role": "parameter", "support": "cell", "type": "f32", "units": "m", "domain": "bathymetry_domain", "initial_value": 0.0,
       "description": "Bottom topography (negative values for underwater, positive for above water). Combined with water_height gives surface_elevation."
     },
 

@@ -19,6 +19,13 @@
       "waveRingFrequency": 1.25
     },
     "variable_defaults": {
+      "bathymetry": {
+        "enabled": true,
+        "base_value": 0.0,
+        "restriction_mode": "clamp",
+        "min": -10000.0,
+        "max": 10000.0
+      },
       "water_height": {
         "enabled": true,
         "base_value": 10.0,

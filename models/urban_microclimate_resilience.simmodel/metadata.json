@@ -27,6 +27,34 @@
       "waveDropRadius": 26.0
     },
     "variable_defaults": {
+      "surface_albedo": {
+        "enabled": true,
+        "base_value": 0.18,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      },
+      "emissivity_surface": {
+        "enabled": true,
+        "base_value": 0.95,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      },
+      "impervious_fraction": {
+        "enabled": true,
+        "base_value": 0.72,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      },
+      "vegetation_fraction": {
+        "enabled": true,
+        "base_value": 0.28,
+        "restriction_mode": "clamp",
+        "min": 0.0,
+        "max": 1.0
+      },
       "surface_temperature": {
         "enabled": true,
         "base_value": 302.0,

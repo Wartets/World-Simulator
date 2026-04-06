@@ -1,7 +1,7 @@
 {
   "__comment_intro__": "Urban Microclimate Resilience. Coupled thermo-hydrologic city-scale simulation in strict SI-compatible units.",
   "id": "urban_microclimate_resilience",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "grid": {
     "dimensions": 2,
     "topology": "cartesian",
@@ -38,10 +38,10 @@
     { "id": "canopy_temperature", "role": "state", "support": "cell", "type": "f32", "units": "K", "domain": "temperature_physical", "description": "Street canyon / canopy-layer temperature." },
     { "id": "soil_moisture", "role": "state", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Root-zone moisture content fraction." },
     { "id": "storage_heat", "role": "state", "support": "cell", "type": "f32", "units": "kg/s^2", "domain": "non_negative", "description": "Effective areal heat storage state." },
-    { "id": "surface_albedo", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Reflectance of shortwave radiation." },
-    { "id": "emissivity_surface", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Longwave emissivity of surface material." },
-    { "id": "impervious_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Built-up impervious share in each cell." },
-    { "id": "vegetation_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "description": "Vegetated share in each cell." },
+    { "id": "surface_albedo", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "initial_value": 0.18, "description": "Reflectance of shortwave radiation." },
+    { "id": "emissivity_surface", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "initial_value": 0.95, "description": "Longwave emissivity of surface material." },
+    { "id": "impervious_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "initial_value": 0.72, "description": "Built-up impervious share in each cell." },
+    { "id": "vegetation_fraction", "role": "parameter", "support": "cell", "type": "f32", "units": "1", "domain": "fraction_unit", "initial_value": 0.28, "description": "Vegetated share in each cell." },
 
     { "id": "net_radiation", "role": "derived", "support": "cell", "type": "f32", "units": "kg/s^3", "description": "Net all-wave radiative flux." },
     { "id": "sensible_flux", "role": "derived", "support": "cell", "type": "f32", "units": "kg/s^3", "description": "Sensible turbulent heat flux." },

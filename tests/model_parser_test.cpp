@@ -508,6 +508,136 @@ void test_coastal_model_parser_smoke() {
     }
 }
 
+void test_environmental_model_defaults() {
+    const std::filesystem::path modelDir = resolveModelDir("environmental_model_2d.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping environmental model defaults test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    const auto modelJson = read_text_file(modelDir / "model.json");
+    const auto metadataJson = read_text_file(modelDir / "metadata.json");
+    assert(!modelJson.empty());
+    assert(!metadataJson.empty());
+
+    const auto model = nlohmann::json::parse(modelJson);
+    const auto metadata = nlohmann::json::parse(metadataJson);
+
+    assert(model["version"].get<std::string>() == "2.0.1");
+    const auto& defaults = metadata["initialization_guidance"]["variable_defaults"];
+    assert(defaults.contains("altitude"));
+    assert(defaults.contains("soil_mineral_fraction"));
+
+    float altitudeInitialValue = std::numeric_limits<float>::quiet_NaN();
+    for (const auto& variable : model["variables"]) {
+        if (variable.is_object() && variable.value("id", "") == "altitude") {
+            assert(variable.contains("initial_value"));
+            altitudeInitialValue = variable["initial_value"].get<float>();
+            break;
+        }
+    }
+    assert(altitudeInitialValue == 0.0f);
+
+    const auto& altitudeDefaults = defaults["altitude"];
+    assert(altitudeDefaults["base_value"].get<double>() == 0.0);
+    assert(altitudeDefaults["restriction_mode"].get<std::string>() == "clamp");
+
+    const auto& soilMineralDefaults = defaults["soil_mineral_fraction"];
+    assert(soilMineralDefaults["base_value"].get<double>() == 0.5);
+    assert(soilMineralDefaults["restriction_mode"].get<std::string>() == "clamp");
+
+    std::cout << "Environmental model defaults test passed.\n";
+}
+
+void test_shallow_water_defaults() {
+    const std::filesystem::path modelDir = resolveModelDir("shallow_water_equations.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping shallow water defaults test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    const auto modelJson = read_text_file(modelDir / "model.json");
+    const auto metadataJson = read_text_file(modelDir / "metadata.json");
+    assert(!modelJson.empty());
+    assert(!metadataJson.empty());
+
+    const auto model = nlohmann::json::parse(modelJson);
+    const auto metadata = nlohmann::json::parse(metadataJson);
+
+    assert(model["version"].get<std::string>() == "1.0.1");
+    const auto& defaults = metadata["initialization_guidance"]["variable_defaults"];
+    assert(defaults.contains("bathymetry"));
+
+    float bathymetryInitialValue = std::numeric_limits<float>::quiet_NaN();
+    for (const auto& variable : model["variables"]) {
+        if (variable.is_object() && variable.value("id", "") == "bathymetry") {
+            assert(variable.contains("initial_value"));
+            bathymetryInitialValue = variable["initial_value"].get<float>();
+            break;
+        }
+    }
+    assert(bathymetryInitialValue == 0.0f);
+
+    const auto& bathymetryDefaults = defaults["bathymetry"];
+    assert(bathymetryDefaults["base_value"].get<double>() == 0.0);
+    assert(bathymetryDefaults["restriction_mode"].get<std::string>() == "clamp");
+
+    std::cout << "Shallow water defaults test passed.\n";
+}
+
+void test_urban_microclimate_defaults() {
+    const std::filesystem::path modelDir = resolveModelDir("urban_microclimate_resilience.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping urban microclimate defaults test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    const auto modelJson = read_text_file(modelDir / "model.json");
+    const auto metadataJson = read_text_file(modelDir / "metadata.json");
+    assert(!modelJson.empty());
+    assert(!metadataJson.empty());
+
+    const auto model = nlohmann::json::parse(modelJson);
+    const auto metadata = nlohmann::json::parse(metadataJson);
+
+    assert(model["version"].get<std::string>() == "1.0.2");
+    const auto& defaults = metadata["initialization_guidance"]["variable_defaults"];
+    assert(defaults.contains("surface_temperature"));
+    assert(defaults.contains("canopy_temperature"));
+    assert(defaults.contains("soil_moisture"));
+    assert(defaults.contains("storage_heat"));
+    assert(defaults.contains("surface_albedo"));
+    assert(defaults.contains("emissivity_surface"));
+    assert(defaults.contains("impervious_fraction"));
+    assert(defaults.contains("vegetation_fraction"));
+
+    auto findParam = [&](const std::string& id) -> const nlohmann::json* {
+        for (const auto& variable : model["variables"]) {
+            if (variable.is_object() && variable.value("id", "") == id) {
+                return &variable;
+            }
+        }
+        return nullptr;
+    };
+
+    const auto* albedo = findParam("surface_albedo");
+    const auto* emissivity = findParam("emissivity_surface");
+    const auto* impervious = findParam("impervious_fraction");
+    const auto* vegetation = findParam("vegetation_fraction");
+
+    assert(albedo != nullptr && albedo->contains("initial_value") && (*albedo)["initial_value"].get<float>() == 0.18f);
+    assert(emissivity != nullptr && emissivity->contains("initial_value") && (*emissivity)["initial_value"].get<float>() == 0.95f);
+    assert(impervious != nullptr && impervious->contains("initial_value") && (*impervious)["initial_value"].get<float>() == 0.72f);
+    assert(vegetation != nullptr && vegetation->contains("initial_value") && (*vegetation)["initial_value"].get<float>() == 0.28f);
+
+    assert(defaults["surface_albedo"]["base_value"].get<double>() == 0.18);
+    assert(defaults["emissivity_surface"]["base_value"].get<double>() == 0.95);
+    assert(defaults["impervious_fraction"]["base_value"].get<double>() == 0.72);
+    assert(defaults["vegetation_fraction"]["base_value"].get<double>() == 0.28);
+
+    std::cout << "Urban microclimate defaults test passed.\n";
+}
+
 void test_model_display_spec_loader() {
     const std::filesystem::path sourceModelDir = resolveModelDir("environmental_model_2d.simmodel");
     if (!std::filesystem::exists(sourceModelDir)) {
@@ -718,6 +848,9 @@ int main() {
     test_coastal_model_parameter_controls();
     test_coastal_model_execution_spec();
     test_coastal_model_parser_smoke();
+    test_environmental_model_defaults();
+    test_shallow_water_defaults();
+    test_urban_microclimate_defaults();
     test_model_display_spec_loader();
     test_model_binding_plan_uses_catalog_metadata();
     test_extended_variable_metadata_schema_loader();
