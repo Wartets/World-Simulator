@@ -221,6 +221,7 @@ ws_add_test(subsystems_test tests/subsystems.cpp)
 ws_add_test(interactions_test tests/interactions.cpp)
 ws_add_test(model_parser_test tests/model_parser_test.cpp)
 ws_add_test(integration_multi_model_test tests/integration_multi_model.cpp)
+ws_add_test(conway_activity_test tests/conway_activity.cpp)
 ws_add_test(full_pipeline_multi_model_test tests/full_pipeline_multi_model.cpp)
 ws_add_test(ui_error_paths_multi_model_test tests/ui_error_paths_multi_model.cpp)
 ws_add_test(ui_state_transitions_multi_model_test tests/ui_state_transitions_multi_model.cpp)
@@ -250,6 +251,14 @@ add_test(NAME viewport_manager_test COMMAND viewport_manager_test)
 target_sources(full_pipeline_multi_model_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/display_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_storage.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
+)
+target_sources(conway_activity_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp

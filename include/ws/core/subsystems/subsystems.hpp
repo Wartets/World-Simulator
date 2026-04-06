@@ -7,6 +7,15 @@
 
 namespace ws {
 
+class CellularAutomatonSubsystem final : public ISubsystem {
+public:
+    [[nodiscard]] std::string name() const override;
+    [[nodiscard]] std::vector<std::string> declaredReadSet() const override;
+    [[nodiscard]] std::vector<std::string> declaredWriteSet() const override;
+    void initialize(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile) override;
+    void step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile& profile, std::uint64_t stepIndex) override;
+};
+
 class GenerationSubsystem final : public ISubsystem {
 public:
     [[nodiscard]] std::string name() const override;

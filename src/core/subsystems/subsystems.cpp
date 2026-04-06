@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 namespace ws {
 
@@ -37,6 +38,53 @@ StateStore::FieldHandle resolveWriteHandle(
 }
 
 } // namespace
+
+std::string CellularAutomatonSubsystem::name() const { return "automaton"; }
+std::vector<std::string> CellularAutomatonSubsystem::declaredReadSet() const { return {"automaton.state"}; }
+std::vector<std::string> CellularAutomatonSubsystem::declaredWriteSet() const { return {"automaton.state"}; }
+
+void CellularAutomatonSubsystem::initialize(const StateStore&, StateStore::WriteSession&, const ModelProfile&) {}
+
+void CellularAutomatonSubsystem::step(const StateStore& stateStore, StateStore::WriteSession& writeSession, const ModelProfile&, const std::uint64_t) {
+    const auto readHandle = resolveReadHandle(stateStore, "automaton.state", name());
+    const auto writeHandle = resolveWriteHandle(stateStore, writeSession, "automaton.state", name());
+    const auto variableName = FieldResolver::resolveRequiredField(stateStore, "automaton.state", name());
+
+    const GridSpec& grid = stateStore.grid();
+    const float* currentPtr = stateStore.scalarFieldRawPtr(readHandle);
+    float* writePtr = stateStore.scalarFieldRawPtrMut(writeHandle);
+    const std::size_t logicalCount = static_cast<std::size_t>(stateStore.logicalCellCount(variableName));
+    std::vector<float> current(currentPtr, currentPtr + static_cast<std::ptrdiff_t>(logicalCount));
+
+    const auto sampleAlive = [&](const std::int64_t x, const std::int64_t y) -> int {
+        const Cell resolved = stateStore.resolveBoundary(CellSigned{x, y});
+        const std::size_t idx = static_cast<std::size_t>(resolved.y) * static_cast<std::size_t>(grid.width) + static_cast<std::size_t>(resolved.x);
+        return current[idx] >= 0.5f ? 1 : 0;
+    };
+
+    const std::int64_t width = static_cast<std::int64_t>(grid.width);
+    const std::int64_t height = static_cast<std::int64_t>(grid.height);
+    WS_OMP_PARALLEL_FOR
+    for (std::int64_t y = 0; y < height; ++y) {
+        const std::size_t rowOffset = static_cast<std::size_t>(y) * static_cast<std::size_t>(grid.width);
+        for (std::int64_t x = 0; x < width; ++x) {
+            int neighbors = 0;
+            neighbors += sampleAlive(x - 1, y - 1);
+            neighbors += sampleAlive(x, y - 1);
+            neighbors += sampleAlive(x + 1, y - 1);
+            neighbors += sampleAlive(x - 1, y);
+            neighbors += sampleAlive(x + 1, y);
+            neighbors += sampleAlive(x - 1, y + 1);
+            neighbors += sampleAlive(x, y + 1);
+            neighbors += sampleAlive(x + 1, y + 1);
+
+            const std::size_t idx = rowOffset + static_cast<std::size_t>(x);
+            const bool alive = current[idx] >= 0.5f;
+            const bool nextAlive = (neighbors == 3) || (alive && neighbors == 2);
+            writePtr[idx] = nextAlive ? 1.0f : 0.0f;
+        }
+    }
+}
 
 std::string GenerationSubsystem::name() const { return "generation"; }
 std::vector<std::string> GenerationSubsystem::declaredReadSet() const { return {"generation.elevation"}; }
@@ -608,6 +656,7 @@ void EventSubsystem::step(const StateStore& stateStore, StateStore::WriteSession
 
 std::vector<std::shared_ptr<ISubsystem>> makePhase4Subsystems() {
     return {
+        std::make_shared<CellularAutomatonSubsystem>(),
         std::make_shared<GenerationSubsystem>(),
         std::make_shared<HydrologySubsystem>(),
         std::make_shared<TemperatureSubsystem>(),

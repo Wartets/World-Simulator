@@ -54,6 +54,7 @@ enum class AppState        { ModelSelector, ModelEditor, SessionManager, NewWorl
 #include <sstream>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include <filesystem>
 #include <fstream>
@@ -298,25 +299,21 @@ constexpr float kPageMaxWidth = 1600.0f;
 [[nodiscard]] InitialConditionType refineRecommendedModeForKnownModels(
     const initialization::ModelVariableCatalog& catalog,
     const InitialConditionType advisorMode) {
-    const std::string modelId = catalog.modelId;
-    if (containsToken(modelId, {"game_of_life", "conway"})) {
-        return InitialConditionType::Conway;
+    if (catalog.preferredInitializationMode.has_value()) {
+        return *catalog.preferredInitializationMode;
     }
-    if (containsToken(modelId, {"gray_scott", "reaction_diffusion"})) {
-        return InitialConditionType::GrayScott;
+
+    if (!catalog.supportedInitializationModes.empty()) {
+        const auto it = std::find(
+            catalog.supportedInitializationModes.begin(),
+            catalog.supportedInitializationModes.end(),
+            advisorMode);
+        if (it != catalog.supportedInitializationModes.end()) {
+            return advisorMode;
+        }
+        return catalog.supportedInitializationModes.front();
     }
-    if (containsToken(modelId, {"shallow_water", "navier_stokes", "fluid"})) {
-        return InitialConditionType::Waves;
-    }
-    if (containsToken(modelId, {"forest_fire"})) {
-        return InitialConditionType::Terrain;
-    }
-    if (containsToken(modelId, {"predator_prey"})) {
-        return InitialConditionType::Clustering;
-    }
-    if (containsToken(modelId, {"urban_microclimate", "environmental", "coastal"})) {
-        return InitialConditionType::Terrain;
-    }
+
     return advisorMode;
 }
 
@@ -355,6 +352,24 @@ constexpr float kPageMaxWidth = 1600.0f;
         }
     }
     return std::clamp(fallbackIndex, 0, std::max(0, static_cast<int>(variables.size()) - 1));
+}
+
+[[nodiscard]] int findPreferredVariableIndex(
+    const initialization::ModelVariableCatalog& catalog,
+    const std::vector<std::string>& variables,
+    const std::initializer_list<const char*> tokens,
+    const int fallbackIndex = 0) {
+    if (variables.empty()) {
+        return 0;
+    }
+    if (!catalog.preferredDisplayVariable.empty()) {
+        for (int i = 0; i < static_cast<int>(variables.size()); ++i) {
+            if (variables[static_cast<std::size_t>(i)] == catalog.preferredDisplayVariable) {
+                return i;
+            }
+        }
+    }
+    return findPreferredVariableIndex(variables, tokens, fallbackIndex);
 }
 
 void applyAutoVariableBindingsForMode(
@@ -396,6 +411,25 @@ void rebuildVariableInitializationSettings(
         setting.restrictionMode = 0;
         setting.clampMin = 0.0f;
         setting.clampMax = 1.0f;
+
+        const auto initDefaultsIt = catalog.variableInitializationDefaults.find(variableId);
+        if (initDefaultsIt != catalog.variableInitializationDefaults.end()) {
+            const auto& defaults = initDefaultsIt->second;
+            setting.enabled = defaults.enabled;
+            if (defaults.hasBaseValue) {
+                setting.baseValue = defaults.baseValue;
+            }
+            if (defaults.hasRestrictionMode) {
+                setting.restrictionMode = defaults.restrictionMode;
+            }
+            if (defaults.hasClampMin) {
+                setting.clampMin = defaults.clampMin;
+            }
+            if (defaults.hasClampMax) {
+                setting.clampMax = defaults.clampMax;
+            }
+        }
+
         for (const auto& descriptor : catalog.variables) {
             if (descriptor.id == variableId) {
                 if (descriptor.hasDomainMin) {
@@ -404,12 +438,14 @@ void rebuildVariableInitializationSettings(
                 if (descriptor.hasDomainMax) {
                     setting.clampMax = descriptor.domainMax;
                 }
-                if (descriptor.hasDomainMin || descriptor.hasDomainMax) {
+                if ((descriptor.hasDomainMin || descriptor.hasDomainMax) && setting.restrictionMode == 0) {
                     setting.restrictionMode = 1;
                 }
                 break;
             }
         }
+
+        setting.baseValue = applyVariableRestriction(setting, setting.baseValue);
         sessionUi.variableInitializationSettings.push_back(std::move(setting));
     }
 }
@@ -464,6 +500,53 @@ void applyGenerationDefaultsForMode(
     panel.waveDropCount = defaults.waveDropCount;
     panel.waveDropJitter = defaults.waveDropJitter;
     panel.waveRingFrequency = defaults.waveRingFrequency;
+
+    const auto applyOverride = [&](const char* key, auto& target) {
+        const auto it = catalog.generationParameterOverrides.find(key);
+        if (it != catalog.generationParameterOverrides.end()) {
+            target = static_cast<std::decay_t<decltype(target)>>(it->second);
+        }
+    };
+
+    applyOverride("terrainBaseFrequency", panel.terrainBaseFrequency);
+    applyOverride("terrainDetailFrequency", panel.terrainDetailFrequency);
+    applyOverride("terrainWarpStrength", panel.terrainWarpStrength);
+    applyOverride("terrainAmplitude", panel.terrainAmplitude);
+    applyOverride("terrainRidgeMix", panel.terrainRidgeMix);
+    applyOverride("terrainOctaves", panel.terrainOctaves);
+    applyOverride("terrainLacunarity", panel.terrainLacunarity);
+    applyOverride("terrainGain", panel.terrainGain);
+    applyOverride("seaLevel", panel.seaLevel);
+    applyOverride("polarCooling", panel.polarCooling);
+    applyOverride("latitudeBanding", panel.latitudeBanding);
+    applyOverride("humidityFromWater", panel.humidityFromWater);
+    applyOverride("biomeNoiseStrength", panel.biomeNoiseStrength);
+    applyOverride("islandDensity", panel.islandDensity);
+    applyOverride("islandFalloff", panel.islandFalloff);
+    applyOverride("coastlineSharpness", panel.coastlineSharpness);
+    applyOverride("archipelagoJitter", panel.archipelagoJitter);
+    applyOverride("erosionStrength", panel.erosionStrength);
+    applyOverride("shelfDepth", panel.shelfDepth);
+
+    applyOverride("conwayAliveProbability", panel.conwayAliveProbability);
+    applyOverride("conwayAliveValue", panel.conwayAliveValue);
+    applyOverride("conwayDeadValue", panel.conwayDeadValue);
+    applyOverride("conwaySmoothingPasses", panel.conwaySmoothingPasses);
+
+    applyOverride("grayScottBackgroundA", panel.grayScottBackgroundA);
+    applyOverride("grayScottBackgroundB", panel.grayScottBackgroundB);
+    applyOverride("grayScottSpotValueA", panel.grayScottSpotValueA);
+    applyOverride("grayScottSpotValueB", panel.grayScottSpotValueB);
+    applyOverride("grayScottSpotCount", panel.grayScottSpotCount);
+    applyOverride("grayScottSpotRadius", panel.grayScottSpotRadius);
+    applyOverride("grayScottSpotJitter", panel.grayScottSpotJitter);
+
+    applyOverride("waveBaseline", panel.waveBaseline);
+    applyOverride("waveDropAmplitude", panel.waveDropAmplitude);
+    applyOverride("waveDropRadius", panel.waveDropRadius);
+    applyOverride("waveDropCount", panel.waveDropCount);
+    applyOverride("waveDropJitter", panel.waveDropJitter);
+    applyOverride("waveRingFrequency", panel.waveRingFrequency);
 }
 
 // Helper: Apply generation advisor recommendations to panel state
@@ -639,8 +722,9 @@ public:
                     viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(runtimeMode);
                     sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(runtimeMode);
                     sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+                        sessionUi_.selectedModelCatalog,
                         sessionUi_.selectedModelCellStateVariables,
-                        {"water", "state", "concentration", "temperature", "vegetation"},
+                        {"fire_state", "living", "water", "state", "concentration", "temperature", "vegetation", "velocity", "oxygen"},
                         0);
 
                     rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);

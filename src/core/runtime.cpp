@@ -569,7 +569,11 @@ void Runtime::start() {
                             DeterministicHash::combine(config_.seed, 0xF17E5101ULL),
                             static_cast<int>(x),
                             static_cast<int>(y));
-                        const bool ignite = (vegetation > 0.55f) && (humidity < 0.45f) && (ignitionNoise > 0.9975f);
+                        const bool fireModelSeedingActive = fireStateVar.has_value();
+                        const float ignitionThreshold = fireModelSeedingActive ? 0.992f : 0.9975f;
+                        const float humidityLimit = fireModelSeedingActive ? 0.58f : 0.45f;
+                        const float vegetationLimit = fireModelSeedingActive ? 0.42f : 0.55f;
+                        const bool ignite = (vegetation > vegetationLimit) && (humidity < humidityLimit) && (ignitionNoise > ignitionThreshold);
                         const float fireState = ignite ? 1.0f : 0.0f;
 
                         const auto writeIfResolved = [&](const std::optional<std::string>& variableName, const float value) {

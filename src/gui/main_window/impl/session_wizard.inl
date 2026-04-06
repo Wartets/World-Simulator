@@ -243,8 +243,9 @@
             viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(refined);
             sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(refined);
             sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+                sessionUi_.selectedModelCatalog,
                 sessionUi_.selectedModelCellStateVariables,
-                {"water", "state", "concentration", "temperature", "vegetation"},
+                {"fire_state", "living", "water", "state", "concentration", "temperature", "vegetation", "velocity", "oxygen"},
                 0);
             sessionUi_.generationModeIndex = static_cast<int>(refined);
             rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
@@ -1316,8 +1317,9 @@
             viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(refined);
             sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(refined);
             sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+                sessionUi_.selectedModelCatalog,
                 sessionUi_.selectedModelCellStateVariables,
-                {"water", "state", "concentration", "temperature", "vegetation"},
+                {"fire_state", "living", "water", "state", "concentration", "temperature", "vegetation", "velocity", "oxygen"},
                 0);
             sessionUi_.generationModeIndex = static_cast<int>(refined);
             rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);

@@ -2118,8 +2118,9 @@ void drawWorldGenerationSection() {
         viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(runtimeMode);
         sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(runtimeMode);
         sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+            sessionUi_.selectedModelCatalog,
             modelCellVars,
-            {"water", "state", "concentration", "temperature", "vegetation"},
+            {"fire_state", "living", "water", "state", "concentration", "temperature", "vegetation", "velocity", "oxygen"},
             0);
         sessionUi_.generationModeIndex = static_cast<int>(runtimeMode);
         rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);

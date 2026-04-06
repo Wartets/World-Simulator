@@ -171,6 +171,9 @@ bool RuntimeService::start(std::string& message) {
                 if (!modelExecutionSpec.conservedVariables.empty()) {
                     runtimeConfig.profileInput.conservedVariables = modelExecutionSpec.conservedVariables;
                 }
+                if (modelExecutionSpec.preferredBoundaryMode.has_value()) {
+                    runtimeConfig.boundaryMode = *modelExecutionSpec.preferredBoundaryMode;
+                }
                 runtimeConfig.modelExecutionSpec = std::move(modelExecutionSpec);
             }
 

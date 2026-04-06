@@ -38,6 +38,11 @@ void verifyModelCatalogAndExecutionSpecConsistency(const std::filesystem::path& 
     assert(executionOk);
     assert(!executionSpec.cellScalarVariableIds.empty());
 
+    if (modelPath.stem().string() == "game_of_life_model") {
+        assert(executionSpec.preferredBoundaryMode.has_value());
+        assert(*executionSpec.preferredBoundaryMode == ws::BoundaryMode::Wrap);
+    }
+
     std::set<std::string> variableIds(
         executionSpec.cellScalarVariableIds.begin(),
         executionSpec.cellScalarVariableIds.end());

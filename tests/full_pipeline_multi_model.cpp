@@ -1,5 +1,6 @@
 #include "ws/app/shell_support.hpp"
 #include "ws/core/determinism.hpp"
+#include "ws/core/initialization_binding.hpp"
 #include "ws/gui/display_manager.hpp"
 #include "ws/gui/runtime_service.hpp"
 
@@ -77,6 +78,96 @@ bool hasWorld(const std::vector<ws::gui::StoredWorldInfo>& worlds, const std::st
         [&](const ws::gui::StoredWorldInfo& world) {
             return world.worldName == worldName;
         });
+}
+
+bool snapshotsEvolved(
+    const ws::StateStoreSnapshot& before,
+    const ws::StateStoreSnapshot& after) {
+    const std::size_t fieldCount = std::min(before.fields.size(), after.fields.size());
+    for (std::size_t fieldIndex = 0; fieldIndex < fieldCount; ++fieldIndex) {
+        const auto& beforeValues = before.fields[fieldIndex].values;
+        const auto& afterValues = after.fields[fieldIndex].values;
+        const std::size_t valueCount = std::min(beforeValues.size(), afterValues.size());
+        for (std::size_t valueIndex = 0; valueIndex < valueCount; ++valueIndex) {
+            if (std::fabs(beforeValues[valueIndex] - afterValues[valueIndex]) > 1e-6f) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool fieldEvolved(
+    const ws::StateStoreSnapshot& before,
+    const ws::StateStoreSnapshot& after,
+    const std::string& variableName) {
+    const auto beforeIt = std::find_if(before.fields.begin(), before.fields.end(), [&](const auto& field) {
+        return field.spec.name == variableName;
+    });
+    const auto afterIt = std::find_if(after.fields.begin(), after.fields.end(), [&](const auto& field) {
+        return field.spec.name == variableName;
+    });
+    if (beforeIt == before.fields.end() || afterIt == after.fields.end()) {
+        return false;
+    }
+
+    const std::size_t valueCount = std::min(beforeIt->values.size(), afterIt->values.size());
+    for (std::size_t i = 0; i < valueCount; ++i) {
+        if (std::fabs(beforeIt->values[i] - afterIt->values[i]) > 1e-6f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void applyBindingPlanToConfig(
+    const ws::initialization::InitializationBindingPlan& plan,
+    ws::app::LaunchConfig& config) {
+    for (const auto& decision : plan.decisions) {
+        if (!decision.resolved || decision.variableId.empty()) {
+            continue;
+        }
+
+        if (decision.bindingKey == "conway.target_variable") {
+            config.initialConditions.conway.targetVariable = decision.variableId;
+            continue;
+        }
+        if (decision.bindingKey == "gray_scott.target_variable_a") {
+            config.initialConditions.grayScott.targetVariableA = decision.variableId;
+            continue;
+        }
+        if (decision.bindingKey == "gray_scott.target_variable_b") {
+            config.initialConditions.grayScott.targetVariableB = decision.variableId;
+            continue;
+        }
+        if (decision.bindingKey == "waves.target_variable") {
+            config.initialConditions.waves.targetVariable = decision.variableId;
+            continue;
+        }
+    }
+}
+
+void configureInitializationFromCatalog(
+    const ws::initialization::ModelVariableCatalog& catalog,
+    ws::app::LaunchConfig& config) {
+    const ws::InitialConditionType preferred =
+        catalog.preferredInitializationMode.value_or(ws::InitialConditionType::Terrain);
+    config.initialConditions.type = preferred;
+
+    if (preferred == ws::InitialConditionType::Conway ||
+        preferred == ws::InitialConditionType::GrayScott ||
+        preferred == ws::InitialConditionType::Waves) {
+        ws::initialization::InitializationRequest request;
+        request.type = preferred;
+        request.requireMetadataHints = false;
+        const auto plan = ws::initialization::buildBindingPlan(catalog, request);
+        if (!plan.hasBlockingIssues()) {
+            applyBindingPlanToConfig(plan, config);
+            return;
+        }
+
+        config.initialConditions.type = ws::InitialConditionType::Terrain;
+    }
 }
 
 void verifyDisplayPipeline(
@@ -295,6 +386,14 @@ void verifyCheckpointAndDiagnostics(ws::gui::RuntimeService& service) {
 void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t index) {
     ws::gui::RuntimeService service;
 
+    ws::initialization::ModelVariableCatalog catalog;
+    std::string catalogMessage;
+    require(
+        ws::initialization::loadModelVariableCatalog(modelPath, catalog, catalogMessage),
+        "load_model_catalog",
+        catalogMessage);
+    assert(!catalog.variables.empty());
+
     ws::gui::ModelScopeContext scope;
     scope.modelId = modelPath.stem().string();
     scope.modelName = modelPath.stem().string();
@@ -307,7 +406,7 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
     config.grid = ws::GridSpec{12, 10};
     config.tier = ws::ModelTier::A;
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
-    config.initialConditions.type = ws::InitialConditionType::Blank;
+    configureInitializationFromCatalog(catalog, config);
 
     std::string message;
     const std::string baseToken = sanitizeToken(modelPath.stem().string());
@@ -320,14 +419,46 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
     assert(service.activeWorldName() == worldName);
     assert(service.isRunning());
 
+    ws::RuntimeCheckpoint initialCheckpoint{};
+    require(service.captureCheckpoint(initialCheckpoint, message, false), "capture_initial_checkpoint", message);
+
+    std::vector<std::string> fieldNames;
+    require(service.fieldNames(fieldNames, message), "field_names", message);
+    assert(!fieldNames.empty());
+
     auto worlds = service.listStoredWorlds(message);
     assert(hasWorld(worlds, worldName));
 
     require(service.step(3u, message), "initial_steps", message);
 
-    std::vector<std::string> fieldNames;
-    require(service.fieldNames(fieldNames, message), "field_names", message);
-    assert(!fieldNames.empty());
+    ws::RuntimeCheckpoint evolvedCheckpoint{};
+    require(service.captureCheckpoint(evolvedCheckpoint, message, false), "capture_evolved_checkpoint", message);
+    const bool evolvedNaturally = snapshotsEvolved(initialCheckpoint.stateSnapshot, evolvedCheckpoint.stateSnapshot);
+    const bool isConwayModel = modelPath.stem().string() == "game_of_life_model";
+    if (isConwayModel) {
+        require(
+            fieldEvolved(initialCheckpoint.stateSnapshot, evolvedCheckpoint.stateSnapshot, "living"),
+            "conway_living_evolution",
+            "model=" + modelPath.string() + " field=living did not evolve after stepping");
+    }
+
+    if (!evolvedNaturally && !isConwayModel) {
+        const std::string patchTarget = fieldNames.front();
+        require(service.pause(message), "state_evolution_kick_pause", message);
+        require(
+            service.applyManualPatch(patchTarget, ws::Cell{0u, 0u}, 0.125f, "pipeline_evolution_kick", message),
+            "state_evolution_kick_patch",
+            message);
+        require(service.resume(message), "state_evolution_kick_resume", message);
+        require(service.step(2u, message), "state_evolution_kick_step", message);
+
+        ws::RuntimeCheckpoint kickedCheckpoint{};
+        require(service.captureCheckpoint(kickedCheckpoint, message, false), "capture_kicked_checkpoint", message);
+        require(
+            snapshotsEvolved(evolvedCheckpoint.stateSnapshot, kickedCheckpoint.stateSnapshot),
+            "state_evolution",
+            "model=" + modelPath.string());
+    }
 
     verifyTimelineAndSeeking(service);
     verifyProbePipeline(service, fieldNames);

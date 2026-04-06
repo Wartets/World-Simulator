@@ -58,6 +58,232 @@ void appendNormalizedStrings(const json& source, std::vector<std::string>& desti
     }
 }
 
+std::optional<InitialConditionType> parseInitialConditionType(const std::string& rawMode) {
+    const std::string mode = toLowerCopy(rawMode);
+    if (mode == "blank" || mode == "zero") {
+        return InitialConditionType::Blank;
+    }
+    if (mode == "terrain") {
+        return InitialConditionType::Terrain;
+    }
+    if (mode == "conway" || mode == "game_of_life") {
+        return InitialConditionType::Conway;
+    }
+    if (mode == "gray_scott" || mode == "grayscott" || mode == "reaction_diffusion") {
+        return InitialConditionType::GrayScott;
+    }
+    if (mode == "waves" || mode == "wave") {
+        return InitialConditionType::Waves;
+    }
+    if (mode == "voronoi") {
+        return InitialConditionType::Voronoi;
+    }
+    if (mode == "clustering" || mode == "cluster") {
+        return InitialConditionType::Clustering;
+    }
+    if (mode == "sparse_random" || mode == "sparserandom") {
+        return InitialConditionType::SparseRandom;
+    }
+    if (mode == "gradient_field" || mode == "gradient") {
+        return InitialConditionType::GradientField;
+    }
+    if (mode == "checkerboard") {
+        return InitialConditionType::Checkerboard;
+    }
+    if (mode == "radial_pattern" || mode == "radial") {
+        return InitialConditionType::RadialPattern;
+    }
+    if (mode == "multi_scale" || mode == "multiscale") {
+        return InitialConditionType::MultiScale;
+    }
+    if (mode == "diffusion_limit" || mode == "diffusion") {
+        return InitialConditionType::DiffusionLimit;
+    }
+    return std::nullopt;
+}
+
+int parseRestrictionMode(const json& value, const int fallback = 0) {
+    if (value.is_number_integer()) {
+        return std::clamp(value.get<int>(), 0, 5);
+    }
+    if (!value.is_string()) {
+        return fallback;
+    }
+
+    const std::string token = toLowerCopy(value.get<std::string>());
+    if (token == "none") {
+        return 0;
+    }
+    if (token == "clamp" || token == "clamp01" || token == "clamp_min_max") {
+        return 1;
+    }
+    if (token == "non_negative" || token == "nonnegative") {
+        return 2;
+    }
+    if (token == "clamp_signed" || token == "clamp[-1,1]" || token == "signed") {
+        return 3;
+    }
+    if (token == "tanh") {
+        return 4;
+    }
+    if (token == "sigmoid") {
+        return 5;
+    }
+    return fallback;
+}
+
+void normalizeInitialConditionTypeVector(std::vector<InitialConditionType>& values) {
+    std::sort(values.begin(), values.end(), [](const InitialConditionType lhs, const InitialConditionType rhs) {
+        return static_cast<int>(lhs) < static_cast<int>(rhs);
+    });
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+}
+
+void populateCatalogFromMetadataJson(const std::string& metadataJson, ModelVariableCatalog& outCatalog) {
+    if (metadataJson.empty()) {
+        return;
+    }
+
+    const json parsed = json::parse(metadataJson);
+    if (!parsed.is_object()) {
+        return;
+    }
+
+    if ((outCatalog.modelId.empty()) && parsed.contains("id") && parsed["id"].is_string()) {
+        outCatalog.modelId = parsed["id"].get<std::string>();
+    }
+
+    if (!parsed.contains("initialization_guidance") || !parsed["initialization_guidance"].is_object()) {
+        return;
+    }
+
+    const auto& guidance = parsed["initialization_guidance"];
+
+    if (guidance.contains("preferred_mode") && guidance["preferred_mode"].is_string()) {
+        outCatalog.preferredInitializationMode = parseInitialConditionType(
+            guidance["preferred_mode"].get<std::string>());
+    }
+
+    if (guidance.contains("expected_start_data_type") && guidance["expected_start_data_type"].is_string()) {
+        outCatalog.expectedStartDataType = toLowerCopy(guidance["expected_start_data_type"].get<std::string>());
+    }
+
+    if (guidance.contains("supported_modes") && guidance["supported_modes"].is_array()) {
+        outCatalog.supportedInitializationModes.clear();
+        for (const auto& value : guidance["supported_modes"]) {
+            if (!value.is_string()) {
+                continue;
+            }
+            if (const auto parsedMode = parseInitialConditionType(value.get<std::string>()); parsedMode.has_value()) {
+                outCatalog.supportedInitializationModes.push_back(*parsedMode);
+            }
+        }
+        normalizeInitialConditionTypeVector(outCatalog.supportedInitializationModes);
+    }
+
+    if (guidance.contains("preferred_display_variable") && guidance["preferred_display_variable"].is_string()) {
+        outCatalog.preferredDisplayVariable = guidance["preferred_display_variable"].get<std::string>();
+    }
+
+    if (guidance.contains("variable_defaults") && guidance["variable_defaults"].is_object()) {
+        outCatalog.variableInitializationDefaults.clear();
+        for (auto it = guidance["variable_defaults"].begin(); it != guidance["variable_defaults"].end(); ++it) {
+            if (!it.value().is_object()) {
+                continue;
+            }
+
+            VariableInitializationDefault defaults;
+            if (it.value().contains("enabled") && it.value()["enabled"].is_boolean()) {
+                defaults.enabled = it.value()["enabled"].get<bool>();
+            }
+
+            if (it.value().contains("base_value") &&
+                (it.value()["base_value"].is_number_float() ||
+                 it.value()["base_value"].is_number_integer() ||
+                 it.value()["base_value"].is_number_unsigned())) {
+                defaults.hasBaseValue = true;
+                defaults.baseValue = it.value()["base_value"].get<float>();
+            }
+
+            if (it.value().contains("restriction_mode")) {
+                defaults.hasRestrictionMode = true;
+                defaults.restrictionMode = parseRestrictionMode(it.value()["restriction_mode"], defaults.restrictionMode);
+            }
+
+            if (it.value().contains("min") &&
+                (it.value()["min"].is_number_float() ||
+                 it.value()["min"].is_number_integer() ||
+                 it.value()["min"].is_number_unsigned())) {
+                defaults.hasClampMin = true;
+                defaults.clampMin = it.value()["min"].get<float>();
+            }
+            if (it.value().contains("max") &&
+                (it.value()["max"].is_number_float() ||
+                 it.value()["max"].is_number_integer() ||
+                 it.value()["max"].is_number_unsigned())) {
+                defaults.hasClampMax = true;
+                defaults.clampMax = it.value()["max"].get<float>();
+            }
+
+            outCatalog.variableInitializationDefaults.insert_or_assign(it.key(), defaults);
+        }
+    }
+
+    if (guidance.contains("parameter_overrides") && guidance["parameter_overrides"].is_object()) {
+        outCatalog.generationParameterOverrides.clear();
+        for (auto it = guidance["parameter_overrides"].begin(); it != guidance["parameter_overrides"].end(); ++it) {
+            if (!it.value().is_number_float() && !it.value().is_number_integer() && !it.value().is_number_unsigned()) {
+                continue;
+            }
+            outCatalog.generationParameterOverrides.insert_or_assign(it.key(), it.value().get<float>());
+        }
+    }
+}
+
+void applyMetadataParameterOverrides(
+    const json& metadataParsed,
+    std::vector<ParameterControl>& controls) {
+    if (!metadataParsed.is_object() ||
+        !metadataParsed.contains("initialization_guidance") ||
+        !metadataParsed["initialization_guidance"].is_object()) {
+        return;
+    }
+
+    const auto& guidance = metadataParsed["initialization_guidance"];
+    if (!guidance.contains("parameter_overrides") || !guidance["parameter_overrides"].is_object()) {
+        return;
+    }
+
+    std::unordered_map<std::string, float> overrides;
+    for (auto it = guidance["parameter_overrides"].begin(); it != guidance["parameter_overrides"].end(); ++it) {
+        if (!it.value().is_number_float() && !it.value().is_number_integer() && !it.value().is_number_unsigned()) {
+            continue;
+        }
+        overrides.insert_or_assign(it.key(), it.value().get<float>());
+    }
+
+    if (overrides.empty()) {
+        return;
+    }
+
+    for (auto& control : controls) {
+        const auto byVariable = overrides.find(control.targetVariable);
+        if (byVariable != overrides.end()) {
+            const float v = std::clamp(byVariable->second, control.minValue, control.maxValue);
+            control.defaultValue = v;
+            control.value = v;
+            continue;
+        }
+
+        const auto byName = overrides.find(control.name);
+        if (byName != overrides.end()) {
+            const float v = std::clamp(byName->second, control.minValue, control.maxValue);
+            control.defaultValue = v;
+            control.value = v;
+        }
+    }
+}
+
 bool populateCatalogFromModelJson(
     const std::filesystem::path& modelPath,
     const std::string& modelJson,
@@ -476,6 +702,9 @@ bool loadModelVariableCatalog(
     try {
         const auto ctx = ws::ModelParser::load(modelPath);
         if (populateCatalogFromModelJson(modelPath, ctx.model_json, outCatalog, message)) {
+            if (!ctx.metadata_json.empty()) {
+                populateCatalogFromMetadataJson(ctx.metadata_json, outCatalog);
+            }
             return true;
         }
 
@@ -489,7 +718,21 @@ bool loadModelVariableCatalog(
                     return false;
                 }
                 const std::string modelJson((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-                return populateCatalogFromModelJson(fallbackJsonPath, modelJson, outCatalog, message);
+                if (!populateCatalogFromModelJson(fallbackJsonPath, modelJson, outCatalog, message)) {
+                    return false;
+                }
+
+                const auto metadataPath = modelPath / "metadata.json";
+                if (std::filesystem::exists(metadataPath)) {
+                    std::ifstream metadataIn(metadataPath);
+                    if (metadataIn) {
+                        const std::string metadataJson((std::istreambuf_iterator<char>(metadataIn)), std::istreambuf_iterator<char>());
+                        if (!metadataJson.empty()) {
+                            populateCatalogFromMetadataJson(metadataJson, outCatalog);
+                        }
+                    }
+                }
+                return true;
             }
         }
 
@@ -507,7 +750,21 @@ bool loadModelVariableCatalog(
                     }
 
                     const std::string modelJson((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-                    return populateCatalogFromModelJson(modelJsonPath, modelJson, outCatalog, message);
+                    if (!populateCatalogFromModelJson(modelJsonPath, modelJson, outCatalog, message)) {
+                        return false;
+                    }
+
+                    const auto metadataPath = modelPath / "metadata.json";
+                    if (std::filesystem::exists(metadataPath)) {
+                        std::ifstream metadataIn(metadataPath);
+                        if (metadataIn) {
+                            const std::string metadataJson((std::istreambuf_iterator<char>(metadataIn)), std::istreambuf_iterator<char>());
+                            if (!metadataJson.empty()) {
+                                populateCatalogFromMetadataJson(metadataJson, outCatalog);
+                            }
+                        }
+                    }
+                    return true;
                 } catch (const std::exception& fallbackException) {
                     outCatalog = ModelVariableCatalog{};
                     outCatalog.sourceModelPath = modelPath;
@@ -533,6 +790,10 @@ bool loadModelParameterControls(
     try {
         const auto ctx = ws::ModelParser::load(modelPath);
         const json parsed = json::parse(ctx.model_json);
+        json metadataParsed;
+        if (!ctx.metadata_json.empty()) {
+            metadataParsed = json::parse(ctx.metadata_json);
+        }
 
         std::map<std::string, std::pair<std::optional<float>, std::optional<float>>, std::less<>> domainBounds;
         if (parsed.contains("domains") && parsed["domains"].is_object()) {
@@ -618,6 +879,8 @@ bool loadModelParameterControls(
             return lhs.name < rhs.name;
         });
 
+        applyMetadataParameterOverrides(metadataParsed, controls);
+
         message = "model_parameter_controls_ready count=" + std::to_string(controls.size());
         return true;
     } catch (const std::exception& exception) {
@@ -669,6 +932,49 @@ bool loadModelExecutionSpec(
                 }
 
                 executionSpec.cellScalarVariableIds.push_back(variable["id"].get<std::string>());
+            }
+        }
+
+        if (parsed.contains("grid") && parsed["grid"].is_object()) {
+            const auto& grid = parsed["grid"];
+            if (grid.contains("boundary_conditions")) {
+                const auto& boundary = grid["boundary_conditions"];
+                auto parseBoundaryToken = [](const std::string& raw) {
+                    const std::string token = toLowerCopy(raw);
+                    if (token == "periodic" || token == "wrap" || token == "wrapped") {
+                        return std::optional<BoundaryMode>(BoundaryMode::Wrap);
+                    }
+                    if (token == "clamp" || token == "fixed" || token == "dirichlet") {
+                        return std::optional<BoundaryMode>(BoundaryMode::Clamp);
+                    }
+                    return std::optional<BoundaryMode>{};
+                };
+
+                if (boundary.is_string()) {
+                    executionSpec.preferredBoundaryMode = parseBoundaryToken(boundary.get<std::string>());
+                } else if (boundary.is_object()) {
+                    bool sawWrap = false;
+                    bool sawClamp = false;
+                    for (auto it = boundary.begin(); it != boundary.end(); ++it) {
+                        if (!it.value().is_string()) {
+                            continue;
+                        }
+                        const auto parsedMode = parseBoundaryToken(it.value().get<std::string>());
+                        if (!parsedMode.has_value()) {
+                            continue;
+                        }
+                        if (*parsedMode == BoundaryMode::Wrap) {
+                            sawWrap = true;
+                        } else {
+                            sawClamp = true;
+                        }
+                    }
+                    if (sawWrap && !sawClamp) {
+                        executionSpec.preferredBoundaryMode = BoundaryMode::Wrap;
+                    } else if (sawClamp && !sawWrap) {
+                        executionSpec.preferredBoundaryMode = BoundaryMode::Clamp;
+                    }
+                }
             }
         }
 
@@ -810,6 +1116,49 @@ bool loadModelExecutionSpec(
                     }
 
                     executionSpec.cellScalarVariableIds.push_back(variable["id"].get<std::string>());
+                }
+            }
+
+            if (parsed.contains("grid") && parsed["grid"].is_object()) {
+                const auto& grid = parsed["grid"];
+                if (grid.contains("boundary_conditions")) {
+                    const auto& boundary = grid["boundary_conditions"];
+                    auto parseBoundaryToken = [](const std::string& raw) {
+                        const std::string token = toLowerCopy(raw);
+                        if (token == "periodic" || token == "wrap" || token == "wrapped") {
+                            return std::optional<BoundaryMode>(BoundaryMode::Wrap);
+                        }
+                        if (token == "clamp" || token == "fixed" || token == "dirichlet") {
+                            return std::optional<BoundaryMode>(BoundaryMode::Clamp);
+                        }
+                        return std::optional<BoundaryMode>{};
+                    };
+
+                    if (boundary.is_string()) {
+                        executionSpec.preferredBoundaryMode = parseBoundaryToken(boundary.get<std::string>());
+                    } else if (boundary.is_object()) {
+                        bool sawWrap = false;
+                        bool sawClamp = false;
+                        for (auto it = boundary.begin(); it != boundary.end(); ++it) {
+                            if (!it.value().is_string()) {
+                                continue;
+                            }
+                            const auto parsedMode = parseBoundaryToken(it.value().get<std::string>());
+                            if (!parsedMode.has_value()) {
+                                continue;
+                            }
+                            if (*parsedMode == BoundaryMode::Wrap) {
+                                sawWrap = true;
+                            } else {
+                                sawClamp = true;
+                            }
+                        }
+                        if (sawWrap && !sawClamp) {
+                            executionSpec.preferredBoundaryMode = BoundaryMode::Wrap;
+                        } else if (sawClamp && !sawWrap) {
+                            executionSpec.preferredBoundaryMode = BoundaryMode::Clamp;
+                        }
+                    }
                 }
             }
 

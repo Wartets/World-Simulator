@@ -29,6 +29,29 @@ bool hintsContain(const std::vector<std::string>& hints, const std::string& need
     });
 }
 
+bool modeRequiresCellVariables(const InitialConditionType mode) {
+    switch (mode) {
+        case InitialConditionType::Blank:
+            return false;
+        default:
+            return true;
+    }
+}
+
+bool containsMode(const std::vector<InitialConditionType>& modes, const InitialConditionType mode) {
+    return std::find(modes.begin(), modes.end(), mode) != modes.end();
+}
+
+bool modeSupportedByCatalog(const initialization::ModelVariableCatalog& catalog, const InitialConditionType mode) {
+    if (catalog.supportedInitializationModes.empty()) {
+        return true;
+    }
+    return std::find(
+               catalog.supportedInitializationModes.begin(),
+               catalog.supportedInitializationModes.end(),
+               mode) != catalog.supportedInitializationModes.end();
+}
+
 }
 
 bool GenerationAdvisor::catalogHasVariablesWithTag(
@@ -120,119 +143,207 @@ GenerationModeRecommendation GenerationAdvisor::recommendGenerationMode(
     const int cellVarCount = static_cast<int>(catalog.cellVariableIds().size());
     const int totalVarCount = static_cast<int>(catalog.variables.size());
 
+    if (catalog.preferredInitializationMode.has_value()) {
+        const InitialConditionType preferredMode = *catalog.preferredInitializationMode;
+        if (!modeSupportedByCatalog(catalog, preferredMode)) {
+            result.recommendedType = InitialConditionType::Blank;
+            result.confidence = 0.50f;
+            result.rationale = "metadata_preferred_mode_not_supported";
+            return result;
+        }
+        if (modeRequiresCellVariables(preferredMode) && cellVarCount == 0) {
+            result.recommendedType = InitialConditionType::Blank;
+            result.confidence = 0.65f;
+            result.rationale = "metadata_mode_requires_cell_variables";
+            return result;
+        }
+
+        result.recommendedType = preferredMode;
+        result.confidence = 0.99f;
+        result.rationale = "metadata_preferred_initialization_mode";
+        return result;
+    }
+
     // Priority 1: Explicit hints and exact matches
     if (catalogHasVariablesWithHint(catalog, "conway")) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Conway)) {
+            goto skip_explicit_conway;
+        }
         result.recommendedType = InitialConditionType::Conway;
         result.confidence = 0.98f;
         result.rationale = "explicit_conway_hint_in_metadata";
         return result;
     }
+skip_explicit_conway:
     if (catalogHasVariablesWithHint(catalog, "gray_scott")) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::GrayScott)) {
+            goto skip_explicit_grayscott;
+        }
         result.recommendedType = InitialConditionType::GrayScott;
         result.confidence = 0.98f;
         result.rationale = "explicit_gray_scott_hint_in_metadata";
         return result;
     }
+skip_explicit_grayscott:
 
     // Priority 2: Terrain-like signals (geography, climate, spatial)
     if (catalogHasVariablesWithTag(catalog, "elevation") ||
         catalogHasVariablesWithTag(catalog, "terrain") ||
         catalogHasVariablesWithTag(catalog, "altitude")) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Terrain)) {
+            goto skip_terrain_tag;
+        }
         result.recommendedType = InitialConditionType::Terrain;
         result.confidence = 0.96f;
         result.rationale = "explicit_terrain_or_elevation_tag";
         return result;
     }
+skip_terrain_tag:
     if (catalogHasVariablesWithTag(catalog, "climate") ||
         catalogHasVariablesWithTag(catalog, "temperature") ||
         catalogHasVariablesWithTag(catalog, "precipitation")) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Terrain)) {
+            goto skip_climate_terrain;
+        }
         result.recommendedType = InitialConditionType::Terrain;
         result.confidence = 0.90f;
         result.rationale = "climate_system_detected";
         return result;
     }
+skip_climate_terrain:
 
     // Priority 3: Reaction-diffusion signals
     if ((catalogHasVariablesWithTag(catalog, "concentration") ||
          catalogHasVariablesWithTag(catalog, "activator") ||
          catalogHasVariablesWithTag(catalog, "inhibitor")) &&
         cellVarCount >= 2) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::GrayScott)) {
+            goto skip_reaction_diffusion;
+        }
         result.recommendedType = InitialConditionType::GrayScott;
         result.confidence = 0.90f;
         result.rationale = "reaction_diffusion_pattern_detected";
         return result;
     }
+skip_reaction_diffusion:
 
     // Priority 4: Wave/fluid systems
     if (catalogHasVariablesWithTag(catalog, "wave") ||
         catalogHasVariablesWithTag(catalog, "fluid") ||
         (catalogHasVariablesWithTag(catalog, "velocity") && cellVarCount >= 2)) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Waves)) {
+            goto skip_wave_system;
+        }
         result.recommendedType = InitialConditionType::Waves;
         result.confidence = 0.88f;
         result.rationale = "wave_or_fluid_dynamics_detected";
         return result;
     }
+skip_wave_system:
 
     // Priority 5: Population/cellular automata
     if (catalogHasVariablesWithTag(catalog, "population") ||
         catalogHasVariablesWithTag(catalog, "cell_state") ||
         (catalogHasVariablesWithTag(catalog, "state") && cellVarCount <= 3)) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Conway)) {
+            goto skip_population_mode;
+        }
         result.recommendedType = InitialConditionType::Conway;
         result.confidence = 0.82f;
         result.rationale = "population_or_state_automata_detected";
         return result;
     }
+skip_population_mode:
 
     // Priority 6: Structured pattern modes based on complexity and variable count
     if (cellVarCount >= 3 && complexity < 0.6f) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Voronoi)) {
+            goto skip_voronoi;
+        }
         result.recommendedType = InitialConditionType::Voronoi;
         result.confidence = 0.75f;
         result.rationale = "simple_multi_variable_suggests_tessellation";
         return result;
     }
+skip_voronoi:
 
     if (cellVarCount >= 2 && complexity >= 1.0f && complexity < 1.8f) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Clustering)) {
+            goto skip_clustering;
+        }
         result.recommendedType = InitialConditionType::Clustering;
         result.confidence = 0.70f;
         result.rationale = "moderate_complexity_multi_variable_suggests_clustering";
         return result;
     }
+skip_clustering:
 
     if (cellVarCount == 1 && complexity < 0.4f) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::SparseRandom)) {
+            goto skip_sparse_random;
+        }
         result.recommendedType = InitialConditionType::SparseRandom;
         result.confidence = 0.68f;
         result.rationale = "simple_single_variable_suggests_sparse_seeding";
         return result;
     }
+skip_sparse_random:
 
     if (catalogHasVariablesWithTag(catalog, "field") && cellVarCount >= 1) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::GradientField)) {
+            goto skip_gradient;
+        }
         result.recommendedType = InitialConditionType::GradientField;
         result.confidence = 0.72f;
         result.rationale = "field_variable_detected";
         return result;
     }
+skip_gradient:
 
     // Priority 7: Multi-variable complexity handling
     if (cellVarCount >= 4) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::MultiScale)) {
+            goto skip_multiscale;
+        }
         result.recommendedType = InitialConditionType::MultiScale;
         result.confidence = 0.65f;
         result.rationale = "high_variable_count_suggests_multi_scale";
         return result;
     }
+skip_multiscale:
 
     if (cellVarCount >= 2) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Clustering)) {
+            goto skip_multi_var_cluster;
+        }
         result.recommendedType = InitialConditionType::Clustering;
         result.confidence = 0.60f;
         result.rationale = "multiple_cell_variables_suggest_spatial_clustering";
         return result;
     }
+skip_multi_var_cluster:
 
     // Fallback: simple geometry patterns for minimal models
     if (cellVarCount == 1 && totalVarCount <= 2) {
+        if (!modeSupportedByCatalog(catalog, InitialConditionType::Checkerboard)) {
+            goto skip_checkerboard;
+        }
         result.recommendedType = InitialConditionType::Checkerboard;
         result.confidence = 0.55f;
         result.rationale = "minimal_model_suggest_geometric_pattern";
         return result;
+    }
+skip_checkerboard:
+
+    if (!catalog.supportedInitializationModes.empty()) {
+        for (const InitialConditionType mode : catalog.supportedInitializationModes) {
+            if (!modeRequiresCellVariables(mode) || cellVarCount > 0) {
+                result.recommendedType = mode;
+                result.confidence = 0.52f;
+                result.rationale = "metadata_supported_mode_fallback";
+                return result;
+            }
+        }
     }
 
     // Ultimate fallback
@@ -450,9 +561,24 @@ std::vector<InitialConditionType> GenerationAdvisor::viableGenerationModes(
         return viable;
     }
 
-    viable.push_back(InitialConditionType::Blank);
-
     const int cellVarCount = static_cast<int>(catalog.cellVariableIds().size());
+
+    if (!catalog.supportedInitializationModes.empty()) {
+        for (const InitialConditionType mode : catalog.supportedInitializationModes) {
+            if (modeRequiresCellVariables(mode) && cellVarCount == 0) {
+                continue;
+            }
+            if (!containsMode(viable, mode)) {
+                viable.push_back(mode);
+            }
+        }
+        if (viable.empty()) {
+            viable.push_back(InitialConditionType::Blank);
+        }
+        return viable;
+    }
+
+    viable.push_back(InitialConditionType::Blank);
     if (cellVarCount == 0) {
         return viable;
     }
@@ -472,6 +598,22 @@ std::vector<InitialConditionType> GenerationAdvisor::viableGenerationModes(
     if (cellVarCount >= 2) {
         viable.push_back(InitialConditionType::MultiScale);
         viable.push_back(InitialConditionType::DiffusionLimit);
+    }
+
+    if (catalog.preferredInitializationMode.has_value()) {
+        const InitialConditionType preferredMode = *catalog.preferredInitializationMode;
+        const bool preferredViable = !modeRequiresCellVariables(preferredMode) || (cellVarCount > 0);
+        if (preferredViable && !containsMode(viable, preferredMode)) {
+            viable.push_back(preferredMode);
+        }
+
+        if (preferredViable && !viable.empty() && viable.front() != preferredMode) {
+            auto it = std::find(viable.begin(), viable.end(), preferredMode);
+            if (it != viable.end()) {
+                viable.erase(it);
+                viable.insert(viable.begin(), preferredMode);
+            }
+        }
     }
 
     return viable;

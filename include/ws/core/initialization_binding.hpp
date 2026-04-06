@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ws::initialization {
@@ -27,9 +28,27 @@ struct VariableDescriptor {
     float domainMax = 0.0f;
 };
 
+struct VariableInitializationDefault {
+    bool enabled = false;
+    bool hasBaseValue = false;
+    float baseValue = 0.0f;
+    bool hasRestrictionMode = false;
+    int restrictionMode = 0;
+    bool hasClampMin = false;
+    float clampMin = 0.0f;
+    bool hasClampMax = false;
+    float clampMax = 1.0f;
+};
+
 struct ModelVariableCatalog {
     std::filesystem::path sourceModelPath;
     std::string modelId;
+    std::optional<InitialConditionType> preferredInitializationMode;
+    std::string expectedStartDataType;
+    std::vector<InitialConditionType> supportedInitializationModes;
+    std::string preferredDisplayVariable;
+    std::unordered_map<std::string, VariableInitializationDefault> variableInitializationDefaults;
+    std::unordered_map<std::string, float> generationParameterOverrides;
     std::vector<VariableDescriptor> variables;
 
     [[nodiscard]] std::vector<std::string> cellVariableIds() const;

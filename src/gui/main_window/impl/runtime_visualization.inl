@@ -1134,7 +1134,39 @@ void refreshFieldNames() {
             return std::find(viz_.fieldNames.begin(), viz_.fieldNames.end(), std::string(name)) != viz_.fieldNames.end();
         };
 
-        const std::string& firstField = viz_.fieldNames.front();
+        const auto pickPreferredRuntimeField = [&]() -> std::string {
+            if (!sessionUi_.selectedModelCatalog.preferredDisplayVariable.empty()) {
+                const auto it = std::find(
+                    viz_.fieldNames.begin(),
+                    viz_.fieldNames.end(),
+                    sessionUi_.selectedModelCatalog.preferredDisplayVariable);
+                if (it != viz_.fieldNames.end()) {
+                    return *it;
+                }
+            }
+
+            const auto hasToken = [](const std::string& value, const std::initializer_list<const char*> tokens) {
+                for (const char* token : tokens) {
+                    if (token == nullptr || token[0] == '\0') {
+                        continue;
+                    }
+                    if (toLowerCopy(value).find(toLowerCopy(token)) != std::string::npos) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            for (const auto& candidate : viz_.fieldNames) {
+                if (hasToken(candidate, {"fire_state", "living", "water_height", "surface", "oxygen", "temperature", "velocity", "concentration"})) {
+                    return candidate;
+                }
+            }
+
+            return viz_.fieldNames.front();
+        };
+
+        const std::string firstField = pickPreferredRuntimeField();
         if (!fieldExists(panel_.summaryVariable)) {
             std::snprintf(panel_.summaryVariable, sizeof(panel_.summaryVariable), "%s", firstField.c_str());
         }
