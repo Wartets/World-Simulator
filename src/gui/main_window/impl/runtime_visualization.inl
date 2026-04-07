@@ -59,6 +59,9 @@ static std::uint64_t displayTagSignature(
     return hash;
 }
 
+// Updates field history from snapshot for visualization.
+// Only adds new entries when step index changes.
+// @param snapshot State store snapshot with field data
 void updateFieldHistory(const ws::StateStoreSnapshot& snapshot) {
     if (snapshot.header.stepIndex == lastHistoryStep_) return;
     lastHistoryStep_ = snapshot.header.stepIndex;
@@ -147,6 +150,8 @@ static constexpr std::size_t kMaxDynamicViewportCount = 64;
     return "Runtime View " + std::to_string(index + 1u);
 }
 
+// Ensures viewport state is consistent with viewport count.
+// Resizes vectors and updates clamped indices.
 void ensureViewportStateConsistency() {
     const std::size_t targetCount = clampedViewportCount(viz_.viewports.size());
     if (viz_.viewports.empty()) {
@@ -188,6 +193,8 @@ void ensureViewportStateConsistency() {
     }
 }
 
+// Requests selection of viewport editor at index.
+// @param index Viewport index to select
 void requestViewportEditorSelection(const std::size_t index) {
     ensureViewportStateConsistency();
     if (viz_.viewports.empty()) {
@@ -201,6 +208,7 @@ void requestViewportEditorSelection(const std::size_t index) {
     viewportTabSelectionRequest_ = static_cast<int>(clampedIndex);
 }
 
+// Adds new viewport configuration.
 void addViewportConfig() {
     ensureViewportStateConsistency();
     if (viz_.viewports.size() >= kMaxDynamicViewportCount) {
@@ -215,6 +223,8 @@ void addViewportConfig() {
     appendLog("viewport_added index=" + std::to_string(newIndex + 1u));
 }
 
+// Removes viewport configuration at index.
+// @param index Viewport index to remove
 void removeViewportConfig(const std::size_t index) {
     ensureViewportStateConsistency();
     if (viz_.viewports.size() <= 1u || index >= viz_.viewports.size()) {
@@ -240,6 +250,7 @@ void removeViewportConfig(const std::size_t index) {
     appendLog("viewport_removed index=" + std::to_string(index + 1u));
 }
 
+// Draws field history window showing time series of field values.
 void drawFieldHistoryWindow() {
     if (!showFieldHistoryWindow_ || fieldHistory_.empty()) return;
 
@@ -321,11 +332,14 @@ void drawFieldHistoryWindow() {
 }
 
 // Texture management
+// Destroys raster texture resources.
+// @param texture Raster texture to destroy
 void destroyRasterTexture(RasterTexture& texture) {
     if (texture.id != 0) { glDeleteTextures(1, &texture.id); texture.id = 0; }
     texture.width = texture.height = 0;
 }
 
+// Destroys all raster resources for all viewports.
 void destroyRasterResources() {
     for (auto& r : viewportRasters_) destroyRasterTexture(r);
     destroyRasterTexture(wizardPreviewTexture_);
@@ -337,6 +351,11 @@ void destroyRasterResources() {
     fieldHistory_.clear();
 }
 
+// Uploads RGBA data to raster texture.
+// @param tex Texture to upload to
+// @param w Width
+// @param h Height
+// @param rgba RGBA pixel data
 void uploadRasterTexture(RasterTexture& tex, int w, int h,
                          const std::vector<std::uint8_t>& rgba) {
     if (w <= 0 || h <= 0 || rgba.empty()) { destroyRasterTexture(tex); return; }
@@ -536,6 +555,13 @@ bool saveViewportScreenshot(const int viewportIndex, const std::string& outputPa
                                                vp.gamma, vp.invertColors));
 }
 
+// Draws legend bar showing color scale for display type.
+// @param dl Draw list to render onto
+// @param pos Position to draw
+// @param w Width
+// @param h Height
+// @param type Display type for legend
+// @param palette Color map mode
 void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float h,
                    const DisplayType type, const ColorMapMode palette,
                    const float minV, const float maxV, const ViewportConfig& vp,
@@ -627,6 +653,8 @@ void drawLegendBar(ImDrawList& dl, const ImVec2 pos, const float w, const float 
 }
 
 // Theme application
+// Applies theme to ImGui based on current configuration.
+// @param rebuildFonts Whether to rebuild font atlas
 void applyTheme(const bool rebuildFonts) {
     ImGuiStyle& style = ImGui::GetStyle();
     ThemeBootstrap::applyBaseTheme(style, accessibility_.uiScale);
@@ -640,12 +668,14 @@ void applyTheme(const bool rebuildFonts) {
 }
 
 // Viewport clear + background
+// Clears viewport with background color.
 void drawViewport() {
     glClearColor(0.08f, 0.09f, 0.11f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
 // Main simulation canvas
+// Draws main simulation canvas with field visualization.
 void drawSimulationCanvas() {
     if (!viz_.hasCachedCheckpoint) return;
 
@@ -816,6 +846,10 @@ void drawSimulationCanvas() {
 }
 
 // Raster rebuild
+// Rebuilds raster texture for viewport from field data.
+// @param vi Viewport index
+// @param grid Grid specification
+// @param primary Primary field values
 void rebuildRasterTexture(int vi, const GridSpec grid,
                            const std::vector<float>& primary,
                            const float pMin, const float pMax,
@@ -928,6 +962,13 @@ void rebuildRasterTexture(int vi, const GridSpec grid,
 }
 
 // Raster panel drawing
+// Draws raster panel for viewport.
+// @param viewportIndex Viewport index
+// @param dl Draw list
+// @param min Panel minimum position
+// @param max Panel maximum position
+// @param grid Grid specification
+// @param title Panel title
 void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, const ImVec2 max,
                      const GridSpec grid, const std::string& title,
                      const RasterTexture& tex, const float minV, const float maxV,
@@ -977,6 +1018,49 @@ void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, 
 
     // Title
     dl.AddText(ImVec2(min.x+8.0f, min.y+8.0f), IM_COL32(240,245,255,255), title.c_str());
+
+    // Coordinate readout (hover)
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    if (mouse.x >= m.viewportMin.x && mouse.x <= m.viewportMax.x &&
+        mouse.y >= m.viewportMin.y && mouse.y <= m.viewportMax.y) {
+        const float gx = (mouse.x - m.contentMin.x) / std::max(1e-6f, m.cellW);
+        const float gy = (mouse.y - m.contentMin.y) / std::max(1e-6f, m.cellH);
+        const int cellX = std::clamp(static_cast<int>(std::floor(gx)), 0, std::max(0, static_cast<int>(grid.width) - 1));
+        const int cellY = std::clamp(static_cast<int>(std::floor(gy)), 0, std::max(0, static_cast<int>(grid.height) - 1));
+        char coord[96];
+        std::snprintf(coord, sizeof(coord), "cell=(%d,%d) zoom=%.2fx", cellX, cellY, viewportManager_.camera(static_cast<std::size_t>(viewportIndex)).zoom);
+        const ImVec2 textSize = ImGui::CalcTextSize(coord);
+        const ImVec2 boxMin(m.viewportMax.x - textSize.x - 16.0f, m.viewportMin.y + 8.0f);
+        const ImVec2 boxMax(m.viewportMax.x - 8.0f, m.viewportMin.y + textSize.y + 14.0f);
+        dl.AddRectFilled(boxMin, boxMax, IM_COL32(12, 16, 28, 220), 3.0f);
+        dl.AddText(ImVec2(boxMin.x + 4.0f, boxMin.y + 3.0f), IM_COL32(205, 220, 245, 245), coord);
+    }
+
+    // Scale bar (cells)
+    const float maxBarPx = std::min(140.0f, (m.viewportMax.x - m.viewportMin.x) * 0.28f);
+    const float pxPerCell = std::max(1e-6f, m.cellW);
+    int desiredCells = std::max(1, static_cast<int>(std::round(maxBarPx / pxPerCell)));
+    int magnitude = 1;
+    while (magnitude * 10 <= desiredCells) {
+        magnitude *= 10;
+    }
+    const std::array<int, 3> snaps = {1, 2, 5};
+    int snappedCells = magnitude;
+    for (const int s : snaps) {
+        const int candidate = s * magnitude;
+        if (candidate <= desiredCells) {
+            snappedCells = candidate;
+        }
+    }
+    const float barPx = std::clamp(static_cast<float>(snappedCells) * pxPerCell, 20.0f, maxBarPx);
+    const ImVec2 barStart(m.viewportMin.x + 10.0f, m.viewportMax.y - 14.0f);
+    const ImVec2 barEnd(barStart.x + barPx, barStart.y);
+    dl.AddLine(barStart, barEnd, IM_COL32(230, 235, 245, 220), 2.0f);
+    dl.AddLine(ImVec2(barStart.x, barStart.y - 4.0f), ImVec2(barStart.x, barStart.y + 4.0f), IM_COL32(230, 235, 245, 220), 2.0f);
+    dl.AddLine(ImVec2(barEnd.x, barEnd.y - 4.0f), ImVec2(barEnd.x, barEnd.y + 4.0f), IM_COL32(230, 235, 245, 220), 2.0f);
+    char scaleLabel[48];
+    std::snprintf(scaleLabel, sizeof(scaleLabel), "%d cells", snappedCells);
+    dl.AddText(ImVec2(barStart.x, barStart.y - 18.0f), IM_COL32(185, 205, 235, 230), scaleLabel);
 
     if (vp.showLegend) {
         const char* mode =
@@ -1046,6 +1130,13 @@ void drawRasterPanel(const int viewportIndex, ImDrawList& dl, const ImVec2 min, 
 }
 
 // Vector overlay
+// Draws vector field overlay on viewport.
+// @param dl Draw list
+// @param min Viewport minimum
+// @param max Viewport maximum
+// @param grid Grid specification
+// @param vp Viewport configuration
+// @param viewportIndex Viewport index
 void drawVectorOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
                        const GridSpec grid, const ViewportConfig& vp, const int viewportIndex) const {
     const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
@@ -1086,6 +1177,13 @@ void drawWindFieldOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
                          grid, xVals, yVals, config);
 }
 
+// Draws contour overlay on field.
+// @param dl Draw list
+// @param min Viewport minimum
+// @param max Viewport maximum
+// @param grid Grid specification
+// @param vp Viewport configuration
+// @param viewportIndex Viewport index
 void drawContourOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
                         const GridSpec grid, const ViewportConfig& vp, const int viewportIndex,
                         const float minValue, const float maxValue) const {
@@ -1107,6 +1205,7 @@ void drawContourOverlay(ImDrawList& dl, const ImVec2 min, const ImVec2 max,
 }
 
 // Index clamping
+// Clamps visualization indices to valid range.
 void clampVisualizationIndices() {
     if (viz_.fieldNames.empty()) return;
     const int maxIdx = static_cast<int>(viz_.fieldNames.size()) - 1;
@@ -1118,6 +1217,7 @@ void clampVisualizationIndices() {
 }
 
 // Field name refresh
+// Refreshes available field names from runtime.
 void refreshFieldNames() {
     std::string msg;
     std::vector<std::string> names;
@@ -1259,12 +1359,14 @@ void refreshFieldNames() {
 }
 
 // Simulation worker
+// Cancels pending simulation steps by disabling auto-run.
 void cancelPendingSimulationSteps() {
     simulationAutoRunEnabled_.store(false);
     simulationWakeCV_.notify_all();
     simulationWorkerBusy_.store(false);
 }
 
+// Starts simulation worker thread for background execution.
 void startSimulationWorker() {
     stopSimulationWorker();
     simulationAutoRunEnabled_.store(false);
@@ -1282,6 +1384,7 @@ void startSimulationWorker() {
     simulationThread_ = std::thread([this] { simulationWorkerLoop(); });
 }
 
+// Stops simulation worker thread.
 void stopSimulationWorker() {
     simulationAutoRunEnabled_.store(false);
     simulationThreadRunning_.store(false);
@@ -1290,6 +1393,7 @@ void stopSimulationWorker() {
     simulationWorkerBusy_.store(false);
 }
 
+// Main loop for simulation worker thread.
 void simulationWorkerLoop() {
     int adaptiveBatchSize = 1;
     int stepsUntilDisplayRefresh = std::max(1, simulationDisplayRefreshEveryNSteps_.load());
@@ -1405,6 +1509,7 @@ void simulationWorkerLoop() {
 }
 
 // Snapshot worker
+// Requests snapshot refresh from simulation.
 void requestSnapshotRefresh() {
     simulationLastDisplayRequestMs_.store(monotonicNowMs());
     snapshotRequestPending_.store(true);
@@ -1412,6 +1517,7 @@ void requestSnapshotRefresh() {
     snapshotWakeCV_.notify_one();
 }
 
+// Starts snapshot worker thread.
 void startSnapshotWorker() {
     stopSnapshotWorker();
     snapshotWorkerRunning_.store(true);
@@ -1420,12 +1526,14 @@ void startSnapshotWorker() {
     snapshotWorker_ = std::thread([this]{ snapshotWorkerLoop(); });
 }
 
+// Stops snapshot worker thread.
 void stopSnapshotWorker() {
     snapshotWorkerRunning_.store(false);
     snapshotWakeCV_.notify_all();
     if (snapshotWorker_.joinable()) snapshotWorker_.join();
 }
 
+// Main loop for snapshot worker thread.
 void snapshotWorkerLoop() {
     while (snapshotWorkerRunning_.load()) {
         {
@@ -1470,6 +1578,7 @@ void snapshotWorkerLoop() {
     }
 }
 
+// Consumes snapshot from worker and updates display.
 void consumeSnapshotFromWorker() {
     const int gen = snapshotGeneration_.load();
     if (gen != consumedSnapshotGeneration_) {
@@ -1515,6 +1624,7 @@ void consumeSnapshotFromWorker() {
 }
 
 // Auto-run tick
+// Ticks auto-run simulation based on timer.
 void tickAutoRun() {
     if (appState_ != AppState::Simulation) {
         cancelPendingSimulationSteps();

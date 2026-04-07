@@ -2,6 +2,9 @@
 
 namespace ws::gui {
 
+// Refreshes world list from runtime service and updates selector state.
+// Queries stored worlds, validates selection index, sets needsRefresh flag.
+// @param state Selector state to update with refreshed world list
 void WorldSelector::refresh(WorldSelectorState& state) {
     std::string message;
     state.worlds = runtimeService_.listStoredWorlds(message);
@@ -15,6 +18,9 @@ void WorldSelector::refresh(WorldSelectorState& state) {
     state.needsRefresh = false;
 }
 
+// Duplicates selected world with new name.
+// @param state Current selector state with selected index
+// @param targetName Name for the duplicated world
 void WorldSelector::duplicateSelected(WorldSelectorState& state, std::string targetName) {
     if (state.selectedIndex < 0 || state.selectedIndex >= static_cast<int>(state.worlds.size())) {
         state.statusLine = "world_duplicate_failed error=no_selection";
@@ -28,6 +34,9 @@ void WorldSelector::duplicateSelected(WorldSelectorState& state, std::string tar
     state.needsRefresh = true;
 }
 
+// Renames selected world to new name.
+// @param state Current selector state with selected index
+// @param targetName New name for the world
 void WorldSelector::renameSelected(WorldSelectorState& state, std::string targetName) {
     if (state.selectedIndex < 0 || state.selectedIndex >= static_cast<int>(state.worlds.size())) {
         state.statusLine = "world_rename_failed error=no_selection";
@@ -41,6 +50,8 @@ void WorldSelector::renameSelected(WorldSelectorState& state, std::string target
     state.needsRefresh = true;
 }
 
+// Deletes selected world from storage.
+// @param state Current selector state with selected index
 void WorldSelector::deleteSelected(WorldSelectorState& state) {
     if (state.selectedIndex < 0 || state.selectedIndex >= static_cast<int>(state.worlds.size())) {
         state.statusLine = "world_delete_failed error=no_selection";

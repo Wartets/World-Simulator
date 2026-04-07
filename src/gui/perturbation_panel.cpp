@@ -5,6 +5,8 @@
 
 namespace ws::gui {
 
+// Validates perturbation specification against grid dimensions.
+// Checks target variable, grid validity, amplitude finiteness, and duration.
 bool validatePerturbation(const PerturbationSpec& perturbation, const GridSpec& grid, std::string& message) {
     if (perturbation.targetVariable.empty()) {
         message = "perturbation_validation_failed reason=target_variable_required";
@@ -27,6 +29,8 @@ bool validatePerturbation(const PerturbationSpec& perturbation, const GridSpec& 
     return true;
 }
 
+// Estimates the number of cells affected by perturbation.
+// Uses perturbation type and parameters to compute affected area.
 std::uint64_t estimatePerturbationCellCount(const PerturbationSpec& perturbation, const GridSpec& grid) {
     switch (perturbation.type) {
         case PerturbationType::Gaussian: {

@@ -4,6 +4,9 @@
 
 namespace ws::gui {
 
+// Converts probe kind enum to string identifier.
+// @param kind ProbeKind enum value
+// @return String identifier: "global", "cell", "region_avg", or "unknown"
 std::string probeKindToString(const ProbeKind kind) {
     switch (kind) {
         case ProbeKind::GlobalScalar:
@@ -16,6 +19,12 @@ std::string probeKindToString(const ProbeKind kind) {
     return "unknown";
 }
 
+// Exports probe time series data to CSV file.
+// Writes header with columns: probe_id, variable, kind, step, time, value
+// @param series Vector of probe series to export
+// @param outputPath Path to output CSV file
+// @param message Status message on success/failure
+// @return true if CSV exported successfully
 bool saveProbeSeriesCsv(const std::vector<ProbeSeries>& series, const std::filesystem::path& outputPath, std::string& message) {
     std::error_code ec;
     const auto parent = outputPath.parent_path();

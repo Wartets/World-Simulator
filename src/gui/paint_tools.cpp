@@ -6,8 +6,14 @@
 
 namespace ws::gui {
 
+// Constructs paint tools with session configuration.
+// @param config Paint session configuration with grid dimensions and domain
 PaintTools::PaintTools(PaintSessionConfig config) : config_(config) {}
 
+// Resets paint tools with new configuration and initial values.
+// Clears undo/redo stacks and stroke state.
+// @param config New paint session configuration
+// @param initialValues Initial field values
 void PaintTools::reset(PaintSessionConfig config, std::vector<float> initialValues) {
     config_ = config;
     initialValues_ = std::move(initialValues);
@@ -20,6 +26,8 @@ void PaintTools::reset(PaintSessionConfig config, std::vector<float> initialValu
     strokeActive_ = false;
 }
 
+// Begins paint stroke by capturing baseline values.
+// @param currentValues Current field values at stroke start
 void PaintTools::beginStroke(const std::vector<float>& currentValues) {
     if (strokeActive_) {
         return;
@@ -28,6 +36,9 @@ void PaintTools::beginStroke(const std::vector<float>& currentValues) {
     strokeActive_ = true;
 }
 
+// Ends paint stroke and saves to undo stack if values changed.
+// @param currentValues Current field values at stroke end
+// @return true if stroke was saved to undo stack
 bool PaintTools::endStroke(const std::vector<float>& currentValues) {
     if (!strokeActive_) {
         return false;
@@ -45,6 +56,9 @@ bool PaintTools::endStroke(const std::vector<float>& currentValues) {
     return false;
 }
 
+// Undoes last paint stroke by restoring from undo stack.
+// @param values Field values to restore
+// @return true if undo successful
 bool PaintTools::undo(std::vector<float>& values) {
     if (undoStack_.empty()) {
         return false;
@@ -55,6 +69,9 @@ bool PaintTools::undo(std::vector<float>& values) {
     return true;
 }
 
+// Redoes previously undone paint stroke.
+// @param values Field values to restore
+// @return true if redo successful
 bool PaintTools::redo(std::vector<float>& values) {
     if (redoStack_.empty()) {
         return false;
@@ -65,6 +82,10 @@ bool PaintTools::redo(std::vector<float>& values) {
     return true;
 }
 
+// Checks if coordinates are within grid bounds.
+// @param x Grid X coordinate
+// @param y Grid Y coordinate
+// @return true if coordinates are valid
 bool PaintTools::inBounds(const int x, const int y) const {
     return x >= 0 && y >= 0 &&
            static_cast<std::size_t>(x) < config_.width &&

@@ -8,6 +8,10 @@
 
 namespace {
 
+// Brightens ImGui color by multiplication factor.
+// @param color Original color as packed U32
+// @param factor Brightening factor (>1 brightens, <1 darkens)
+// @return Brightened color as packed U32
 ImU32 brighten(ImU32 color, float factor) {
     ImVec4 rgba = ImGui::ColorConvertU32ToFloat4(color);
     rgba.x = std::clamp(rgba.x * factor, 0.0f, 1.0f);
@@ -16,10 +20,19 @@ ImU32 brighten(ImU32 color, float factor) {
     return ImGui::GetColorU32(rgba);
 }
 
+// Linear interpolation between two 2D points.
+// @param a First point
+// @param b Second point
+// @param t Interpolation factor [0, 1]
+// @return Interpolated point
 ImVec2 lerp(const ImVec2& a, const ImVec2& b, float t) {
     return ImVec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
 }
 
+// Clamps vector length to maximum while preserving direction.
+// @param v Input vector
+// @param maxLen Maximum length
+// @return Clamped vector
 ImVec2 clampLength(const ImVec2& v, float maxLen) {
     const float lenSq = v.x * v.x + v.y * v.y;
     if (lenSq <= maxLen * maxLen || lenSq <= 0.000001f) {

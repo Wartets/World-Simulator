@@ -9,6 +9,9 @@ namespace ws::gui {
 
 namespace {
 
+// Converts manual event kind to string identifier.
+// @param kind Event kind enum value
+// @return String identifier
 std::string kindToString(const ManualEventKind kind) {
     switch (kind) {
         case ManualEventKind::ParameterUpdate: return "parameter_update";
@@ -18,6 +21,9 @@ std::string kindToString(const ManualEventKind kind) {
     return "cell_edit";
 }
 
+// Converts string identifier to manual event kind.
+// @param value String identifier
+// @return Corresponding ManualEventKind enum
 ManualEventKind kindFromString(const std::string& value) {
     if (value == "parameter_update") {
         return ManualEventKind::ParameterUpdate;

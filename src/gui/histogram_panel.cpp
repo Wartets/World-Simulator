@@ -5,6 +5,14 @@
 
 namespace ws::gui {
 
+// Computes histogram statistics and bin distribution from field payload.
+// Calculates min, max, mean, median, stddev, skewness, kurtosis and bin values.
+// @param field Source field payload with values and validity mask
+// @param binCount Number of histogram bins to generate
+// @param normalization Histogram normalization mode
+// @param result Output histogram result with stats and bins
+// @param message Status message on success/failure
+// @return true if histogram computed successfully
 bool computeHistogram(
     const StateStoreSnapshot::FieldPayload& field,
     const int binCount,

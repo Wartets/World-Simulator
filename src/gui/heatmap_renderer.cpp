@@ -12,11 +12,20 @@
 namespace ws::gui {
 namespace {
 
+// Converts float value to byte (0-255) with clamping.
+// @param value Input value expected to be in range [0, 1]
+// @return Byte representation of the value
 [[nodiscard]] static std::uint8_t toByte(float value) {
     const float clamped = std::clamp(value, 0.0f, 1.0f);
     return static_cast<std::uint8_t>(std::lround(clamped * 255.0f));
 }
 
+// Packs RGBA float components into 32-bit color.
+// @param r Red component [0, 1]
+// @param g Green component [0, 1]
+// @param b Blue component [0, 1]
+// @param a Alpha component [0, 1], defaults to 1.0
+// @return 32-bit packed color
 [[nodiscard]] static std::uint32_t packColor(float r, float g, float b, float a = 1.0f) {
     return static_cast<std::uint32_t>(toByte(r)) |
            (static_cast<std::uint32_t>(toByte(g)) << 8u) |
@@ -24,6 +33,11 @@ namespace {
            (static_cast<std::uint32_t>(toByte(a)) << 24u);
 }
 
+// Linear interpolation between two RGB color vectors.
+// @param a First color vector
+// @param b Second color vector
+// @param t Interpolation factor [0, 1]
+// @return Interpolated color vector
 [[nodiscard]] static std::array<float, 3> lerp3(const std::array<float, 3>& a,
                                                 const std::array<float, 3>& b,
                                                 float t) {
@@ -34,6 +48,11 @@ namespace {
     };
 }
 
+// Computes gradient color at position t using preset anchors.
+// Uses 5-anchor gradient with piecewise linear interpolation.
+// @param t Position in gradient [0, 1]
+// @param anchors Array of 5 RGB color anchors
+// @return Packed 32-bit color
 [[nodiscard]] static std::uint32_t gradientColor(
     float t,
     const std::array<std::array<float, 3>, 5>& anchors) {
@@ -48,6 +67,8 @@ namespace {
 
 } // namespace
 
+// Initializes heatmap renderer and detects GPU compute capabilities.
+// Queries OpenGL version to determine if compute shaders are available.
 void HeatmapRenderer::initialize() {
     // Scaffolding: compute support is detected for forward compatibility.
     // Current rendering path remains deterministic CPU-side generation.
@@ -66,14 +87,25 @@ void HeatmapRenderer::initialize() {
     }
 }
 
+// Queries whether GPU compute path is supported.
+// @return true if GPU compute shaders are available
 bool HeatmapRenderer::supportsGpuComputePath() const {
     return gpuComputeSupported_;
 }
 
+// Sets custom color lookup table for heatmap rendering.
+// @param rgbaLut Vector of RGBA bytes forming the color LUT
 void HeatmapRenderer::setCustomColorMap(std::vector<std::uint8_t> rgbaLut) {
     customColorMap_ = std::move(rgbaLut);
 }
 
+// Builds RGBA output buffer from field values for rendering.
+// Applies normalization and color mapping to generate pixel data.
+// @param values Input field values
+// @param width Grid width
+// @param height Grid height
+// @param params Rendering parameters including normalization and color map
+// @return Vector of RGBA bytes (4 * width * height)
 std::vector<std::uint8_t> HeatmapRenderer::buildRgba(
     const std::vector<float>& values,
     const std::uint32_t width,
@@ -110,6 +142,12 @@ std::vector<std::uint8_t> HeatmapRenderer::buildRgba(
     return out;
 }
 
+// Normalizes a sample value based on rendering parameters.
+// Handles linear, logarithmic, sqrt, power, and quantile normalizations.
+// @param value Raw sample value
+// @param finiteValues Vector of all finite values for quantile computation
+// @param params Rendering parameters
+// @return Normalized value in range [0, 1]
 float HeatmapRenderer::normalizeSample(float value, const std::vector<float>& finiteValues,
                                        const HeatmapRenderParams& params) const {
     float lo = params.minValue;
@@ -145,6 +183,11 @@ float HeatmapRenderer::normalizeSample(float value, const std::vector<float>& fi
     }
 }
 
+// Maps normalized value to color using specified color map.
+// Uses built-in gradients (Viridis, Hot, Cool, Jet, Turbo) or custom LUT.
+// @param t Normalized value [0, 1]
+// @param map Color map selector
+// @return Packed 32-bit RGBA color
 std::uint32_t HeatmapRenderer::sampleColor(float t, HeatmapColorMap map) const {
     const float v = std::clamp(t, 0.0f, 1.0f);
 

@@ -4,6 +4,12 @@
 
 namespace ws::gui {
 
+// Constructs viewport with grid dimensions and value domain.
+// Initializes paint tools with session configuration matching grid.
+// @param gridWidth Number of cells horizontally
+// @param gridHeight Number of cells vertically
+// @param domainMin Minimum value in simulation domain
+// @param domainMax Maximum value in simulation domain
 WorldViewport::WorldViewport(
     const std::size_t gridWidth,
     const std::size_t gridHeight,
@@ -13,6 +19,11 @@ WorldViewport::WorldViewport(
             gridHeight_(std::max<std::size_t>(1, gridHeight)),
             paintTools_(PaintSessionConfig{std::max<std::size_t>(1, gridWidth), std::max<std::size_t>(1, gridHeight), domainMin, domainMax}) {}
 
+// Sets viewport geometry for coordinate transformations.
+// @param viewportX Left edge of viewport in window coordinates
+// @param viewportY Top edge of viewport in window coordinates
+// @param viewportWidth Width of viewport in pixels
+// @param viewportHeight Height of viewport in pixels
 void WorldViewport::setCanvasGeometry(const int viewportX, const int viewportY, const int viewportWidth, const int viewportHeight) {
     viewportX_ = viewportX;
     viewportY_ = viewportY;
@@ -20,10 +31,19 @@ void WorldViewport::setCanvasGeometry(const int viewportX, const int viewportY, 
     viewportHeight_ = std::max(1, viewportHeight);
 }
 
+// Sets current paint state including tool, brush settings, and values.
+// @param state Viewport paint state configuration
 void WorldViewport::setPaintState(ViewportPaintState state) {
     paintState_ = state;
 }
 
+// Converts window coordinates to grid indices.
+// Clamps output to valid grid range.
+// @param x Window X coordinate
+// @param y Window Y coordinate
+// @param outGridX Output grid X coordinate
+// @param outGridY Output grid Y coordinate
+// @return true if conversion successful (point within viewport)
 bool WorldViewport::windowToGrid(const int x, const int y, int& outGridX, int& outGridY) const {
     if (x < viewportX_ || y < viewportY_ || x >= viewportX_ + viewportWidth_ || y >= viewportY_ + viewportHeight_) {
         return false;
@@ -36,6 +56,11 @@ bool WorldViewport::windowToGrid(const int x, const int y, int& outGridX, int& o
     return true;
 }
 
+// Handles mouse click for painting/interaction at grid position.
+// Begins stroke if not already dragging, applies tool operation.
+// @param x Mouse X coordinate
+// @param y Mouse Y coordinate
+// @param values Field values array to modify
 void WorldViewport::onMouseClick(const int x, const int y, std::vector<float>& values) {
     if (values.size() != gridWidth_ * gridHeight_) {
         return;
@@ -71,6 +96,11 @@ void WorldViewport::onMouseClick(const int x, const int y, std::vector<float>& v
     }
 }
 
+// Handles mouse drag for continuous painting.
+// Only processes brush, smooth, and eraser tools during drag.
+// @param x Mouse X coordinate
+// @param y Mouse Y coordinate
+// @param values Field values array to modify
 void WorldViewport::onMouseDrag(const int x, const int y, std::vector<float>& values) {
     if (!dragging_) {
         return;
@@ -101,6 +131,9 @@ void WorldViewport::onMouseDrag(const int x, const int y, std::vector<float>& va
     }
 }
 
+// Handles mouse release to end paint stroke.
+// Commits stroke to paint tools and resets drag state.
+// @param values Field values array to finalize
 void WorldViewport::onMouseRelease(std::vector<float>& values) {
     if (!dragging_) {
         return;
@@ -109,10 +142,16 @@ void WorldViewport::onMouseRelease(std::vector<float>& values) {
     paintTools_.endStroke(values);
 }
 
+// Undoes last paint stroke operation.
+// @param values Field values array to revert
+// @return true if undo successful
 bool WorldViewport::undo(std::vector<float>& values) {
     return paintTools_.undo(values);
 }
 
+// Redoes previously undone paint stroke operation.
+// @param values Field values array to reapply
+// @return true if redo successful
 bool WorldViewport::redo(std::vector<float>& values) {
     return paintTools_.redo(values);
 }

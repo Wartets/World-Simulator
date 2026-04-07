@@ -7,10 +7,23 @@
 namespace ws::gui {
 namespace {
 
+// Determines if edge between values crosses contour level.
+// Returns true if one value is below and one is at or above level.
+// @param a First vertex value
+// @param b Second vertex value
+// @param level Contour level to test
+// @return true if edge crosses level
 [[nodiscard]] static bool crosses(const float a, const float b, const float level) {
     return (a <= level && b > level) || (a > level && b <= level);
 }
 
+// Linear interpolation to find intersection point on edge.
+// @param a First vertex position
+// @param b Second vertex position
+// @param va First vertex value
+// @param vb Second vertex value
+// @param level Contour level
+// @return Interpolated position on edge
 [[nodiscard]] static ImVec2 lerpEdge(const ImVec2& a, const ImVec2& b, const float va, const float vb, const float level) {
     const float t = (std::fabs(vb - va) <= 1e-8f) ? 0.5f : std::clamp((level - va) / (vb - va), 0.0f, 1.0f);
     return ImVec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
@@ -18,6 +31,19 @@ namespace {
 
 } // namespace
 
+// Draws contour lines for field visualization on ImDrawList.
+// Iterates through contour levels, finds intersections on cell edges, draws lines.
+// @param drawList ImGui draw list to render onto
+// @param clipMin Clipping rectangle minimum
+// @param clipMax Clipping rectangle maximum
+// @param contentMin Content area minimum (grid origin)
+// @param cellW Width of each cell in pixels
+// @param cellH Height of each cell in pixels
+// @param grid Grid specification
+// @param values Field values for contour computation
+// @param minValue Minimum value for contour range
+// @param maxValue Maximum value for contour range
+// @param config Contour rendering configuration
 void ContourRenderer::draw(ImDrawList& drawList,
                            const ImVec2 clipMin,
                            const ImVec2 clipMax,

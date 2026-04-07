@@ -8,6 +8,10 @@
 
 namespace ws::gui::session_manager {
 
+// Formats byte count as human-readable string.
+// Uses IEC units (B, KB, MB, GB, TB) with 1024 base.
+// @param bytes Byte count to format
+// @return Formatted string (e.g., "1.5 MB")
 std::string formatBytes(const std::uintmax_t bytes) {
     static constexpr std::array<const char*, 5> kUnits = {"B", "KB", "MB", "GB", "TB"};
     double value = static_cast<double>(bytes);
@@ -22,6 +26,10 @@ std::string formatBytes(const std::uintmax_t bytes) {
     return out.str();
 }
 
+// Formats filesystem timestamp as local time string.
+// @param timePoint Filesystem file time
+// @param available Whether timestamp is available
+// @return Formatted datetime string or "n/a"
 std::string formatFileTime(const std::filesystem::file_time_type& timePoint, const bool available) {
     if (!available) {
         return "n/a";

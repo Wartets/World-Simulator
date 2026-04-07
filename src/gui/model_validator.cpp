@@ -6,10 +6,16 @@
 
 namespace ws::gui {
 
+// Default constructor; initializes validator with empty state.
 ModelValidator::ModelValidator() = default;
 
+// Destructor; default.
 ModelValidator::~ModelValidator() = default;
 
+// Validates syntax of formula string.
+// Checks for balanced parentheses, valid operators, and proper formatting.
+// @param formula Formula string to validate
+// @return true if syntax is valid
 bool ModelValidator::validateSyntax(const std::string& formula) {
     // Basic syntax validation using regex
     // Check for balanced parentheses, valid operators, etc.

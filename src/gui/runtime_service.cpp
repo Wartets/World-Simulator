@@ -16,6 +16,12 @@ namespace ws::gui {
 
 namespace {
 
+// Checks if subsystem key can be resolved given available variables and aliases.
+// Returns true if key is empty, found in variableIds, resolves via alias, or is internal.
+// @param key Subsystem key to check
+// @param variableIds Set of available variable IDs
+// @param aliases Map of alias to canonical variable names
+// @return true if key can be resolved
 bool canResolveSubsystemKey(
     const std::string& key,
     const std::unordered_set<std::string>& variableIds,
@@ -36,6 +42,14 @@ bool canResolveSubsystemKey(
     return key.find('.') == std::string::npos;
 }
 
+// Selects subsystems compatible with model's variable requirements.
+// Returns all subsystems if no execution spec, otherwise filters by variable needs.
+// @param executionSpec Optional model execution specification
+// @return Vector of compatible subsystem instances
+// Selects subsystems compatible with model's variable requirements.
+// Returns all subsystems if no execution spec, otherwise filters by variable needs.
+// @param executionSpec Optional model execution specification
+// @return Vector of compatible subsystem instances
 std::vector<std::shared_ptr<ISubsystem>> selectCompatibleSubsystems(const std::optional<ModelExecutionSpec>& executionSpec) {
     const auto all = makePhase4Subsystems();
     if (!executionSpec.has_value()) {

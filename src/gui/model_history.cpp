@@ -4,10 +4,13 @@
 
 namespace ws::gui {
 
+// Default constructor; initializes empty history.
 ModelHistory::ModelHistory() = default;
 
+// Destructor; default.
 ModelHistory::~ModelHistory() = default;
 
+// Creates a timestamped snapshot with description.
 ModelHistory::Snapshot ModelHistory::createSnapshot(const std::string& description) {
     auto now = std::chrono::system_clock::now();
     uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -17,6 +20,7 @@ ModelHistory::Snapshot ModelHistory::createSnapshot(const std::string& descripti
     return Snapshot{description, timestamp};
 }
 
+// Records a new action snapshot; clears redo stack.
 void ModelHistory::recordSnapshot(const std::string& description) {
     // When a new action is recorded, clear the redo stack
     redo_stack.clear();
@@ -31,6 +35,8 @@ void ModelHistory::recordSnapshot(const std::string& description) {
     }
 }
 
+// Pops from undo stack and pushes to redo stack.
+// Returns false if nothing to undo.
 bool ModelHistory::undo() {
     if (undo_stack.empty()) {
         return false;
@@ -46,6 +52,8 @@ bool ModelHistory::undo() {
     return true;
 }
 
+// Pops from redo stack and pushes to undo stack.
+// Returns false if nothing to redo.
 bool ModelHistory::redo() {
     if (redo_stack.empty()) {
         return false;
@@ -61,6 +69,7 @@ bool ModelHistory::redo() {
     return true;
 }
 
+// Returns description of most recent action.
 std::string ModelHistory::getLastActionDescription() const {
     if (undo_stack.empty()) {
         return "No actions";
@@ -68,6 +77,7 @@ std::string ModelHistory::getLastActionDescription() const {
     return undo_stack.back().description;
 }
 
+// Clears both undo and redo stacks.
 void ModelHistory::clear() {
     undo_stack.clear();
     redo_stack.clear();

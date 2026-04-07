@@ -6,6 +6,11 @@
 namespace ws::gui {
 namespace {
 
+// Applies blend mode between base and layer values.
+// @param mode Layer blend mode (add, subtract, multiply, max, min, set)
+// @param baseValue Base value to blend onto
+// @param layerValue Layer value to blend
+// @return Blended result
 float applyBlend(const LayerBlendMode mode, const float baseValue, const float layerValue) {
     switch (mode) {
         case LayerBlendMode::Add:
@@ -24,12 +29,23 @@ float applyBlend(const LayerBlendMode mode, const float baseValue, const float l
     }
 }
 
+// Converts normalized noise output [-1, 1] to unit range [0, 1].
+// @param v Normalized noise value
+// @return Unit-range value clamped to [0, 1]
 float normalizedNoiseToUnit(const float v) {
     return std::clamp((v + 1.0f) * 0.5f, 0.0f, 1.0f);
 }
 
 } // namespace
 
+// Composes multiple noise layers into output variable maps.
+// Generates noise for each layer, optionally applies mask, blends to target.
+// @param width Grid width
+// @param height Grid height
+// @param seed Random seed for noise generation
+// @param layers Layer configurations with noise parameters
+// @param maskInputs Optional mask inputs for layer masking
+// @return Map of variable names to generated value vectors
 std::unordered_map<std::string, std::vector<float>> WorldGenerator::composeLayers(
     const std::size_t width,
     const std::size_t height,
@@ -98,6 +114,9 @@ std::unordered_map<std::string, std::vector<float>> WorldGenerator::composeLayer
     return outputs;
 }
 
+// Returns predefined world generation presets.
+// Includes flat, mountainous, island, and random configurations.
+// @return Vector of generation presets with metadata
 std::vector<GenerationPreset> WorldGenerator::presets() {
     return {
         {

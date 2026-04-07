@@ -4,6 +4,8 @@
 
 namespace ws::gui {
 
+// Records step diagnostics and parses constraint violations.
+// Extracts variable name, cell index, and severity from violation messages.
 void ConstraintMonitor::recordStep(const StepDiagnostics& diagnostics, const std::uint64_t step, const float time) {
     violationsThisStep_ = diagnostics.constraintViolations.size();
 
@@ -25,11 +27,14 @@ void ConstraintMonitor::recordStep(const StepDiagnostics& diagnostics, const std
     }
 }
 
+// Clears current violation count and history.
 void ConstraintMonitor::clear() noexcept {
     violationsThisStep_ = 0;
     history_.clear();
 }
 
+// Parses constraint violation message from scheduler.
+// Expected format: "clamp:<variable>:index=<flat_cell_index>"
 bool ConstraintMonitor::parseConstraintMessage(
     const std::string& message,
     std::string& variable,

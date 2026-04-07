@@ -2,6 +2,8 @@
 
 namespace ws::gui {
 
+// Constructs keyboard shortcut manager with default application shortcuts.
+// Registers built-in shortcuts for play/pause, step, checkpoint, model editor, help, speed.
 KeyboardShortcutManager::KeyboardShortcutManager() {
     // Register default shortcuts
     registerShortcut({
@@ -95,11 +97,16 @@ KeyboardShortcutManager::KeyboardShortcutManager() {
     });
 }
 
+// Registers a keyboard shortcut with the manager.
+// @param def Shortcut definition with ID, description, key, modifier, and action
 void KeyboardShortcutManager::registerShortcut(const ShortcutDef& def) {
     idToIndex_[def.id] = shortcuts_.size();
     shortcuts_.push_back(def);
 }
 
+// Unregisters a keyboard shortcut by ID.
+// Updates internal index mapping after removal.
+// @param id Shortcut identifier to remove
 void KeyboardShortcutManager::unregisterShortcut(const std::string& id) {
     auto it = idToIndex_.find(id);
     if (it != idToIndex_.end()) {
@@ -113,6 +120,11 @@ void KeyboardShortcutManager::unregisterShortcut(const std::string& id) {
     }
 }
 
+// Handles key press event and invokes matching shortcut action.
+// Searches enabled shortcuts matching key and modifier.
+// @param key Key code that was pressed
+// @param modifiers Modifier keys held during press
+// @return true if shortcut was matched and executed
 bool KeyboardShortcutManager::handleKeyPress(KeyCode key, KeyModifier modifiers) {
     for (auto& shortcut : shortcuts_) {
         if (shortcut.enabled && shortcut.key == key && shortcut.modifier == modifiers) {
@@ -125,6 +137,9 @@ bool KeyboardShortcutManager::handleKeyPress(KeyCode key, KeyModifier modifiers)
     return false;
 }
 
+// Enables or disables a shortcut by ID.
+// @param id Shortcut identifier
+// @param enabled true to enable, false to disable
 void KeyboardShortcutManager::setShortcutEnabled(const std::string& id, bool enabled) {
     auto* shortcut = findShortcut(id);
     if (shortcut) {
@@ -132,10 +147,15 @@ void KeyboardShortcutManager::setShortcutEnabled(const std::string& id, bool ena
     }
 }
 
+// Gets all registered shortcuts.
+// @return Const reference to shortcut vector
 const std::vector<ShortcutDef>& KeyboardShortcutManager::getShortcuts() const {
     return shortcuts_;
 }
 
+// Finds shortcut definition by ID.
+// @param id Shortcut identifier to search for
+// @return Pointer to shortcut definition, nullptr if not found
 ShortcutDef* KeyboardShortcutManager::findShortcut(const std::string& id) {
     auto it = idToIndex_.find(id);
     if (it != idToIndex_.end()) {
@@ -144,6 +164,8 @@ ShortcutDef* KeyboardShortcutManager::findShortcut(const std::string& id) {
     return nullptr;
 }
 
+// Builds formatted help text listing all enabled shortcuts.
+// @return Multi-line string with shortcut descriptions and key bindings
 std::string KeyboardShortcutManager::buildHelpText() const {
     std::string help = "Keyboard Shortcuts:\n\n";
     for (const auto& shortcut : shortcuts_) {
@@ -164,10 +186,14 @@ std::string KeyboardShortcutManager::buildHelpText() const {
     return help;
 }
 
+// Saves shortcut configuration to JSON file.
+// @param filename Output file path
 void KeyboardShortcutManager::saveShortcuts(const std::string& filename) {
     // TODO: Implement JSON serialization
 }
 
+// Loads shortcut configuration from JSON file.
+// @param filename Input file path
 void KeyboardShortcutManager::loadShortcuts(const std::string& filename) {
     // TODO: Implement JSON deserialization
 }

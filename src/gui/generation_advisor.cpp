@@ -8,6 +8,9 @@ namespace ws::gui {
 
 namespace {
 
+// Creates lowercase copy of string for case-insensitive comparison.
+// @param value Input string
+// @return Lowercase version of string
 std::string toLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
@@ -15,6 +18,10 @@ std::string toLowerCopy(std::string value) {
     return value;
 }
 
+// Checks if tag list contains specified tag (case-insensitive).
+// @param tags Vector of tags to search
+// @param needle Tag to find
+// @return true if tag found
 bool tagsContain(const std::vector<std::string>& tags, const std::string& needle) {
     const std::string needleLower = toLowerCopy(needle);
     return std::any_of(tags.begin(), tags.end(), [&](const std::string& tag) {
@@ -22,6 +29,10 @@ bool tagsContain(const std::vector<std::string>& tags, const std::string& needle
     });
 }
 
+// Checks if hint list contains specified hint (case-insensitive).
+// @param hints Vector of hints to search
+// @param needle Hint to find
+// @return true if hint found
 bool hintsContain(const std::vector<std::string>& hints, const std::string& needle) {
     const std::string needleLower = toLowerCopy(needle);
     return std::any_of(hints.begin(), hints.end(), [&](const std::string& hint) {

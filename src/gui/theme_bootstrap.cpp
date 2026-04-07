@@ -4,6 +4,11 @@
 
 namespace ws::gui {
 
+// Applies base theme configuration to ImGui style.
+// Sets dark color scheme with custom rounded corners and spacing.
+// Scales all UI elements by effectiveScale factor.
+// @param style ImGui style reference to configure
+// @param effectiveScale Scale factor for UI elements
 void ThemeBootstrap::applyBaseTheme(ImGuiStyle& style, const float effectiveScale) {
     ImGui::StyleColorsDark();
 
@@ -34,6 +39,11 @@ void ThemeBootstrap::applyBaseTheme(ImGuiStyle& style, const float effectiveScal
     style.ScaleAllSizes(effectiveScale);
 }
 
+// Applies accessibility modifications to theme and IO config.
+// Configures keyboard navigation, focus indicators, and high contrast mode.
+// @param io ImGui IO configuration
+// @param style ImGui style to modify
+// @param cfg Accessibility configuration options
 void ThemeBootstrap::applyAccessibility(ImGuiIO& io, ImGuiStyle& style, const AccessibilityConfig& cfg) {
     if (cfg.keyboardNav) {
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -59,6 +69,10 @@ void ThemeBootstrap::applyAccessibility(ImGuiIO& io, ImGuiStyle& style, const Ac
     }
 }
 
+// Configures ImGui font from system fonts.
+// Attempts to load Segoe UI, falls back to default font on failure.
+// @param io ImGui IO configuration
+// @param fontSizePx Font size in pixels, clamped to [10, 32]
 void ThemeBootstrap::configureFont(ImGuiIO& io, const float fontSizePx) {
     const float clampedSize = std::clamp(fontSizePx, 10.0f, 32.0f);
 

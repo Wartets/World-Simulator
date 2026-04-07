@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -21,8 +22,10 @@ namespace ws::gui {
 
 namespace {
 
+// Current engine version for compatibility checking.
 constexpr const char* kCurrentEngineVersion = "1.0.0";
 
+// Table column identifiers for model browser table.
 enum TableColumnId {
     ColName = 0,
     ColId,
@@ -38,6 +41,9 @@ enum TableColumnId {
     ColLastModified
 };
 
+// Creates lowercase copy of string for case-insensitive comparison.
+// @param value Input string
+// @return Lowercase version of input
 std::string toLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -45,6 +51,8 @@ std::string toLowerCopy(std::string value) {
     return value;
 }
 
+// Resolves workspace root by searching for CMakeLists.txt upward.
+// @return Path to workspace root directory
 fs::path resolveWorkspaceRoot() {
     std::error_code ec;
     fs::path current = fs::current_path(ec);
@@ -64,6 +72,8 @@ fs::path resolveWorkspaceRoot() {
     return current;
 }
 
+// Gets the models directory path, creating it if necessary.
+// @return Path to models root directory
 fs::path modelsRoot() {
     const fs::path root = resolveWorkspaceRoot() / "models";
     std::error_code ec;
@@ -71,6 +81,19 @@ fs::path modelsRoot() {
     return root;
 }
 
+// Gets the recent models file path, creating directory if needed.
+// @return Path to recent_models.txt
+fs::path recentModelsPath() {
+    const fs::path root = resolveWorkspaceRoot() / "profiles";
+    std::error_code ec;
+    fs::create_directories(root, ec);
+    return root / "recent_models.txt";
+}
+
+// Sanitizes model name by replacing invalid characters with underscore.
+// Allows only alphanumeric, underscore, and hyphen.
+// @param raw Raw model name input
+// @return Sanitized model name
 std::string sanitizeModelName(const std::string& raw) {
     std::string name = raw;
     if (name.empty()) {
@@ -89,6 +112,9 @@ std::string sanitizeModelName(const std::string& raw) {
     return name;
 }
 
+// Joins tag vector into comma-separated string.
+// @param tags Vector of tag strings
+// @return Comma-separated tag string
 std::string joinTags(const std::vector<std::string>& tags) {
     if (tags.empty()) {
         return {};
@@ -103,6 +129,39 @@ std::string joinTags(const std::vector<std::string>& tags) {
     return out.str();
 }
 
+// Checks if model matches search query (case-insensitive).
+// Searches in name, id, description, author, and tags.
+// @param model Model info to check
+// @param lowerQuery Lowercase search query
+// @return true if model matches query
+bool modelMatchesSearch(const ModelInfo& model, const std::string& lowerQuery) {
+    if (lowerQuery.empty()) {
+        return true;
+    }
+    if (toLowerCopy(model.name).find(lowerQuery) != std::string::npos) {
+        return true;
+    }
+    if (toLowerCopy(model.model_id).find(lowerQuery) != std::string::npos) {
+        return true;
+    }
+    if (toLowerCopy(model.description).find(lowerQuery) != std::string::npos) {
+        return true;
+    }
+    if (toLowerCopy(model.author).find(lowerQuery) != std::string::npos) {
+        return true;
+    }
+    if (toLowerCopy(joinTags(model.tags)).find(lowerQuery) != std::string::npos) {
+        return true;
+    }
+    return false;
+}
+
+// Gets string value from JSON, falling back to default for missing/non-string.
+// Also handles numeric types by converting to string.
+// @param j JSON object to query
+// @param key Key to retrieve
+// @param fallback Default value if key missing or wrong type
+// @return String value or fallback
 std::string jsonStringOr(const json& j, const char* key, std::string fallback = {}) {
     if (!j.contains(key)) {
         return fallback;
@@ -124,6 +183,8 @@ struct TemplateDefinition {
     fs::path source;
 };
 
+// Loads template registry from templates.json file.
+// @return Vector of template definitions
 std::vector<TemplateDefinition> loadTemplateRegistry() {
     const fs::path registryPath = modelsRoot() / "templates.json";
     if (!fs::exists(registryPath)) {
@@ -165,6 +226,9 @@ std::vector<TemplateDefinition> loadTemplateRegistry() {
     }
 }
 
+// Resolves template source path using registry.
+// @param templateName Template identifier to find
+// @return Path to template if found, empty optional otherwise
 std::optional<fs::path> resolveTemplateSourceByRegistry(const std::string& templateName) {
     const auto templates = loadTemplateRegistry();
     for (const auto& candidate : templates) {
@@ -175,6 +239,9 @@ std::optional<fs::path> resolveTemplateSourceByRegistry(const std::string& templ
     return std::nullopt;
 }
 
+// Resolves template source path by discovering .simmodel files.
+// @param templateName Template identifier to find
+// @return Path to first matching template or nullopt
 std::optional<fs::path> resolveTemplateSourceByDiscovery(const std::string& templateName) {
     std::vector<fs::path> candidates;
     const fs::path root = modelsRoot();
@@ -197,6 +264,9 @@ std::optional<fs::path> resolveTemplateSourceByDiscovery(const std::string& temp
     return candidates.front();
 }
 
+// Resolves template source using registry, then discovery as fallback.
+// @param templateName Template identifier to find
+// @return Path to template or nullopt
 std::optional<fs::path> resolveTemplateSource(const std::string& templateName) {
     if (auto byRegistry = resolveTemplateSourceByRegistry(templateName)) {
         return byRegistry;
@@ -204,6 +274,11 @@ std::optional<fs::path> resolveTemplateSource(const std::string& templateName) {
     return resolveTemplateSourceByDiscovery(templateName);
 }
 
+// Copies template to model path, handling both directory and file templates.
+// For directories: copies recursively. For files: parses and writes JSON components.
+// @param templateSource Path to template source
+// @param modelPath Destination path for new model
+// @return true if materialization succeeded
 bool materializeTemplateToModelPath(const fs::path& templateSource, const fs::path& modelPath) {
     std::error_code ec;
     if (fs::is_directory(templateSource, ec)) {
@@ -235,6 +310,9 @@ bool materializeTemplateToModelPath(const fs::path& templateSource, const fs::pa
     }
 }
 
+// Parses metadata.json into ModelInfo structure.
+// @param info ModelInfo to populate
+// @param metadataPath Path to metadata.json
 void parseMetadataInto(ModelInfo& info, const fs::path& metadataPath) {
     if (!fs::exists(metadataPath)) {
         return;
@@ -278,6 +356,9 @@ void parseMetadataInto(ModelInfo& info, const fs::path& metadataPath) {
     }
 }
 
+// Parses version.json into ModelInfo structure.
+// @param info ModelInfo to populate
+// @param versionPath Path to version.json
 void parseVersionInto(ModelInfo& info, const fs::path& versionPath) {
     if (!fs::exists(versionPath)) {
         return;
@@ -307,6 +388,9 @@ void parseVersionInto(ModelInfo& info, const fs::path& versionPath) {
     }
 }
 
+// Parses model.json into ModelInfo structure (minimal fields).
+// @param info ModelInfo to populate
+// @param modelJsonPath Path to model.json
 void parseModelJsonInto(ModelInfo& info, const fs::path& modelJsonPath) {
     if (!fs::exists(modelJsonPath)) {
         return;
@@ -330,6 +414,9 @@ void parseModelJsonInto(ModelInfo& info, const fs::path& modelJsonPath) {
     }
 }
 
+// Formats filesystem time as local datetime string.
+// @param timePoint Filesystem time point
+// @return Formatted datetime string "YYYY-MM-DD HH:MM:SS" or "n/a" on error
 std::string formatFileTime(const fs::file_time_type& timePoint) {
     try {
         const auto now = std::chrono::system_clock::now();
@@ -351,6 +438,9 @@ std::string formatFileTime(const fs::file_time_type& timePoint) {
     }
 }
 
+// Reads entire file into string.
+// @param path Path to file
+// @return File contents or empty string if not found
 std::string readTextFile(const fs::path& path) {
     if (!fs::exists(path)) {
         return {};
@@ -364,6 +454,9 @@ std::string readTextFile(const fs::path& path) {
     return out.str();
 }
 
+// Computes FNV-1a 64-bit hash of string.
+// @param text Input string to hash
+// @return 64-bit hash value
 std::uint64_t fnv1a64(const std::string& text) {
     std::uint64_t hash = 1469598103934665603ull;
     for (unsigned char c : text) {
@@ -373,6 +466,10 @@ std::uint64_t fnv1a64(const std::string& text) {
     return hash;
 }
 
+// Compares semantic version strings (e.g., "1.2.3" vs "2.0.0").
+// @param lhs Left version string
+// @param rhs Right version string
+// @return -1 if lhs < rhs, 0 if equal, 1 if lhs > rhs
 int compareVersion(const std::string& lhs, const std::string& rhs) {
     std::istringstream lss(lhs);
     std::istringstream rss(rhs);
@@ -397,6 +494,9 @@ int compareVersion(const std::string& lhs, const std::string& rhs) {
     }
 }
 
+// Generates compatibility label based on minimum engine version.
+// @param minimumEngineVersion Minimum engine version required
+// @return "compatible" or "incompatible"
 std::string compatibilityLabel(const std::string& minimumEngineVersion) {
     if (minimumEngineVersion.empty()) {
         return "unknown";
@@ -404,6 +504,9 @@ std::string compatibilityLabel(const std::string& minimumEngineVersion) {
     return compareVersion(minimumEngineVersion, kCurrentEngineVersion) <= 0 ? "compatible" : "incompatible";
 }
 
+// Computes identity hash for model by hashing all component files.
+// @param modelDir Path to model directory or single file
+// @return 16-digit hexadecimal hash string
 std::string identityHashForModel(const fs::path& modelDir) {
     if (fs::is_regular_file(modelDir)) {
         const std::string payload = readTextFile(modelDir);
@@ -423,6 +526,8 @@ std::string identityHashForModel(const fs::path& modelDir) {
 
 } // namespace
 
+// Constructs model selector and initializes UI state.
+// Loads recent models and refreshes model list on construction.
 ModelSelector::ModelSelector()
     : window_open(true),
       selected_model_index(-1),
@@ -442,16 +547,22 @@ ModelSelector::ModelSelector()
             show_column_compatibility(true),
             show_column_identity_hash(true),
             show_column_last_modified(true),
+                filter_compatible_only(false),
+                search_query{0},
             pending_rename_name{0},
             pending_export_path{0},
             import_source_path{0},
             import_target_name{0},
             pending_action_model_index(-1) {
+            loadRecentModels();
     refreshModelList();
 }
 
+// Destructor; default.
 ModelSelector::~ModelSelector() = default;
 
+// Refreshes model list by scanning models directory.
+// Preserves selection by identity hash after refresh.
 void ModelSelector::refreshModelList() {
     const std::string selectedIdentity =
         (selected_model_index >= 0 && selected_model_index < static_cast<int>(models.size()))
@@ -526,6 +637,63 @@ void ModelSelector::refreshModelList() {
     }
 }
 
+// Loads recent models from persistent storage file.
+// Reads up to 16 paths from recent_models.txt.
+void ModelSelector::loadRecentModels() {
+    recent_model_paths.clear();
+    const fs::path path = recentModelsPath();
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return;
+    }
+
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        recent_model_paths.push_back(line);
+        if (recent_model_paths.size() >= 16u) {
+            break;
+        }
+    }
+}
+
+// Saves recent models list to persistent storage.
+// Writes each path on its own line.
+void ModelSelector::saveRecentModels() const {
+    const fs::path path = recentModelsPath();
+    std::ofstream out(path, std::ios::trunc);
+    if (!out.is_open()) {
+        return;
+    }
+    for (const auto& modelPath : recent_model_paths) {
+        out << modelPath << '\n';
+    }
+}
+
+// Records model as recently used.
+// Moves model to front of list, removes duplicates, limits to 8 entries.
+// @param model Model info to record
+void ModelSelector::recordRecentModel(const ModelInfo& model) {
+    if (model.path.empty()) {
+        return;
+    }
+
+    const auto normalized = fs::path(model.path).lexically_normal().string();
+    recent_model_paths.erase(
+        std::remove(recent_model_paths.begin(), recent_model_paths.end(), normalized),
+        recent_model_paths.end());
+    recent_model_paths.insert(recent_model_paths.begin(), normalized);
+    if (recent_model_paths.size() > 8u) {
+        recent_model_paths.resize(8u);
+    }
+    saveRecentModels();
+}
+
+// Renders model selector UI.
+// Displays model table with filtering, sorting, and action buttons.
+// @param available_size Window size for layout
 void ModelSelector::render(ImVec2 available_size) {
     if (!window_open) return;
 
@@ -553,9 +721,44 @@ void ModelSelector::render(ImVec2 available_size) {
         if (ImGui::Button("Refresh", ImVec2(100, 0))) {
             refreshModelList();
         }
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(280.0f);
+        ImGui::InputTextWithHint("##model_search", "Search name/id/author/description/tags", search_query, IM_ARRAYSIZE(search_query));
+        ImGui::SameLine();
+        ImGui::Checkbox("Compatible only", &filter_compatible_only);
         
         ImGui::Separator();
         ImGui::TextDisabled("Data origins: model fields from metadata.json / version.json / model.json; last modified from filesystem metadata; identity hash computed from metadata.json + version.json + model.json + logic.ir.");
+
+        if (!recent_model_paths.empty()) {
+            ImGui::TextDisabled("Recent models:");
+            int shownRecent = 0;
+            for (const auto& recentPath : recent_model_paths) {
+                if (shownRecent >= 5) {
+                    break;
+                }
+                auto it = std::find_if(models.begin(), models.end(), [&](const ModelInfo& m) {
+                    return fs::path(m.path).lexically_normal().string() == recentPath;
+                });
+                if (it == models.end()) {
+                    continue;
+                }
+
+                const int idx = static_cast<int>(std::distance(models.begin(), it));
+                const auto& recent = *it;
+                ImGui::SameLine();
+                if (ImGui::SmallButton(recent.name.c_str())) {
+                    selected_model_index = idx;
+                    if (on_load_model) {
+                        recordRecentModel(recent);
+                        on_load_model(recent);
+                    }
+                }
+                ++shownRecent;
+            }
+            ImGui::NewLine();
+        }
 
         const bool hasSelected = selected_model_index >= 0 && selected_model_index < static_cast<int>(models.size());
         if (hasSelected) {
@@ -564,12 +767,16 @@ void ModelSelector::render(ImVec2 available_size) {
             ImGui::SameLine();
             if (ImGui::Button("Load")) {
                 if (on_load_model) {
+                    recordRecentModel(selected);
                     on_load_model(selected);
                 }
             }
             ImGui::SameLine();
             if (ImGui::Button("Edit")) {
-                if (on_edit_model) on_edit_model(selected);
+                if (on_edit_model) {
+                    recordRecentModel(selected);
+                    on_edit_model(selected);
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button("Duplicate")) {
@@ -620,6 +827,25 @@ void ModelSelector::render(ImVec2 available_size) {
             (show_column_compatibility ? 1 : 0) +
             (show_column_identity_hash ? 1 : 0) +
             (show_column_last_modified ? 1 : 0);
+
+        std::vector<int> filtered_indices;
+        filtered_indices.reserve(models.size());
+        const std::string queryLower = toLowerCopy(std::string(search_query));
+        for (int i = 0; i < static_cast<int>(models.size()); ++i) {
+            const auto& model = models[static_cast<std::size_t>(i)];
+            if (filter_compatible_only && model.compatibility != "compatible") {
+                continue;
+            }
+            if (!modelMatchesSearch(model, queryLower)) {
+                continue;
+            }
+            filtered_indices.push_back(i);
+        }
+
+        if (selected_model_index >= 0 &&
+            std::find(filtered_indices.begin(), filtered_indices.end(), selected_model_index) == filtered_indices.end()) {
+            selected_model_index = -1;
+        }
 
         auto renderColumnMenu = [&]() {
             ImGui::TextDisabled("Toggle table columns");
@@ -769,11 +995,27 @@ void ModelSelector::render(ImVec2 available_size) {
                     }
 
                     sortSpecs->SpecsDirty = false;
+
+                    filtered_indices.clear();
+                    for (int i = 0; i < static_cast<int>(models.size()); ++i) {
+                        const auto& model = models[static_cast<std::size_t>(i)];
+                        if (filter_compatible_only && model.compatibility != "compatible") {
+                            continue;
+                        }
+                        if (!modelMatchesSearch(model, queryLower)) {
+                            continue;
+                        }
+                        filtered_indices.push_back(i);
+                    }
                 }
             }
-            
-            for (int i = 0; i < static_cast<int>(models.size()); ++i) {
-                const auto& model = models[i];
+
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(filtered_indices.size()));
+            while (clipper.Step()) {
+                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                    const int i = filtered_indices[static_cast<std::size_t>(row)];
+                    const auto& model = models[static_cast<std::size_t>(i)];
                 ImGui::TableNextRow();
                 
                 // Name column
@@ -782,6 +1024,7 @@ void ModelSelector::render(ImVec2 available_size) {
                 if (ImGui::Selectable(model.name.c_str(), row_selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
                     selected_model_index = i;
                     if (ImGui::IsMouseDoubleClicked(0) && on_edit_model) {
+                        recordRecentModel(model);
                         on_edit_model(model);
                     }
                 }
@@ -822,6 +1065,7 @@ void ModelSelector::render(ImVec2 available_size) {
 
                 // Last modified column
                 if (show_column_last_modified) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", formatFileTime(model.last_modified).c_str()); }
+                }
             }
             
             ImGui::EndTable();

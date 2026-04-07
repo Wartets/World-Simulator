@@ -17,6 +17,9 @@ namespace {
 
 using json = nlohmann::json;
 
+// Converts string to lowercase for case-insensitive comparison.
+// @param value Input string
+// @return Lowercase version
 std::string toLower(std::string value) {
         std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
                 return static_cast<char>(std::tolower(c));
@@ -24,6 +27,10 @@ std::string toLower(std::string value) {
         return value;
 }
 
+// Checks if haystack contains needle (case-insensitive).
+// @param haystack String to search in
+// @param needle String to search for
+// @return true if needle found in haystack
 bool containsCaseInsensitive(const std::string& haystack, const std::string& needle) {
         if (needle.empty()) {
                 return true;

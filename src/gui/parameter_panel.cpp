@@ -6,6 +6,11 @@
 
 namespace ws::gui {
 
+// Saves parameter preset to JSON file.
+// @param preset Parameter preset to serialize
+// @param outputPath Output file path
+// @param message Status message on success/failure
+// @return true if preset saved successfully
 bool saveParameterPreset(const ParameterPreset& preset, const std::filesystem::path& outputPath, std::string& message) {
     std::error_code ec;
     const auto parent = outputPath.parent_path();

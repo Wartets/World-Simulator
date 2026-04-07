@@ -8,6 +8,11 @@
 
 namespace ws::gui {
 
+// Evaluates a render condition against a sample value.
+// Supports comparison operators: greater, less, equal, range checks.
+// @param cond Render condition with operator and threshold values
+// @param sample Value to test against condition
+// @return true if condition is satisfied
 bool evaluateCondition(const RenderCondition& cond, const float sample) {
     switch (cond.op) {
         case RenderRuleOp::Greater:      return sample > cond.value;
@@ -26,6 +31,12 @@ bool evaluateCondition(const RenderCondition& cond, const float sample) {
     }
 }
 
+// Applies blend mode between base and layer RGBA colors.
+// Supports: replace, add, multiply, overlay, screen blending.
+// @param base Base color array [R, G, B, A]
+// @param layer Layer color array [R, G, B, A]
+// @param mode Blend mode selector
+// @return Blended color result
 std::array<float, 4> applyBlend(const std::array<float, 4>& base,
                                 const std::array<float, 4>& layer,
                                 const RenderBlendMode mode) {
@@ -64,6 +75,12 @@ std::array<float, 4> applyBlend(const std::array<float, 4>& base,
     return out;
 }
 
+// Evaluates sequence of render rules against sample value.
+// Rules are evaluated in order, each potentially modifying the color.
+// @param rules Vector of render rules to apply
+// @param sample Input sample value
+// @param fallback Default color if no rules match
+// @return Final RGBA color after all rules applied
 std::array<float, 4> evaluateRules(
     const std::vector<RenderRule>& rules,
     const float sample,
@@ -80,6 +97,11 @@ std::array<float, 4> evaluateRules(
     return color;
 }
 
+// Saves render preset to text file in key-value format.
+// @param preset Render preset to serialize
+// @param filePath Output file path
+// @param message Status message on success/failure
+// @return true if preset saved successfully
 bool saveRenderPreset(const RenderPreset& preset, const std::string& filePath, std::string& message) {
     std::ofstream out(filePath, std::ios::trunc);
     if (!out.is_open()) {
@@ -106,6 +128,11 @@ bool saveRenderPreset(const RenderPreset& preset, const std::string& filePath, s
     return true;
 }
 
+// Loads render preset from text file.
+// @param filePath Input file path
+// @param outPreset Output render preset
+// @param message Status message on success/failure
+// @return true if preset loaded successfully
 bool loadRenderPreset(const std::string& filePath, RenderPreset& outPreset, std::string& message) {
     std::ifstream in(filePath);
     if (!in.is_open()) {
@@ -160,6 +187,9 @@ bool loadRenderPreset(const std::string& filePath, RenderPreset& outPreset, std:
     return true;
 }
 
+// Lists all render preset files in a directory.
+// @param directoryPath Directory to scan
+// @return Sorted vector of file paths
 std::vector<std::string> listRenderPresetFiles(const std::string& directoryPath) {
     std::vector<std::string> files;
     std::error_code ec;

@@ -10,6 +10,10 @@
 namespace ws::gui {
 namespace {
 
+// Merges field values with optional sparse overlay into unified vector.
+// @param field Source field payload
+// @param includeSparseOverlay Whether to include sparse overlay values
+// @return Merged vector with NaN for invalid cells
 std::vector<float> mergedFieldValues(const StateStoreSnapshot::FieldPayload& field, const bool includeSparseOverlay) {
     const std::size_t n = field.values.size();
     std::vector<float> merged(n, std::numeric_limits<float>::quiet_NaN());
@@ -31,6 +35,11 @@ std::vector<float> mergedFieldValues(const StateStoreSnapshot::FieldPayload& fie
     return merged;
 }
 
+// Computes min and max of finite values in vector.
+// Falls back to [0, 1] if no finite values found.
+// @param values Input vector
+// @param outMin Output minimum
+// @param outMax Output maximum
 void minMaxFinite(const std::vector<float>& values, float& outMin, float& outMax) {
     outMin = std::numeric_limits<float>::infinity();
     outMax = -std::numeric_limits<float>::infinity();
@@ -49,6 +58,10 @@ void minMaxFinite(const std::vector<float>& values, float& outMin, float& outMax
     }
 }
 
+// Computes quantile of finite values in vector.
+// @param values Input vector
+// @param q Quantile to compute [0, 1]
+// @return Quantile value, 0.5 if no finite values
 float quantileFinite(const std::vector<float>& values, const float q) {
     std::vector<float> finite;
     finite.reserve(values.size());
@@ -67,11 +80,19 @@ float quantileFinite(const std::vector<float>& values, const float q) {
     return finite[idx];
 }
 
+// Creates lowercase copy of string.
+// @param value Input string
+// @return Lowercase version
 std::string toLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return value;
 }
 
+// Checks if field has any of the specified tags.
+// @param fieldName Field name to check
+// @param desiredTags Tags to match against
+// @param fieldDisplayTags Map of field names to tag lists
+// @return true if field has matching tag
 bool fieldHasTag(
     const std::string& fieldName,
     const std::initializer_list<const char*> desiredTags,
@@ -93,6 +114,11 @@ bool fieldHasTag(
     return false;
 }
 
+// Finds field index by matching tags from fieldDisplayTags.
+// @param fields Vector of field payloads
+// @param fieldDisplayTags Map of field names to tag lists
+// @param preferredTags Tags to search for in order
+// @return Index of first matching field, -1 if not found
 int findFieldIndexByTag(
     const std::vector<StateStoreSnapshot::FieldPayload>& fields,
     const std::unordered_map<std::string, std::vector<std::string>>& fieldDisplayTags,
@@ -106,6 +132,18 @@ int findFieldIndexByTag(
     return -1;
 }
 
+// Core display buffer builder for all display types.
+// Handles scalar fields and composite terrain/water/humidity visualizations.
+// @param primary Primary field values
+// @param terrain Terrain/elevation field
+// @param water Water/moisture field
+// @param humidity Humidity field
+// @param windU Wind U component
+// @param windV Wind V component
+// @param displayType Display type selector
+// @param params Display manager parameters
+// @param label Field label
+// @return Configured display buffer
 DisplayBuffer buildDisplayBufferCore(
     const std::vector<float>& primary,
     const std::vector<float>& terrain,
@@ -227,6 +265,9 @@ DisplayBuffer buildDisplayBufferCore(
 
 } // namespace
 
+// Returns human-readable label for display type.
+// @param type Display type enum
+// @return Static string label
 const char* displayTypeLabel(const DisplayType type) {
     switch (type) {
         case DisplayType::ScalarField: return "Scalar Field";
@@ -239,6 +280,15 @@ const char* displayTypeLabel(const DisplayType type) {
     }
 }
 
+// Builds display buffer from state store snapshot.
+// Automatically detects terrain, water, humidity, and wind fields by tags.
+// @param snapshot State store snapshot with fields
+// @param primaryFieldIndex Index of primary field to display
+// @param displayType Visualization type
+// @param includeSparseOverlay Include sparse overlay in display
+// @param params Display parameters
+// @param fieldDisplayTags Map of field names to display tags
+// @return Display buffer ready for rendering
 DisplayBuffer buildDisplayBufferFromSnapshot(
     const StateStoreSnapshot& snapshot,
     const int primaryFieldIndex,
@@ -297,6 +347,14 @@ DisplayBuffer buildDisplayBufferFromSnapshot(
     return buildDisplayBufferCore(primary, terrain, water, humidity, windU, windV, displayType, params, fields[static_cast<std::size_t>(clampedPrimary)].spec.name);
 }
 
+// Builds display buffer from terrain and water inputs for preview.
+// Synthesizes humidity from water and elevation.
+// @param terrain Terrain elevation values
+// @param water Water/moisture values
+// @param displayType Visualization type
+// @param params Display parameters
+// @param label Field label
+// @return Display buffer for preview
 DisplayBuffer buildDisplayBufferFromTerrain(
     const std::vector<float>& terrain,
     const std::vector<float>& water,
@@ -333,6 +391,18 @@ DisplayBuffer buildDisplayBufferFromTerrain(
         label == nullptr ? "preview" : label);
 }
 
+// Builds display buffer from fully specified preview components.
+// Provides complete control over all input fields.
+// @param primary Primary display field
+// @param terrain Terrain/elevation field
+// @param water Water field
+// @param humidity Humidity field
+// @param windU Wind U component
+// @param windV Wind V component
+// @param displayType Visualization type
+// @param params Display parameters
+// @param label Field label
+// @return Display buffer
 DisplayBuffer buildDisplayBufferFromPreviewComponents(
     const std::vector<float>& primary,
     const std::vector<float>& terrain,

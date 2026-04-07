@@ -5,6 +5,10 @@
 
 namespace ws::gui::main_window::detail {
 
+// Generates Turbo-like colormap color for normalized value.
+// Implements perceptually uniform color gradient.
+// @param t01 Normalized value in range [0, 1]
+// @return ImGui packed color
 ImU32 colormapTurboLike(const float t01) {
     const float t = std::clamp(t01, 0.0f, 1.0f);
     const float r = std::clamp(1.5f * t, 0.0f, 1.0f);
@@ -17,6 +21,9 @@ ImU32 colormapTurboLike(const float t01) {
         255);
 }
 
+// Generates grayscale color for normalized value.
+// @param t01 Normalized value in range [0, 1]
+// @return ImGui packed grayscale color
 ImU32 colormapGrayscale(const float t01) {
     const float t = std::clamp(t01, 0.0f, 1.0f);
     const int c = static_cast<int>(t * 255.0f);

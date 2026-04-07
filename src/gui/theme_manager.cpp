@@ -2,11 +2,15 @@
 
 namespace ws::gui {
 
+// Constructs theme manager with built-in themes.
+// Initializes default light theme on construction.
 ThemeManager::ThemeManager() : currentTheme_(nullptr), accessibilityMode_(false) {
     initializeBuiltInThemes();
     setTheme(ThemePreset::Light);
 }
 
+// Gets list of available theme names.
+// @return Reference to vector of theme name strings
 const std::vector<std::string>& ThemeManager::getAvailableThemes() const {
     static std::vector<std::string> names;
     if (names.empty()) {
@@ -17,10 +21,14 @@ const std::vector<std::string>& ThemeManager::getAvailableThemes() const {
     return names;
 }
 
+// Gets currently active theme.
+// @return Reference to current theme
 const Theme& ThemeManager::getCurrentTheme() const {
     return *currentTheme_;
 }
 
+// Sets theme by preset enum.
+// @param preset Theme preset to apply
 void ThemeManager::setTheme(ThemePreset preset) {
     std::string name;
     switch (preset) {
@@ -46,6 +54,8 @@ void ThemeManager::setTheme(ThemePreset preset) {
     setTheme(name);
 }
 
+// Sets theme by name string.
+// @param name Theme name to apply
 void ThemeManager::setTheme(const std::string& name) {
     auto it = themes_.find(name);
     if (it != themes_.end()) {
@@ -54,6 +64,9 @@ void ThemeManager::setTheme(const std::string& name) {
     }
 }
 
+// Creates custom theme from color palette.
+// @param name Name for custom theme
+// @param palette Color palette to use
 void ThemeManager::createTheme(const std::string& name, const ColorPalette& palette) {
     Theme theme;
     theme.name = name;

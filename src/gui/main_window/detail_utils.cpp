@@ -6,6 +6,10 @@
 
 namespace ws::gui::main_window::detail {
 
+// Merges field values with optional sparse overlay.
+// @param field Source field payload
+// @param includeSparseOverlay Whether to include sparse overlay
+// @return Merged values vector
 std::vector<float> mergedFieldValues(const StateStoreSnapshot::FieldPayload& field, const bool includeSparseOverlay) {
     const std::size_t n = field.values.size();
     std::vector<float> merged(n, std::numeric_limits<float>::quiet_NaN());
@@ -27,6 +31,10 @@ std::vector<float> mergedFieldValues(const StateStoreSnapshot::FieldPayload& fie
     return merged;
 }
 
+// Computes min and max of finite values.
+// @param values Input values
+// @param outMin Output minimum
+// @param outMax Output maximum
 void minMaxFinite(const std::vector<float>& values, float& outMin, float& outMax) {
     outMin = std::numeric_limits<float>::infinity();
     outMax = -std::numeric_limits<float>::infinity();

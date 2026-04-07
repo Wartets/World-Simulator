@@ -8,6 +8,8 @@
 namespace ws::gui {
 namespace {
 
+// Predefined color tints for section headers (10 variations).
+// Each tint is a subtle RGBA adjustment for visual differentiation.
 constexpr std::array<ImVec4, 10> kSectionTints = {
     ImVec4(0.25f, 0.35f, 0.55f, 0.12f),
     ImVec4(0.20f, 0.45f, 0.45f, 0.12f),
@@ -21,6 +23,10 @@ constexpr std::array<ImVec4, 10> kSectionTints = {
     ImVec4(0.42f, 0.28f, 0.40f, 0.12f),
 };
 
+// Adds tint color to base color with clamping.
+// @param base Base color to tint
+// @param tint Tint to apply
+// @return Resulting color with tint applied
 ImVec4 addColors(const ImVec4& base, const ImVec4& tint) {
     return ImVec4(
         std::clamp(base.x + tint.x, 0.0f, 1.0f),
@@ -31,6 +37,11 @@ ImVec4 addColors(const ImVec4& base, const ImVec4& tint) {
 
 } // namespace
 
+// Renders primary action button with branded styling.
+// Uses blue color scheme for primary actions.
+// @param label Button label text
+// @param size Optional button size
+// @return true if button was clicked
 bool PrimaryButton(const char* label, const ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(56, 96, 172, 220));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(72, 118, 205, 240));
@@ -40,6 +51,11 @@ bool PrimaryButton(const char* label, const ImVec2 size) {
     return pressed;
 }
 
+// Renders secondary action button with muted styling.
+// Uses dark gray color scheme for secondary actions.
+// @param label Button label text
+// @param size Optional button size
+// @return true if button was clicked
 bool SecondaryButton(const char* label, const ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(52, 58, 74, 180));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(68, 74, 94, 220));
@@ -49,6 +65,15 @@ bool SecondaryButton(const char* label, const ImVec2 size) {
     return pressed;
 }
 
+// Renders paired slider and input for float value.
+// Combines slider with direct numeric input for precise control.
+// @param label Label text for control
+// @param value Pointer to float value
+// @param minValue Minimum slider value
+// @param maxValue Maximum slider value
+// @param format Printf-style format string
+// @param inputWidth Width of input field in pixels
+// @return true if value was modified
 bool NumericSliderPair(const char* label, float* value, const float minValue, const float maxValue, const char* format, const float inputWidth) {
     const float totalWidth = ImGui::GetContentRegionAvail().x;
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
@@ -68,6 +93,14 @@ bool NumericSliderPair(const char* label, float* value, const float minValue, co
     return changed;
 }
 
+// Renders paired slider and input for integer value.
+// @param label Label text for control
+// @param value Pointer to integer value
+// @param minValue Minimum slider value
+// @param maxValue Maximum slider value
+// @param format Printf-style format string
+// @param inputWidth Width of input field in pixels
+// @return true if value was modified
 bool NumericSliderPairInt(const char* label, int* value, const int minValue, const int maxValue, const char* format, const float inputWidth) {
     const float totalWidth = ImGui::GetContentRegionAvail().x;
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
@@ -87,6 +120,9 @@ bool NumericSliderPairInt(const char* label, int* value, const int minValue, con
     return changed;
 }
 
+// Shows delayed tooltip on hover (short delay).
+// Displays tooltip after brief hover to avoid visual clutter.
+// @param text Tooltip text content
 void DelayedTooltip(const char* text) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
         ImGui::BeginTooltip();
@@ -97,6 +133,10 @@ void DelayedTooltip(const char* text) {
     }
 }
 
+// Renders section header with optional subtitle.
+// Displays title prominently with secondary subtitle below.
+// @param title Main header text
+// @param subtitle Optional secondary text
 void SectionHeader(const char* title, const char* subtitle) {
     if (title != nullptr && title[0] != '\0') {
         ImGui::TextUnformatted(title);
@@ -106,6 +146,10 @@ void SectionHeader(const char* title, const char* subtitle) {
     }
 }
 
+// Renders empty state placeholder card.
+// Displays centered message for empty content areas.
+// @param title Main message title
+// @param body Optional detailed message
 void EmptyStateCard(const char* title, const char* body) {
     ImGui::BeginChild("##empty_state", ImVec2(-1.0f, 0.0f), true);
     ImGui::Spacing();
@@ -120,12 +164,18 @@ void EmptyStateCard(const char* title, const char* body) {
     ImGui::EndChild();
 }
 
+// Renders labeled hint text.
+// Displays disabled/hint text for form guidance.
+// @param text Hint text to display
 void LabeledHint(const char* text) {
     if (text != nullptr && text[0] != '\0') {
         ImGui::TextDisabled("%s", text);
     }
 }
 
+// Pushes section color tint to ImGui stack.
+// Applies predefined color variation to headers/collapsibles.
+// @param index Section index for color selection
 void PushSectionTint(const int index) {
     const ImVec4 tint = kSectionTints[static_cast<std::size_t>(std::abs(index) % static_cast<int>(kSectionTints.size()))];
     const auto& colors = ImGui::GetStyle().Colors;
@@ -135,10 +185,16 @@ void PushSectionTint(const int index) {
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, addColors(colors[ImGuiCol_HeaderActive], tint));
 }
 
+// Pops section color tint from ImGui stack.
+// Must be called after PushSectionTint.
 void PopSectionTint() {
     ImGui::PopStyleColor(3);
 }
 
+// Renders status badge with active/inactive styling.
+// Shows colored indicator with label (green=active, red=inactive).
+// @param label Badge text
+// @param active true for active (green), false for inactive (red)
 void StatusBadge(const char* label, const bool active) {
     const ImVec2 min = ImGui::GetCursorScreenPos();
     const ImVec2 textSize = ImGui::CalcTextSize(label);

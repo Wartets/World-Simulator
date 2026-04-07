@@ -6,6 +6,18 @@
 
 namespace ws::gui {
 
+// Renders vector field as arrow glyphs on ImDrawList.
+// Draws arrows at stride intervals, scaled by magnitude with arrowheads.
+// @param drawList ImGui draw list to render onto
+// @param clipMin Clipping rectangle minimum
+// @param clipMax Clipping rectangle maximum
+// @param contentMin Content area minimum (grid origin)
+// @param cellW Width of each cell in pixels
+// @param cellH Height of each cell in pixels
+// @param grid Grid specification
+// @param xValues X-component of vector field
+// @param yValues Y-component of vector field
+// @param config Vector rendering configuration
 void VectorRenderer::draw(ImDrawList& drawList,
                           const ImVec2 clipMin,
                           const ImVec2 clipMax,
