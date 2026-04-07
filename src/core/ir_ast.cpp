@@ -9,6 +9,7 @@ YY_BUFFER_STATE yy_scan_string(const char * str);
 void yy_delete_buffer(YY_BUFFER_STATE buffer);
 
 extern int yyparse();
+extern int yylineno;
 extern ws::ir::Program* g_program;
 
 ws::ir::Program* g_program = nullptr;
@@ -19,8 +20,17 @@ namespace ws::ir {
 // Throws std::runtime_error if parsing fails.
 Program parse_ir(const std::string& source) {
     g_program = nullptr;
-    
-    YY_BUFFER_STATE state = yy_scan_string(source.c_str());
+    yylineno = 1;
+
+    std::string normalized = source;
+    if (normalized.size() >= 3 &&
+        static_cast<unsigned char>(normalized[0]) == 0xEF &&
+        static_cast<unsigned char>(normalized[1]) == 0xBB &&
+        static_cast<unsigned char>(normalized[2]) == 0xBF) {
+        normalized.erase(0, 3);
+    }
+
+    YY_BUFFER_STATE state = yy_scan_string(normalized.c_str());
     int result = yyparse();
     yy_delete_buffer(state);
     

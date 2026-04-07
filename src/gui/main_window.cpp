@@ -48,7 +48,9 @@ enum class AppState        { ModelSelector, ModelEditor, SessionManager, NewWorl
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <iomanip>
 #include <limits>
+#include <optional>
 #include <mutex>
 #include <unordered_map>
 #include <sstream>
@@ -60,8 +62,247 @@ enum class AppState        { ModelSelector, ModelEditor, SessionManager, NewWorl
 #include <fstream>
 #include <random>
 
+#ifdef _WIN32
+#include <Windows.h>
+#include <commdlg.h>
+#endif
+
 namespace ws::gui {
 namespace {
+
+namespace fs = std::filesystem;
+
+struct PersistedWindowState {
+    int x = 100;
+    int y = 100;
+    int width = 1280;
+    int height = 720;
+    bool maximized = false;
+    int monitorIndex = 0;
+    bool loaded = false;
+};
+
+fs::path resolveWorkspaceRoot() {
+    std::error_code ec;
+    fs::path current = fs::current_path(ec);
+    if (ec) {
+        return fs::path{"."};
+    }
+
+    for (fs::path probe = current; !probe.empty(); probe = probe.parent_path()) {
+        if (fs::exists(probe / "CMakeLists.txt")) {
+            return probe;
+        }
+        if (probe == probe.parent_path()) {
+            break;
+        }
+    }
+
+    return current;
+}
+
+fs::path windowStatePath() {
+    const fs::path root = resolveWorkspaceRoot() / "profiles";
+    std::error_code ec;
+    fs::create_directories(root, ec);
+    return root / "window_state.cfg";
+}
+
+#ifdef _WIN32
+std::wstring utf8ToWide(const std::string& value) {
+    if (value.empty()) {
+        return {};
+    }
+
+    const int size = MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, nullptr, 0);
+    if (size <= 0) {
+        return {};
+    }
+
+    std::wstring output(static_cast<std::size_t>(size - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, output.data(), size);
+    return output;
+}
+
+std::optional<fs::path> pickNativeFilePath(
+    const wchar_t* dialogTitle,
+    const wchar_t* filter,
+    const fs::path& defaultPath,
+    const bool saveDialog) {
+    wchar_t fileBuffer[MAX_PATH] = {};
+    std::wstring initialFile = utf8ToWide(defaultPath.filename().string());
+    if (!initialFile.empty()) {
+        const auto copyCount = std::min<std::size_t>(initialFile.size(), static_cast<std::size_t>(MAX_PATH - 1));
+        std::wmemcpy(fileBuffer, initialFile.c_str(), copyCount);
+        fileBuffer[copyCount] = L'\0';
+    }
+
+    const std::wstring initialDir = utf8ToWide(defaultPath.parent_path().string());
+
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = nullptr;
+    ofn.lpstrTitle = dialogTitle;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = fileBuffer;
+    ofn.nMaxFile = static_cast<DWORD>(std::size(fileBuffer));
+    ofn.lpstrInitialDir = initialDir.empty() ? nullptr : initialDir.c_str();
+    ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+    if (saveDialog) {
+        ofn.Flags |= OFN_OVERWRITEPROMPT;
+        if (!GetSaveFileNameW(&ofn)) {
+            return std::nullopt;
+        }
+    } else {
+        ofn.Flags |= OFN_FILEMUSTEXIST;
+        if (!GetOpenFileNameW(&ofn)) {
+            return std::nullopt;
+        }
+    }
+
+    return fs::path(fileBuffer);
+}
+#else
+std::optional<fs::path> pickNativeFilePath(
+    const wchar_t*,
+    const wchar_t*,
+    const fs::path&,
+    const bool) {
+    return std::nullopt;
+}
+#endif
+
+bool loadWindowState(PersistedWindowState& state) {
+    std::ifstream in(windowStatePath());
+    if (!in.is_open()) {
+        return false;
+    }
+
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        const std::string key = line.substr(0, eq);
+        const std::string value = line.substr(eq + 1);
+        try {
+            if (key == "x") state.x = std::stoi(value);
+            else if (key == "y") state.y = std::stoi(value);
+            else if (key == "width") state.width = std::stoi(value);
+            else if (key == "height") state.height = std::stoi(value);
+            else if (key == "maximized") state.maximized = (std::stoi(value) != 0);
+            else if (key == "monitor_index") state.monitorIndex = std::stoi(value);
+        } catch (...) {
+        }
+    }
+
+    state.width = std::clamp(state.width, 640, 8192);
+    state.height = std::clamp(state.height, 480, 8192);
+    state.loaded = true;
+    return true;
+}
+
+void clampToMonitorWorkarea(
+    int& x,
+    int& y,
+    int& width,
+    int& height,
+    const int monitorX,
+    const int monitorY,
+    const int monitorW,
+    const int monitorH) {
+    width = std::clamp(width, 640, std::max(640, monitorW));
+    height = std::clamp(height, 480, std::max(480, monitorH));
+    x = std::clamp(x, monitorX, monitorX + std::max(0, monitorW - width));
+    y = std::clamp(y, monitorY, monitorY + std::max(0, monitorH - height));
+}
+
+void applyWindowState(GLFWwindow* window, PersistedWindowState state) {
+    if (window == nullptr || !state.loaded) {
+        return;
+    }
+
+    int monitorCount = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+    if (monitors == nullptr || monitorCount <= 0) {
+        return;
+    }
+
+    state.monitorIndex = std::clamp(state.monitorIndex, 0, monitorCount - 1);
+    GLFWmonitor* monitor = monitors[state.monitorIndex];
+
+    int monitorX = 0;
+    int monitorY = 0;
+    int monitorW = 0;
+    int monitorH = 0;
+    glfwGetMonitorWorkarea(monitor, &monitorX, &monitorY, &monitorW, &monitorH);
+    if (monitorW <= 0 || monitorH <= 0) {
+        monitor = glfwGetPrimaryMonitor();
+        glfwGetMonitorWorkarea(monitor, &monitorX, &monitorY, &monitorW, &monitorH);
+    }
+
+    clampToMonitorWorkarea(state.x, state.y, state.width, state.height, monitorX, monitorY, monitorW, monitorH);
+
+    glfwSetWindowSize(window, state.width, state.height);
+    glfwSetWindowPos(window, state.x, state.y);
+    if (state.maximized) {
+        glfwMaximizeWindow(window);
+    }
+}
+
+void saveWindowState(GLFWwindow* window) {
+    if (window == nullptr) {
+        return;
+    }
+
+    PersistedWindowState state;
+    glfwGetWindowPos(window, &state.x, &state.y);
+    glfwGetWindowSize(window, &state.width, &state.height);
+    state.maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == GLFW_TRUE;
+
+    int monitorCount = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+    state.monitorIndex = 0;
+    if (monitors != nullptr && monitorCount > 0) {
+        const int centerX = state.x + state.width / 2;
+        const int centerY = state.y + state.height / 2;
+        for (int i = 0; i < monitorCount; ++i) {
+            int mx = 0;
+            int my = 0;
+            int mw = 0;
+            int mh = 0;
+            glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
+            if (centerX >= mx && centerX < mx + mw && centerY >= my && centerY < my + mh) {
+                state.monitorIndex = i;
+                break;
+            }
+        }
+    }
+
+    std::ofstream out(windowStatePath(), std::ios::trunc);
+    if (!out.is_open()) {
+        return;
+    }
+
+    out << "x=" << state.x << '\n';
+    out << "y=" << state.y << '\n';
+    out << "width=" << state.width << '\n';
+    out << "height=" << state.height << '\n';
+    out << "maximized=" << (state.maximized ? 1 : 0) << '\n';
+    out << "monitor_index=" << state.monitorIndex << '\n';
+}
+
+const char* appStateLabel(const int stateIndex) {
+    switch (stateIndex) {
+        case 0: return "Model Selector";
+        case 1: return "Model Editor";
+        case 2: return "Session Manager";
+        case 3: return "New World Wizard";
+        case 4: return "Simulation";
+        default: return "Application";
+    }
+}
 
 enum class OverlayIcon { None, Play, Pause };
 
@@ -606,8 +847,12 @@ class MainWindowImpl {
 public:
     int run() {
         if (glfwInit() != GLFW_TRUE) return 1;
+        PersistedWindowState persistedWindowState;
+        loadWindowState(persistedWindowState);
         GLFWwindow* window = createGlfwWindowWithFallback();
         if (!window) { glfwTerminate(); return 1; }
+
+        applyWindowState(window, persistedWindowState);
 
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
@@ -754,9 +999,19 @@ public:
             tickAutoRun();
             consumeSnapshotFromWorker();
 
+            std::string title = std::string("World Simulator - ") + appStateLabel(static_cast<int>(appState_));
+            const std::string worldName = runtime_.activeWorldName();
+            if (!worldName.empty()) {
+                title += " [" + worldName + "]";
+            }
+            glfwSetWindowTitle(window, title.c_str());
+
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
+
+            recordAppStateHistory();
+            handleGlobalKeyboardShortcuts();
 
             uiParameterChangedThisFrame_    = false;
             uiParameterInteractingThisFrame_ = false;
@@ -766,6 +1021,7 @@ public:
             } else if (appState_ == AppState::ModelEditor) {
                 drawModelEditor();
             } else if (appState_ == AppState::Simulation) {
+                drawMainMenuBar();
                 drawViewport();
                 drawDockSpace();
                 drawControlPanel();
@@ -777,6 +1033,10 @@ public:
             } else if (appState_ == AppState::NewWorldWizard) {
                 drawNewWorldWizard();
             }
+
+            recordAppStateHistory();
+            drawShortcutHelpModal();
+            drawToasts();
 
             ImGui::Render();
             int fbW = 0, fbH = 0;
@@ -790,6 +1050,7 @@ public:
 
         stopSimulationWorker();
         stopSnapshotWorker();
+        saveWindowState(window);
         destroyRasterResources();
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
@@ -853,6 +1114,15 @@ private:
     std::string asyncWarningMessage_;
     bool asyncWarningPending_ = false;
 
+    enum class ToastLevel { Info, Warning, Error, Success };
+    struct ToastItem {
+        ToastLevel level = ToastLevel::Info;
+        std::string title;
+        std::string message;
+        double createdSec = 0.0;
+        float durationSec = 4.0f;
+    };
+
     ModelSelector      modelSelector_{};
     ModelEditorWindow  modelEditor_{"Model Editor"};
     AppState           appState_ = AppState::ModelSelector;
@@ -872,6 +1142,26 @@ private:
     VisualizationState   viz_{};
     OverlayState         overlay_{};
     std::vector<std::string> logs_;
+    std::vector<ToastItem> toasts_;
+    std::vector<ToastItem> toastHistory_;
+    std::vector<AppState> appStateHistory_{};
+    int appStateHistoryCursor_ = 0;
+    bool appStateHistoryTraversalInProgress_ = false;
+    bool showShortcutHelpModal_ = false;
+    bool showStopResetConfirm_ = false;
+    bool showCheckpointDeleteConfirm_ = false;
+    bool showWizardResetConfirm_ = false;
+
+    struct DeferredWizardInitialization {
+        bool active = false;
+        std::vector<session_manager::VariableInitializationSetting> pendingSettings;
+        std::size_t nextIndex = 0;
+        int appliedVariableCount = 0;
+        std::uint64_t estimatedWrites = 0;
+        std::chrono::steady_clock::time_point startedAt{};
+        std::vector<std::string> verificationWarnings;
+    };
+    DeferredWizardInitialization deferredWizardInitialization_{};
 
     // snapshot double-buffer
     std::thread       snapshotWorker_;

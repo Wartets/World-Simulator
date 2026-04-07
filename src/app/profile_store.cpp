@@ -58,13 +58,13 @@ std::string ProfileStore::normalizeScopeKey(std::string modelKey) {
 std::filesystem::path ProfileStore::pathFor(const std::string& profileName, const std::string& modelKey) const {
     validateProfileName(profileName);
 
-    const auto scopedModelKey = normalizeScopeKey(modelKey);
-    if (scopedModelKey.empty()) {
-        return rootDirectory_ / (profileName + ".wsprofile");
+    const auto scopedPath = writePathFor(profileName, modelKey);
+    if (std::filesystem::exists(scopedPath)) {
+        return scopedPath;
     }
 
-    const auto scopedPath = rootDirectory_ / scopedModelKey / (profileName + ".wsprofile");
-    if (std::filesystem::exists(scopedPath)) {
+    const auto scopedModelKey = normalizeScopeKey(modelKey);
+    if (scopedModelKey.empty()) {
         return scopedPath;
     }
 
@@ -76,8 +76,19 @@ std::filesystem::path ProfileStore::pathFor(const std::string& profileName, cons
     return scopedPath;
 }
 
+std::filesystem::path ProfileStore::writePathFor(const std::string& profileName, const std::string& modelKey) const {
+    validateProfileName(profileName);
+
+    const auto scopedModelKey = normalizeScopeKey(modelKey);
+    if (scopedModelKey.empty()) {
+        return rootDirectory_ / (profileName + ".wsprofile");
+    }
+
+    return rootDirectory_ / scopedModelKey / (profileName + ".wsprofile");
+}
+
 void ProfileStore::save(const std::string& profileName, const LaunchConfig& config, const std::string& modelKey) const {
-    const auto path = pathFor(profileName, modelKey);
+    const auto path = writePathFor(profileName, modelKey);
 
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

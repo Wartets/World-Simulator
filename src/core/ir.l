@@ -12,6 +12,10 @@ void yyerror(const char* s);
 
 DIGIT    [0-9]
 ID       [a-zA-Z_][a-zA-Z0-9_]*
+EXP      [eE][+-]?{DIGIT}+
+UFLOAT   (({DIGIT}+"."{DIGIT}*)|({DIGIT}*"."{DIGIT}+))({EXP})?|{DIGIT}+{EXP}
+SFLOAT   -?{UFLOAT}
+SINT     -?{DIGIT}+
 
 %%
 
@@ -31,11 +35,21 @@ ID       [a-zA-Z_][a-zA-Z0-9_]*
 "Div"                   { return T_DIV; }
 "Mod"                   { return T_MOD; }
 "And"                   { return T_AND; }
+"Or"                    { return T_OR; }
+"Equal"                 { return T_EQUAL; }
 "Gte"                   { return T_GTE; }
 "Lt"                    { return T_LT; }
+"Min"                   { return T_MIN; }
 "Max"                   { return T_MAX; }
+"Pow"                   { return T_POW; }
+"Abs"                   { return T_ABS; }
 "Sin"                   { return T_SIN; }
+"Cos"                   { return T_COS; }
+"Sqrt"                  { return T_SQRT; }
 "Exp"                   { return T_EXP; }
+"Log"                   { return T_LOG; }
+"Compare"               { return T_COMPARE; }
+"Convert"               { return T_CONVERT; }
 "Constant"              { return T_CONSTANT; }
 "Cast"                  { return T_CAST; }
 "Extract"               { return T_EXTRACT; }
@@ -55,8 +69,8 @@ ID       [a-zA-Z_][a-zA-Z0-9_]*
 ","                     { return T_COMMA; }
 "="                     { return T_ASSIGN; }
 
-{DIGIT}+                { yylval.ival = atoi(yytext); return INT_LIT; }
-{DIGIT}+"."{DIGIT}*     { yylval.fval = atof(yytext); return FLOAT_LIT; }
+{SFLOAT}                { yylval.fval = atof(yytext); return FLOAT_LIT; }
+{SINT}                  { yylval.ival = atoi(yytext); return INT_LIT; }
 
 %[a-zA-Z_0-9]+          { yylval.sval = strdup(yytext); return VAR_ID; }
 \"([^\"\\]|\\.)*\"      { 

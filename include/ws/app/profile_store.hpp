@@ -37,6 +37,8 @@ public:
     [[nodiscard]] std::vector<std::string> list(const std::string& modelKey = {}) const;
     // Returns the file path for a profile.
     [[nodiscard]] std::filesystem::path pathFor(const std::string& profileName, const std::string& modelKey = {}) const;
+    // Returns the canonical write path for a profile without legacy fallback.
+    [[nodiscard]] std::filesystem::path writePathFor(const std::string& profileName, const std::string& modelKey = {}) const;
 
 private:
     // Normalizes the model key for use in file names.

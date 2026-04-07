@@ -8,6 +8,7 @@
 using namespace ws::ir;
 
 extern int yylex();
+extern int yylineno;
 extern void yyerror(const char* s);
 
 extern ws::ir::Program* g_program;
@@ -21,6 +22,19 @@ Type stringToType(const char* str) {
     if (strcmp(str, "vec2") == 0) return Type::Vec2;
     if (strcmp(str, "vec3") == 0) return Type::Vec3;
     return Type::Unknown;
+}
+
+BinaryOp parseCompareOperator(const char* str) {
+    if (str == nullptr) {
+        return BinaryOp::Equal;
+    }
+    if (strcmp(str, "==") == 0) return BinaryOp::Equal;
+    if (strcmp(str, "!=") == 0) return BinaryOp::NotEqual;
+    if (strcmp(str, "<") == 0) return BinaryOp::LessThan;
+    if (strcmp(str, "<=") == 0) return BinaryOp::LessEqual;
+    if (strcmp(str, ">") == 0) return BinaryOp::GreaterThan;
+    if (strcmp(str, ">=") == 0) return BinaryOp::GreaterEqual;
+    return BinaryOp::Equal;
 }
 
 static std::string stripPercentPrefix(const char* text) {
@@ -58,9 +72,10 @@ static std::string stripPercentPrefix(const char* text) {
 %token <ival> INT_LIT
 %token T_GLOBAL T_INTERACTION T_FUNC T_STORE T_LOAD T_GLOBALLOAD
 %token T_LAPLACIAN T_GRADIENT T_CAST T_CLAMP T_SELECT T_EXTRACT T_CONSTANT
+%token T_COMPARE T_CONVERT
 %token T_LPAREN T_RPAREN T_LBRACE T_RBRACE T_COMMA T_ASSIGN T_PERCENT
-%token T_ADD T_SUB T_MUL T_DIV T_MOD T_POW T_MIN T_MAX T_AND T_OR T_GTE T_LT
-%token T_SIN T_COS T_SQRT T_EXP T_LOG
+%token T_ADD T_SUB T_MUL T_DIV T_MOD T_POW T_MIN T_MAX T_AND T_OR T_GTE T_LT T_EQUAL
+%token T_ABS T_SIN T_COS T_SQRT T_EXP T_LOG
 
 %type <prog> program
 %type <gdecl_list> globals
@@ -71,6 +86,7 @@ static std::string stripPercentPrefix(const char* text) {
 %type <stmt> stmt
 %type <expr> expr
 %type <type_val> type
+%type <ival> signed_int
 
 %%
 
@@ -131,6 +147,14 @@ interaction_decl:
         delete $10;
         free($3);
         free($6);
+        $$ = idecl;
+    }
+    | T_INTERACTION ID T_LBRACE stmt_list T_RBRACE {
+        auto* idecl = new InteractionDecl();
+        idecl->id = $2;
+        for (auto* s : *$4) idecl->stmts.emplace_back(s);
+        delete $4;
+        free($2);
         $$ = idecl;
     }
     ;
@@ -203,7 +227,29 @@ expr:
         e->value = $3;
         $$ = e;
     }
+    | T_CONSTANT T_LPAREN INT_LIT T_COMMA type T_RPAREN {
+        auto* e = new ConstantExpr();
+        e->type = $5;
+        e->value = $3;
+        $$ = e;
+    }
+    | T_LOAD T_LPAREN STRING T_RPAREN {
+        auto* e = new LoadExpr();
+        e->field = $3;
+        e->x_offset = 0;
+        e->y_offset = 0;
+        free($3);
+        $$ = e;
+    }
     | T_LOAD T_LPAREN STRING T_COMMA INT_LIT T_COMMA INT_LIT T_RPAREN {
+        auto* e = new LoadExpr();
+        e->field = $3;
+        e->x_offset = $5;
+        e->y_offset = $7;
+        free($3);
+        $$ = e;
+    }
+    | T_LOAD T_LPAREN STRING T_COMMA signed_int T_COMMA signed_int T_RPAREN {
         auto* e = new LoadExpr();
         e->field = $3;
         e->x_offset = $5;
@@ -252,6 +298,13 @@ expr:
         e->right.reset($5);
         $$ = e;
     }
+    | T_POW T_LPAREN expr T_COMMA expr T_RPAREN {
+        auto* e = new BinaryExpr();
+        e->op = BinaryOp::Pow;
+        e->left.reset($3);
+        e->right.reset($5);
+        $$ = e;
+    }
     | T_MAX T_LPAREN expr T_COMMA expr T_RPAREN {
         auto* e = new BinaryExpr();
         e->op = BinaryOp::Max;
@@ -269,6 +322,20 @@ expr:
     | T_AND T_LPAREN expr T_COMMA expr T_RPAREN {
         auto* e = new BinaryExpr();
         e->op = BinaryOp::And;
+        e->left.reset($3);
+        e->right.reset($5);
+        $$ = e;
+    }
+    | T_OR T_LPAREN expr T_COMMA expr T_RPAREN {
+        auto* e = new BinaryExpr();
+        e->op = BinaryOp::Or;
+        e->left.reset($3);
+        e->right.reset($5);
+        $$ = e;
+    }
+    | T_EQUAL T_LPAREN expr T_COMMA expr T_RPAREN {
+        auto* e = new BinaryExpr();
+        e->op = BinaryOp::Equal;
         e->left.reset($3);
         e->right.reset($5);
         $$ = e;
@@ -293,13 +360,43 @@ expr:
         e->operand.reset($3);
         $$ = e;
     }
+    | T_ABS T_LPAREN expr T_RPAREN {
+        auto* e = new UnaryExpr();
+        e->op = UnaryOp::Abs;
+        e->operand.reset($3);
+        $$ = e;
+    }
+    | T_COS T_LPAREN expr T_RPAREN {
+        auto* e = new UnaryExpr();
+        e->op = UnaryOp::Cos;
+        e->operand.reset($3);
+        $$ = e;
+    }
+    | T_SQRT T_LPAREN expr T_RPAREN {
+        auto* e = new UnaryExpr();
+        e->op = UnaryOp::Sqrt;
+        e->operand.reset($3);
+        $$ = e;
+    }
     | T_EXP T_LPAREN expr T_RPAREN {
         auto* e = new UnaryExpr();
         e->op = UnaryOp::Exp;
         e->operand.reset($3);
         $$ = e;
     }
+    | T_LOG T_LPAREN expr T_RPAREN {
+        auto* e = new UnaryExpr();
+        e->op = UnaryOp::Log;
+        e->operand.reset($3);
+        $$ = e;
+    }
     | T_CAST T_LPAREN expr T_COMMA type T_RPAREN {
+        auto* e = new CastExpr();
+        e->expr.reset($3);
+        e->target_type = $5;
+        $$ = e;
+    }
+    | T_CONVERT T_LPAREN expr T_COMMA type T_RPAREN {
         auto* e = new CastExpr();
         e->expr.reset($3);
         e->target_type = $5;
@@ -338,6 +435,14 @@ expr:
         free($3);
         $$ = e;
     }
+    | T_COMPARE T_LPAREN expr T_COMMA expr T_COMMA STRING T_RPAREN {
+        auto* e = new BinaryExpr();
+        e->op = parseCompareOperator($7);
+        e->left.reset($3);
+        e->right.reset($5);
+        free($7);
+        $$ = e;
+    }
     ;
 
 type:
@@ -345,10 +450,20 @@ type:
         $$ = stringToType($1);
         free($1);
     }
+    | STRING {
+        $$ = stringToType($1);
+        free($1);
+    }
+    ;
+
+signed_int:
+    INT_LIT {
+        $$ = $1;
+    }
     ;
 
 %%
 
 void yyerror(const char* s) {
-    std::cerr << "IR Parse Error: " << s << std::endl;
+    std::cerr << "IR Parse Error [line " << yylineno << "]: " << s << std::endl;
 }

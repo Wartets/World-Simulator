@@ -113,6 +113,8 @@ public:
     [[nodiscard]] std::filesystem::path checkpointPathFor(const std::string& worldName, const std::string& modelKey) const;
     // Returns the display preferences path for a world.
     [[nodiscard]] std::filesystem::path displayPrefsPathFor(const std::string& worldName, const std::string& modelKey) const;
+    // Returns the canonical checkpoint write path without legacy fallback.
+    [[nodiscard]] std::filesystem::path writeCheckpointPathFor(const std::string& worldName, const std::string& modelKey) const;
 
     // Checks if a world exists.
     [[nodiscard]] bool worldExists(const std::string& worldName, const std::string& modelKey) const;
@@ -129,6 +131,10 @@ private:
     [[nodiscard]] std::filesystem::path scopedProfileRoot(const std::string& modelKey) const;
     // Returns the checkpoint root for a model scope.
     [[nodiscard]] std::filesystem::path scopedCheckpointRoot(const std::string& modelKey) const;
+    // Returns the canonical profile write path for a model scope.
+    [[nodiscard]] std::filesystem::path writeProfilePathFor(const std::string& worldName, const std::string& modelKey) const;
+    // Returns the canonical display-preferences write path for a model scope.
+    [[nodiscard]] std::filesystem::path writeDisplayPrefsPathFor(const std::string& worldName, const std::string& modelKey) const;
 
     // Copies a file if it exists.
     bool copyFileIfExists(

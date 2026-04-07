@@ -86,6 +86,9 @@ struct PanelState {
     char profileName[128] = "baseline";    // Active profile name.
     char summaryVariable[128] = "";        // Variable for summary display.
     char checkpointLabel[128] = "quick";   // Checkpoint label.
+    char checkpointSelectedLabel[128] = ""; // Selected checkpoint label.
+    char checkpointRenameTarget[128] = "";  // Checkpoint rename target.
+    char checkpointDeleteLabel[128] = "";    // Checkpoint delete target.
 
     // Parameter Controls
     char parameterPresetName[128] = "default_runtime";  // Parameter preset name.

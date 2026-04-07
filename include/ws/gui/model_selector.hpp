@@ -79,6 +79,8 @@ private:
     bool show_column_compatibility;
     bool show_column_identity_hash;
     bool show_column_last_modified;
+    bool filter_compatible_only;
+    char search_query[256];
     char pending_rename_name[256];
     char pending_export_path[512];
     char import_source_path[512];
@@ -87,6 +89,7 @@ private:
     
     // Model data
     std::vector<ModelInfo> models;
+    std::vector<std::string> recent_model_paths;
     
     // UI helpers
     void renderNewModelDialog();
@@ -94,6 +97,9 @@ private:
     void renderRenameDialog();
     void renderExportDialog();
     void renderDeleteConfirmDialog();
+    void loadRecentModels();
+    void saveRecentModels() const;
+    void recordRecentModel(const ModelInfo& model);
 };
 
 } // namespace ws::gui

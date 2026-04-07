@@ -72,7 +72,7 @@ func partition_runoff_and_infiltration() {
     %infiltration = Mul(%rain, %one_minus_runoff)
 
     %evap_mass = Mul(0.00000025, %latent)
-    %soil_tendency = Sub(infiltration, %evap_mass)
+    %soil_tendency = Sub(%infiltration, %evap_mass)
     %soil_next = Clamp(Add(%soil, Mul(%soil_tendency, %dt)), 0.0, 1.0)
 
     %tau_safe = Max(%tau, 1.0)

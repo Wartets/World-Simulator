@@ -1,6 +1,129 @@
 #ifdef WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT
 
+// Records current app state to history stack.
+// Trims forward history when new state is recorded during navigation.
+void recordAppStateHistory() {
+    if (appStateHistory_.empty()) {
+        appStateHistory_.push_back(appState_);
+        appStateHistoryCursor_ = 0;
+        return;
+    }
+
+    if (appStateHistoryTraversalInProgress_) {
+        appStateHistoryTraversalInProgress_ = false;
+        return;
+    }
+
+    const int clampedCursor = std::clamp(appStateHistoryCursor_, 0, static_cast<int>(appStateHistory_.size()) - 1);
+    appStateHistoryCursor_ = clampedCursor;
+    if (appStateHistory_[static_cast<std::size_t>(appStateHistoryCursor_)] == appState_) {
+        return;
+    }
+
+    if (appStateHistoryCursor_ + 1 < static_cast<int>(appStateHistory_.size())) {
+        appStateHistory_.erase(
+            appStateHistory_.begin() + static_cast<std::ptrdiff_t>(appStateHistoryCursor_ + 1),
+            appStateHistory_.end());
+    }
+    appStateHistory_.push_back(appState_);
+    appStateHistoryCursor_ = static_cast<int>(appStateHistory_.size()) - 1;
+}
+
+// Navigates app state history in given direction (-1 back, +1 forward).
+// @param direction Navigation direction: negative for back, positive for forward
+void navigateAppStateHistory(const int direction) {
+    if (appStateHistory_.empty()) {
+        return;
+    }
+
+    const int minIndex = 0;
+    const int maxIndex = static_cast<int>(appStateHistory_.size()) - 1;
+    const int nextIndex = std::clamp(appStateHistoryCursor_ + direction, minIndex, maxIndex);
+    if (nextIndex == appStateHistoryCursor_) {
+        return;
+    }
+
+    appStateHistoryCursor_ = nextIndex;
+    appState_ = appStateHistory_[static_cast<std::size_t>(appStateHistoryCursor_)];
+    appStateHistoryTraversalInProgress_ = true;
+}
+
+// Handles global keyboard shortcuts (F1 for help, etc.).
+// Processes key presses that work regardless of current panel focus.
+void handleGlobalKeyboardShortcuts() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
+        showShortcutHelpModal_ = true;
+    }
+
+    if (io.WantCaptureKeyboard) {
+        return;
+    }
+
+    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+        navigateAppStateHistory(-1);
+    }
+    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+        navigateAppStateHistory(1);
+    }
+}
+
+// Draws shortcut help modal dialog.
+void drawShortcutHelpModal() {
+    if (showShortcutHelpModal_) {
+        ImGui::OpenPopup("Keyboard Shortcuts");
+        showShortcutHelpModal_ = false;
+    }
+
+    bool popupOpen = true;
+    if (!ImGui::BeginPopupModal("Keyboard Shortcuts", &popupOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    static constexpr struct { const char* key; const char* action; } kShortcuts[] = {
+        {"F1",          "Open this shortcuts reference"},
+        {"Alt+Left",    "Navigate to previous application state"},
+        {"Alt+Right",   "Navigate to next application state"},
+        {"Space",       "Toggle play / pause"},
+        {"Ctrl+S",      "Save active world"},
+        {"Right Arrow", "Step forward (when paused)"},
+        {"R",           "Reset active viewport camera"},
+        {"+ / -",       "Zoom active viewport"},
+        {"F1 - F12",    "Select viewport editor tab (Simulation state)"},
+        {"Escape",      "Clear focused ImGui widget"},
+    };
+
+    ImGui::TextDisabled("State history");
+    ImGui::Text("Current state: %s", appStateLabel(static_cast<int>(appState_)));
+    ImGui::Text("History position: %d / %d",
+        appStateHistory_.empty() ? 0 : (appStateHistoryCursor_ + 1),
+        static_cast<int>(appStateHistory_.size()));
+    ImGui::Separator();
+
+    ImGui::Columns(2, "shortcuthelpcols", false);
+    ImGui::TextDisabled("Shortcut"); ImGui::NextColumn();
+    ImGui::TextDisabled("Action"); ImGui::NextColumn();
+    ImGui::Separator();
+    for (const auto& shortcut : kShortcuts) {
+        ImGui::TextColored(ImVec4(0.8f, 0.9f, 0.5f, 1.0f), "%s", shortcut.key); ImGui::NextColumn();
+        ImGui::TextUnformatted(shortcut.action); ImGui::NextColumn();
+    }
+    ImGui::Columns(1);
+    ImGui::Spacing();
+
+    if (PrimaryButton("Close", ImVec2(120.0f, 0.0f))) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+
+    if (!popupOpen) {
+        ImGui::CloseCurrentPopup();
+    }
+}
+
 // Keyboard shortcut handling - called once per frame before ImGui::NewFrame
+// Handles keyboard shortcuts for simulation control.
+// Called once per frame before ImGui::NewFrame.
 void handleKeyboardShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureKeyboard) return;
@@ -22,6 +145,7 @@ void handleKeyboardShortcuts() {
     // Ctrl+S -> save active world
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         if (!runtime_.activeWorldName().empty()) {
+            saveDisplayPrefs();
             std::string msg;
             if (runtime_.saveActiveWorld(msg)) appendLog(msg);
             else appendLog(msg);
@@ -71,7 +195,209 @@ void handleKeyboardShortcuts() {
     }
 }
 
+// Returns to model selector, optionally saving active world.
+// @param saveActiveWorld Whether to save current world state
+void returnToModelSelector(const bool saveActiveWorld) {
+    viz_.autoRun = false;
+    cancelPendingSimulationSteps();
+
+    const bool running = runtime_.isRunning();
+    if (saveActiveWorld && running && !runtime_.activeWorldName().empty()) {
+        saveDisplayPrefs();
+        std::string saveMsg;
+        runtime_.saveActiveWorld(saveMsg);
+        appendLog(saveMsg);
+    }
+
+    std::string stopMsg;
+    runtime_.stop(stopMsg);
+    if (!stopMsg.empty()) {
+        appendLog(stopMsg);
+    }
+
+    appState_ = AppState::ModelSelector;
+    modelSelector_.open();
+}
+
+bool seekToStepAndRefresh(const std::uint64_t targetStep) {
+    cancelPendingSimulationSteps();
+    std::string msg;
+    const bool ok = runtime_.seekStep(targetStep, msg);
+    appendLog(msg);
+    if (ok) {
+        panel_.seekTargetStep = targetStep;
+        requestSnapshotRefresh();
+    }
+    return ok;
+}
+
+struct SimulationClockInfo {
+    float value = 0.0f;
+    std::string sourceLabel = "runtime ticks";
+    bool fromField = false;
+};
+
+[[nodiscard]] SimulationClockInfo currentSimulationClock() const {
+    SimulationClockInfo info;
+    if (!viz_.hasCachedCheckpoint) {
+        return info;
+    }
+
+    info.value = static_cast<float>(viz_.cachedCheckpoint.stateSnapshot.header.timestampTicks);
+
+    const auto& fields = viz_.cachedCheckpoint.stateSnapshot.fields;
+    const auto isUsableScalar = [](const auto& field) {
+        return field.values.size() == 1u && std::isfinite(field.values.front());
+    };
+
+    const auto adoptField = [&info](const auto& field) {
+        info.value = field.values.front();
+        info.sourceLabel = "field " + field.spec.name;
+        info.fromField = true;
+    };
+
+    for (const auto& field : fields) {
+        if (!isUsableScalar(field)) {
+            continue;
+        }
+        if (field.spec.name == "time" || field.spec.name == "simulation_time" || field.spec.name == "t") {
+            adoptField(field);
+            return info;
+        }
+    }
+
+    for (const auto& field : fields) {
+        if (!isUsableScalar(field)) {
+            continue;
+        }
+        if (containsToken(field.spec.name, {"time_of_day", "clock_time", "elapsed_time", "sim_time"})) {
+            adoptField(field);
+            return info;
+        }
+    }
+
+    return info;
+}
+
+// Draws main menu bar with application menus.
+void drawMainMenuBar() {
+    if (!ImGui::BeginMainMenuBar()) {
+        return;
+    }
+
+    const bool running = runtime_.isRunning();
+    const bool paused = runtime_.isPaused();
+    const bool hasWorld = !runtime_.activeWorldName().empty();
+
+    if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("Save Active World", "Ctrl+S", false, running && hasWorld)) {
+            saveDisplayPrefs();
+            std::string msg;
+            runtime_.saveActiveWorld(msg);
+            appendLog(msg);
+        }
+        if (ImGui::MenuItem(hasWorld ? "Save & Return to Models" : "Return to Models")) {
+            returnToModelSelector(hasWorld);
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Edit")) {
+        if (ImGui::MenuItem("Undo Last Manual Edit", nullptr, false, running)) {
+            std::string undoMsg;
+            const bool undone = runtime_.undoLastManualPatch(undoMsg);
+            appendLog(undoMsg);
+            if (undone) {
+                requestSnapshotRefresh();
+            }
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Field History", "H", showFieldHistoryWindow_)) {
+            showFieldHistoryWindow_ = !showFieldHistoryWindow_;
+        }
+        if (ImGui::MenuItem("Save Display Preferences", nullptr, false, hasWorld)) {
+            saveDisplayPrefs();
+            appendLog("display_prefs_saved world=" + runtime_.activeWorldName());
+        }
+        if (ImGui::MenuItem("Reload Display Preferences", nullptr, false, hasWorld)) {
+            resetDisplayConfigToDefaults();
+            loadDisplayPrefs();
+            appendLog("display_prefs_reloaded world=" + runtime_.activeWorldName());
+        }
+        if (ImGui::MenuItem("Add Viewport", nullptr, false, viz_.viewports.size() < kMaxDynamicViewportCount)) {
+            addViewportConfig();
+        }
+        if (ImGui::MenuItem("Close Active Viewport", nullptr, false, viz_.viewports.size() > 1u)) {
+            removeViewportConfig(static_cast<std::size_t>(std::clamp(
+                viz_.activeViewportEditor,
+                0,
+                static_cast<int>(viz_.viewports.size()) - 1)));
+        }
+        if (ImGui::MenuItem("Reset Active Camera", "R", false, !viz_.viewports.empty())) {
+            const std::size_t activeIndex = static_cast<std::size_t>(std::clamp(
+                viz_.activeViewportEditor,
+                0,
+                std::max(0, static_cast<int>(viz_.viewports.size()) - 1)));
+            viewportManager_.fit(activeIndex);
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Simulation")) {
+        if (ImGui::MenuItem((paused || !viz_.autoRun) ? "Play" : "Pause", "Space", false, running)) {
+            if (paused || !viz_.autoRun) {
+                std::string msg;
+                runtime_.resume(msg);
+                viz_.autoRun = true;
+                appendLog(msg);
+                requestSnapshotRefresh();
+                triggerOverlay(OverlayIcon::Play);
+            } else {
+                cancelPendingSimulationSteps();
+                std::string msg;
+                runtime_.pause(msg);
+                viz_.autoRun = false;
+                appendLog(msg);
+                triggerOverlay(OverlayIcon::Pause);
+            }
+        }
+        if (ImGui::MenuItem("Step Forward", "Right", false, running && paused)) {
+            cancelPendingSimulationSteps();
+            std::string msg;
+            runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), msg);
+            appendLog(msg);
+            requestSnapshotRefresh();
+        }
+        if (ImGui::MenuItem("Seek To Target Step", nullptr, false, running)) {
+            seekToStepAndRefresh(panel_.seekTargetStep);
+        }
+        if (ImGui::MenuItem("Store Quick Checkpoint", nullptr, false, running)) {
+            std::string msg;
+            runtime_.createCheckpoint(panel_.checkpointLabel[0] != '\0' ? panel_.checkpointLabel : "quick", msg);
+            appendLog(msg);
+        }
+        ImGui::EndMenu();
+    }
+
+    if (running && viz_.hasCachedCheckpoint) {
+        ImGui::Separator();
+        ImGui::TextDisabled(
+            "Step %llu",
+            static_cast<unsigned long long>(viz_.cachedCheckpoint.stateSnapshot.header.stepIndex));
+        if (hasWorld) {
+            ImGui::Separator();
+            ImGui::TextDisabled("%s", runtime_.activeWorldName().c_str());
+        }
+    }
+
+    ImGui::EndMainMenuBar();
+}
+
 // Main control panel window
+// Draws main control panel window.
 void drawControlPanel() {
     handleKeyboardShortcuts();
 
@@ -94,10 +420,13 @@ void drawControlPanel() {
         ImGui::EndTabBar();
     }
 
+    drawConfirmationModals();
+
     ImGui::End();
 }
 
 // Status header - always visible, always up-to-date
+// Draws status header with runtime information.
 void drawStatusHeader() {
     const bool running  = runtime_.isRunning();
     const bool paused   = runtime_.isPaused();
@@ -114,18 +443,7 @@ void drawStatusHeader() {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(55, 105, 175, 240));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(30, 65, 115, 255));
         if (ImGui::Button(label, ImVec2(160.0f, 30.0f))) {
-            viz_.autoRun = false;
-            cancelPendingSimulationSteps();
-            if (hasWorld && running) {
-                std::string saveMsg;
-                bool saved = runtime_.saveActiveWorld(saveMsg);
-                appendLog(saveMsg);
-            }
-            std::string stopMsg;
-            runtime_.stop(stopMsg);
-            if (!stopMsg.empty()) appendLog(stopMsg);
-            appState_ = AppState::ModelSelector;
-            modelSelector_.open();
+            returnToModelSelector(hasWorld);
         }
         ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -145,6 +463,20 @@ void drawStatusHeader() {
     }
 
     ImGui::SameLine(0.0f, 10.0f);
+
+    if (SecondaryButton("Back##state", ImVec2(68.0f, 24.0f))) {
+        navigateAppStateHistory(-1);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::SetTooltip("Navigate to previous state. Shortcut: Alt+Left");
+    }
+    ImGui::SameLine(0.0f, 4.0f);
+    if (SecondaryButton("Next##state", ImVec2(68.0f, 24.0f))) {
+        navigateAppStateHistory(1);
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::SetTooltip("Navigate to next state. Shortcut: Alt+Right");
+    }
 
     // Quick play/pause toggle
     if (running) {
@@ -188,6 +520,8 @@ void drawStatusHeader() {
     } else {
         ImGui::TextDisabled("No simulation active.");
     }
+    ImGui::SameLine();
+    ImGui::TextDisabled("State: %s", appStateLabel(static_cast<int>(appState_)));
 
     ImGui::EndChild();
     ImGui::PopStyleColor();
@@ -197,6 +531,7 @@ void drawStatusHeader() {
 //
 // Tab: Simulation
 //
+// Draws simulation tab with controls.
 void drawSimulationTab() {
     ImGui::BeginChild("SimTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -250,6 +585,7 @@ void drawSimulationTab() {
     ImGui::EndChild();
 }
 
+// Draws interventions tab with perturbation controls.
 void drawInterventionsTab() {
     ImGui::BeginChild("InterventionsTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -269,7 +605,10 @@ void drawInterventionsTab() {
     ImGui::EndChild();
 }
 
+// Draws parameter control section.
 void drawParameterControlSection() {
+    static bool liveApplyWhileRunning = true;
+
     if (!runtime_.isRunning()) {
         panel_.parameterValueDirty = false;
         panel_.selectedParameterName[0] = '\0';
@@ -277,8 +616,10 @@ void drawParameterControlSection() {
         return;
     }
 
+    checkboxWithHint("Live apply while running", &liveApplyWhileRunning,
+        "When enabled, parameter slider edits are applied immediately, including while simulation is running.");
     if (!runtime_.isPaused()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Parameter edits and manual patches require pause mode.");
+        ImGui::TextDisabled("Runtime is active: parameter sliders can apply live; manual cell edits still require pause.");
     }
 
     std::vector<ParameterControl> controls;
@@ -314,7 +655,20 @@ void drawParameterControlSection() {
             "Applies a deterministic global forcing update by queueing input patches for the target field.")) {
             panel_.parameterValueDirty = true;
         }
+        if (panel_.parameterValueDirty) {
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Status: pending*");
+        } else {
+            ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Status: applied");
+        }
         ImGui::TextDisabled("Target field: %s  | units: %s", active.targetVariable.c_str(), active.units.c_str());
+
+        if (liveApplyWhileRunning && panel_.parameterValueDirty) {
+            std::string liveMsg;
+            if (runtime_.setParameterValue(active.name, panel_.parameterValue, "ui_parameter_live", liveMsg)) {
+                panel_.parameterValueDirty = false;
+                appendLog(liveMsg);
+            }
+        }
 
         if (PrimaryButton("Apply parameter", ImVec2(-1.0f, 26.0f))) {
             std::string setMsg;
@@ -362,19 +716,25 @@ void drawParameterControlSection() {
             cell = Cell{static_cast<std::uint32_t>(std::max(0, panel_.manualPatchX)), static_cast<std::uint32_t>(std::max(0, panel_.manualPatchY))};
         }
         std::string patchMsg;
-        runtime_.applyManualPatch(
+        const bool patched = runtime_.applyManualPatch(
             panel_.manualPatchVariable,
             cell,
             panel_.manualPatchValue,
             panel_.manualPatchNote,
             patchMsg);
         appendLog(patchMsg);
+        if (patched) {
+            requestSnapshotRefresh();
+        }
     }
 
     if (SecondaryButton("Undo last manual edit", ImVec2(-1.0f, 24.0f))) {
         std::string undoMsg;
-        runtime_.undoLastManualPatch(undoMsg);
+        const bool undone = runtime_.undoLastManualPatch(undoMsg);
         appendLog(undoMsg);
+        if (undone) {
+            requestSnapshotRefresh();
+        }
     }
 
     ImGui::Separator();
@@ -411,9 +771,33 @@ void drawParameterControlSection() {
             appendLog(presetMsg);
         }
     }
+    ImGui::SameLine();
+    if (SecondaryButton("Browse preset...", ImVec2(150.0f, 24.0f))) {
+        if (const auto presetFile = pickNativeFilePath(
+                L"Load Parameter Preset",
+                L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0",
+                presetPath,
+                false)) {
+            std::snprintf(panel_.parameterPresetName, sizeof(panel_.parameterPresetName), "%s", presetFile->stem().string().c_str());
+            ParameterPreset preset;
+            std::string presetMsg;
+            if (loadParameterPreset(*presetFile, preset, presetMsg)) {
+                appendLog(presetMsg);
+                for (const auto& parameter : preset.parameters) {
+                    std::string setMsg;
+                    runtime_.setParameterValue(parameter.name, parameter.value, "preset_load", setMsg);
+                    appendLog(setMsg);
+                }
+            } else {
+                appendLog(presetMsg);
+            }
+        }
+    }
 
     ImGui::Separator();
     ImGui::TextDisabled("Manual event log");
+    static std::vector<ManualEventRecord> loadedReplayEvents;
+    static std::string loadedReplaySource;
     inputTextWithHint("Event log file", panel_.eventLogFileName, sizeof(panel_.eventLogFileName),
         "JSON file under checkpoints/event_logs/.");
     if (SecondaryButton("Export event log", ImVec2(140.0f, 24.0f))) {
@@ -428,8 +812,320 @@ void drawParameterControlSection() {
         }
         appendLog(eventMsg);
     }
+    ImGui::SameLine();
+    if (SecondaryButton("Load event log", ImVec2(140.0f, 24.0f))) {
+        std::string eventMsg;
+        const auto inputPath = std::filesystem::path("checkpoints") / "event_logs" / panel_.eventLogFileName;
+        if (loadManualEventLog(inputPath, loadedReplayEvents, eventMsg)) {
+            loadedReplaySource = inputPath.string();
+        } else {
+            loadedReplayEvents.clear();
+            loadedReplaySource.clear();
+        }
+        appendLog(eventMsg);
+    }
+    ImGui::SameLine();
+    if (SecondaryButton("Browse event log...", ImVec2(160.0f, 24.0f))) {
+        const auto defaultEventPath = std::filesystem::path("checkpoints") / "event_logs" / panel_.eventLogFileName;
+        if (const auto eventFile = pickNativeFilePath(
+                L"Open Event Log",
+                L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0",
+                defaultEventPath,
+                false)) {
+            std::snprintf(panel_.eventLogFileName, sizeof(panel_.eventLogFileName), "%s", eventFile->filename().string().c_str());
+            std::string eventMsg;
+            if (loadManualEventLog(*eventFile, loadedReplayEvents, eventMsg)) {
+                loadedReplaySource = eventFile->string();
+            } else {
+                loadedReplayEvents.clear();
+                loadedReplaySource.clear();
+            }
+            appendLog(eventMsg);
+        }
+    }
+
+    ImGui::SameLine();
+    if (SecondaryButton("Browse export...", ImVec2(150.0f, 24.0f))) {
+        std::vector<ManualEventRecord> events;
+        std::string eventMsg;
+        if (runtime_.manualEventLog(events, eventMsg)) {
+            const auto defaultEventPath = std::filesystem::path("checkpoints") / "event_logs" / panel_.eventLogFileName;
+            if (const auto eventFile = pickNativeFilePath(
+                    L"Save Event Log",
+                    L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0",
+                    defaultEventPath,
+                    true)) {
+                std::snprintf(panel_.eventLogFileName, sizeof(panel_.eventLogFileName), "%s", eventFile->filename().string().c_str());
+                const bool saved = saveManualEventLog(events, *eventFile, eventMsg);
+                if (!saved && eventMsg.empty()) {
+                    eventMsg = "event_log_save_failed reason=unknown";
+                }
+            }
+        }
+        appendLog(eventMsg);
+    }
+
+    const bool canReplayLoadedEvents =
+        runtime_.isRunning() &&
+        runtime_.isPaused() &&
+        !loadedReplayEvents.empty();
+    if (SecondaryButton("Replay compatible entries", ImVec2(-1.0f, 24.0f))) {
+        if (!runtime_.isRunning()) {
+            appendLog("event_log_replay_failed reason=runtime_not_running");
+        } else if (!runtime_.isPaused()) {
+            appendLog("event_log_replay_failed reason=runtime_not_paused");
+        } else {
+            if (loadedReplayEvents.empty()) {
+                std::string eventMsg;
+                const auto inputPath = std::filesystem::path("checkpoints") / "event_logs" / panel_.eventLogFileName;
+                if (loadManualEventLog(inputPath, loadedReplayEvents, eventMsg)) {
+                    loadedReplaySource = inputPath.string();
+                }
+                appendLog(eventMsg);
+            }
+
+            if (!loadedReplayEvents.empty()) {
+                std::vector<ManualEventRecord> replayEvents = loadedReplayEvents;
+                std::stable_sort(
+                    replayEvents.begin(),
+                    replayEvents.end(),
+                    [](const ManualEventRecord& lhs, const ManualEventRecord& rhs) {
+                        if (lhs.step != rhs.step) {
+                            return lhs.step < rhs.step;
+                        }
+                        return lhs.timestamp < rhs.timestamp;
+                    });
+
+                std::vector<ParameterControl> controls;
+                std::string controlsMsg;
+                runtime_.parameterControls(controls, controlsMsg);
+
+                const std::uint64_t gridWidth = viz_.hasCachedCheckpoint
+                    ? static_cast<std::uint64_t>(std::max(1u, viz_.cachedCheckpoint.stateSnapshot.grid.width))
+                    : static_cast<std::uint64_t>(std::max(1, panel_.gridWidth));
+
+                const auto parameterNameForEvent = [&controls](const ManualEventRecord& event) -> std::optional<std::string> {
+                    if (event.description.rfind("parameter=", 0) == 0) {
+                        const std::string candidate = event.description.substr(std::string("parameter=").size());
+                        if (!candidate.empty()) {
+                            return candidate;
+                        }
+                    }
+                    for (const auto& control : controls) {
+                        if (control.targetVariable == event.variable) {
+                            return control.name;
+                        }
+                    }
+                    return std::nullopt;
+                };
+
+                std::size_t appliedCount = 0;
+                std::size_t skippedCount = 0;
+                std::size_t jumpCount = 0;
+                std::uint64_t replayStep = viz_.hasCachedCheckpoint
+                    ? viz_.cachedCheckpoint.stateSnapshot.header.stepIndex
+                    : 0u;
+
+                for (const auto& event : replayEvents) {
+                    if (event.step != replayStep) {
+                        if (!seekToStepAndRefresh(event.step)) {
+                            ++skippedCount;
+                            continue;
+                        }
+                        replayStep = event.step;
+                        ++jumpCount;
+                    }
+
+                    std::string replayMsg;
+                    bool applied = false;
+                    if (event.kind == ManualEventKind::ParameterUpdate) {
+                        if (const auto parameterName = parameterNameForEvent(event); parameterName.has_value()) {
+                            applied = runtime_.setParameterValue(
+                                *parameterName,
+                                event.newValue,
+                                "event_log_replay",
+                                replayMsg);
+                        } else {
+                            replayMsg = "event_log_replay_skipped reason=parameter_unresolved variable=" + event.variable;
+                        }
+                    } else if (event.kind == ManualEventKind::CellEdit) {
+                        std::optional<Cell> replayCell;
+                        if (event.cellIndex != std::numeric_limits<std::uint64_t>::max()) {
+                            replayCell = Cell{
+                                static_cast<std::uint32_t>(event.cellIndex % gridWidth),
+                                static_cast<std::uint32_t>(event.cellIndex / gridWidth)};
+                        }
+                        applied = runtime_.applyManualPatch(
+                            event.variable,
+                            replayCell,
+                            event.newValue,
+                            "event_log_replay",
+                            replayMsg);
+                    } else {
+                        replayMsg = "event_log_replay_skipped reason=unsupported_kind kind=perturbation variable=" + event.variable;
+                    }
+
+                    appendLog(replayMsg);
+                    if (applied) {
+                        ++appliedCount;
+                    } else {
+                        ++skippedCount;
+                    }
+                }
+
+                requestSnapshotRefresh();
+                appendLog(
+                    "event_log_replay_complete source=" +
+                    (loadedReplaySource.empty() ? std::string("<memory>") : loadedReplaySource) +
+                    " applied=" + std::to_string(appliedCount) +
+                    " skipped=" + std::to_string(skippedCount) +
+                    " seeks=" + std::to_string(jumpCount) +
+                    " loaded=" + std::to_string(replayEvents.size()));
+            }
+        }
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !canReplayLoadedEvents) {
+        ImGui::SetTooltip("Requires a loaded event log and a paused simulation. Cell edits and parameter updates are replayed; perturbations are currently skipped.");
+    }
+
+    if (!loadedReplayEvents.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled(
+            "Loaded replay source: %s (%zu event%s)",
+            loadedReplaySource.empty() ? "<memory>" : loadedReplaySource.c_str(),
+            loadedReplayEvents.size(),
+            loadedReplayEvents.size() == 1u ? "" : "s");
+        if (ImGui::BeginTable(
+            "LoadedManualEventPreview",
+            5,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
+            ImVec2(0.0f, 150.0f))) {
+            ImGui::TableSetupColumn("Step", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 95.0f);
+            ImGui::TableSetupColumn("Variable");
+            ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 95.0f);
+            ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+            ImGui::TableHeadersRow();
+
+            const auto kindLabel = [](const ManualEventKind kind) {
+                switch (kind) {
+                    case ManualEventKind::ParameterUpdate: return "Parameter";
+                    case ManualEventKind::CellEdit: return "Cell edit";
+                    case ManualEventKind::Perturbation: return "Perturbation";
+                }
+                return "Manual";
+            };
+
+            const std::size_t previewCount = std::min<std::size_t>(loadedReplayEvents.size(), 20u);
+            for (std::size_t offset = 0; offset < previewCount; ++offset) {
+                const auto& event = loadedReplayEvents[offset];
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%llu", static_cast<unsigned long long>(event.step));
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(kindLabel(event.kind));
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextUnformatted(event.variable.c_str());
+                ImGui::TableSetColumnIndex(3);
+                ImGui::Text("%.5f", event.newValue);
+                ImGui::TableSetColumnIndex(4);
+                ImGui::PushID(static_cast<int>(offset));
+                if (ImGui::SmallButton("Jump")) {
+                    seekToStepAndRefresh(event.step);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Recent manual changes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        std::vector<ManualEventRecord> events;
+        std::string eventMsg;
+        if (runtime_.manualEventLog(events, eventMsg)) {
+            const auto kindLabel = [](const ManualEventKind kind) {
+                switch (kind) {
+                    case ManualEventKind::ParameterUpdate: return "Parameter";
+                    case ManualEventKind::CellEdit: return "Cell edit";
+                    case ManualEventKind::Perturbation: return "Perturbation";
+                }
+                return "Manual";
+            };
+
+            const std::uint64_t gridWidth = viz_.hasCachedCheckpoint
+                ? static_cast<std::uint64_t>(std::max(1u, viz_.cachedCheckpoint.stateSnapshot.grid.width))
+                : static_cast<std::uint64_t>(std::max(1, panel_.gridWidth));
+
+            const auto targetLabel = [gridWidth](const ManualEventRecord& event) {
+                if (event.cellIndex == std::numeric_limits<std::uint64_t>::max()) {
+                    return std::string("global");
+                }
+
+                const std::uint64_t x = event.cellIndex % gridWidth;
+                const std::uint64_t y = event.cellIndex / gridWidth;
+                return std::string("(") + std::to_string(x) + ", " + std::to_string(y) + ")";
+            };
+
+            if (events.empty()) {
+                ImGui::TextDisabled("No manual edits or perturbations have been recorded yet.");
+            } else if (ImGui::BeginTable(
+                "RecentManualChanges",
+                7,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
+                ImVec2(0.0f, 220.0f))) {
+                ImGui::TableSetupColumn("Step", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+                ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+                ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 95.0f);
+                ImGui::TableSetupColumn("Variable");
+                ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+                ImGui::TableSetupColumn("Change");
+                ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+                ImGui::TableHeadersRow();
+
+                const std::size_t displayCount = std::min<std::size_t>(events.size(), 32u);
+                for (std::size_t offset = 0; offset < displayCount; ++offset) {
+                    const auto& event = events[events.size() - 1u - offset];
+                    ImGui::TableNextRow();
+
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::Text("%llu", static_cast<unsigned long long>(event.step));
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%.3f", event.time);
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextUnformatted(kindLabel(event.kind));
+
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::TextUnformatted(event.variable.c_str());
+
+                    ImGui::TableSetColumnIndex(4);
+                    ImGui::TextUnformatted(targetLabel(event).c_str());
+
+                    ImGui::TableSetColumnIndex(5);
+                    ImGui::Text("%.5f -> %.5f", event.oldValue, event.newValue);
+                    if (!event.description.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                        ImGui::SetTooltip("%s", event.description.c_str());
+                    }
+
+                    ImGui::TableSetColumnIndex(6);
+                    ImGui::PushID(static_cast<int>(offset));
+                    if (ImGui::SmallButton("Jump")) {
+                        seekToStepAndRefresh(event.step);
+                    }
+                    ImGui::PopID();
+                }
+
+                ImGui::EndTable();
+            }
+        } else {
+            ImGui::TextDisabled("%s", eventMsg.c_str());
+        }
+    }
 }
 
+// Draws perturbation section with field modifications.
 void drawPerturbationSection() {
     if (!runtime_.isRunning()) {
         ImGui::TextDisabled("Start the simulation to queue perturbations.");
@@ -509,6 +1205,7 @@ void drawPerturbationSection() {
     }
 }
 
+// Draws tier selector for simulation mode.
 void drawTierSelector() {
     const bool isRunning = runtime_.isRunning();
 
@@ -620,6 +1317,7 @@ void drawTierSelector() {
     }
 }
 
+// Draws playback controls (play/pause/stop).
 void drawPlaybackSection() {
     const bool running = runtime_.isRunning();
     const bool paused  = runtime_.isPaused();
@@ -669,10 +1367,8 @@ void drawPlaybackSection() {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(155, 55, 55, 240));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(95, 30, 30, 255));
         if (ImGui::Button("Stop & Reset", ImVec2(-1.0f, 34.0f))) {
-            viz_.autoRun = false;
-            cancelPendingSimulationSteps();
-            std::string msg; runtime_.stop(msg); appendLog(msg);
-            requestSnapshotRefresh(); triggerOverlay(OverlayIcon::Pause);
+            showStopResetConfirm_ = true;
+            ImGui::OpenPopup("Confirm Stop and Reset");
         }
         ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -717,6 +1413,7 @@ void drawPlaybackSection() {
     }
 }
 
+// Draws step control buttons.
 void drawStepControlsSection() {
     if (!runtime_.isRunning()) {
         ImGui::TextDisabled("Start the simulation to enable step controls.");
@@ -762,6 +1459,7 @@ void drawStepControlsSection() {
     }
 }
 
+// Draws time control slider.
 void drawTimeControlSection() {
     if (!runtime_.isRunning()) {
         panel_.playbackSpeedDirty = false;
@@ -797,11 +1495,7 @@ void drawTimeControlSection() {
     }
 
     if (PrimaryButton("Seek", ImVec2(120.0f, 26.0f))) {
-        cancelPendingSimulationSteps();
-        std::string msg;
-        runtime_.seekStep(panel_.seekTargetStep, msg);
-        appendLog(msg);
-        requestSnapshotRefresh();
+        seekToStepAndRefresh(panel_.seekTargetStep);
     }
     ImGui::SameLine();
     NumericSliderPairInt("Step backward", &panel_.backwardStepCount, 1, 100000, "%d", 55.0f);
@@ -824,17 +1518,77 @@ void drawTimeControlSection() {
         appendLog(msg);
     }
 
+    const SimulationClockInfo clock = currentSimulationClock();
+    const auto formatAbsoluteTime = [](const float value) {
+        std::ostringstream output;
+        output << std::fixed << std::setprecision(3) << value << " s";
+        if (std::isfinite(value)) {
+            output << "  (" << std::setprecision(2)
+                   << (value / 60.0f) << " min, "
+                   << (value / 3600.0f) << " h)";
+        }
+        return output.str();
+    };
+
+    ImGui::TextDisabled("Absolute time: %s", formatAbsoluteTime(clock.value).c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(
+        clock.fromField ? ImVec4(0.50f, 0.85f, 0.55f, 1.0f) : ImVec4(0.80f, 0.72f, 0.45f, 1.0f),
+        "[%s]",
+        clock.sourceLabel.c_str());
+
     TimeControlStatus status;
     status.currentStep = currentStep;
     status.targetStep = panel_.seekTargetStep;
-    status.simulationTime = static_cast<float>(currentStep);
+    status.simulationTime = clock.value;
     status.playbackSpeed = runtime_.playbackSpeed();
     ImGui::TextDisabled("%s", formatTimeControlStatus(status).c_str());
 
     const float progress = timeControlProgress(status);
     ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f));
+
+    std::vector<std::uint64_t> timelineSteps;
+    std::string timelineMsg;
+    if (runtime_.timelineCheckpointSteps(timelineSteps, timelineMsg)) {
+        ImGui::Spacing();
+        if (timelineSteps.empty()) {
+            ImGui::TextDisabled("Timeline checkpoints: none captured yet.");
+        } else {
+            ImGui::TextDisabled(
+                "Timeline checkpoints: %zu stored, range %llu -> %llu",
+                timelineSteps.size(),
+                static_cast<unsigned long long>(timelineSteps.front()),
+                static_cast<unsigned long long>(timelineSteps.back()));
+            ImGui::TextDisabled("Click a stored step to jump there immediately.");
+
+            const std::size_t begin = timelineSteps.size() > 10u ? timelineSteps.size() - 10u : 0u;
+            for (std::size_t index = timelineSteps.size(); index-- > begin;) {
+                const std::uint64_t step = timelineSteps[index];
+                const bool isCurrent = step == currentStep;
+                if (isCurrent) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(35, 100, 70, 220));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(50, 125, 90, 235));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(28, 85, 60, 255));
+                }
+
+                const std::string label = std::to_string(step) + "##timeline_step";
+                if (ImGui::Button(label.c_str(), ImVec2(72.0f, 22.0f))) {
+                    seekToStepAndRefresh(step);
+                }
+
+                if (isCurrent) {
+                    ImGui::PopStyleColor(3);
+                }
+
+                if (index > begin && ImGui::GetContentRegionAvail().x > 78.0f) {
+                    ImGui::SameLine();
+                }
+            }
+        }
+    }
 }
 
+// Draws checkpoint save/load section.
 void drawCheckpointSection() {
     if (!runtime_.isRunning()) {
         ImGui::TextDisabled("Start the simulation to use checkpoints.");
@@ -870,10 +1624,260 @@ void drawCheckpointSection() {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip("List all stored in-memory checkpoint labels.");
 
+    std::vector<CheckpointInfo> checkpointRecords;
+    std::string checkpointMsg;
+    if (runtime_.checkpointRecords(checkpointRecords, checkpointMsg)) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Checkpoint browser");
+        if (checkpointRecords.empty()) {
+            ImGui::TextDisabled("No in-memory checkpoints recorded yet.");
+        } else {
+            const std::string selectedLabel = panel_.checkpointSelectedLabel;
+            ImGui::TextDisabled(
+                "%zu checkpoint%s available. Select one to inspect, restore, rename, or delete.",
+                checkpointRecords.size(),
+                checkpointRecords.size() == 1u ? "" : "s");
+
+            if (ImGui::BeginTable(
+                "CheckpointBrowser",
+                6,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
+                ImVec2(0.0f, 190.0f))) {
+                ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Step", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                ImGui::TableSetupColumn("Ticks", ImGuiTableColumnFlags_WidthFixed, 105.0f);
+                ImGui::TableSetupColumn("Hash", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+                ImGui::TableSetupColumn("Bytes", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+                ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 160.0f);
+                ImGui::TableHeadersRow();
+
+                auto selectCheckpoint = [&](const CheckpointInfo& record) {
+                    std::snprintf(panel_.checkpointSelectedLabel, sizeof(panel_.checkpointSelectedLabel), "%s", record.label.c_str());
+                    if (panel_.checkpointRenameTarget[0] == '\0' || std::string(panel_.checkpointRenameTarget) == selectedLabel) {
+                        std::snprintf(panel_.checkpointRenameTarget, sizeof(panel_.checkpointRenameTarget), "%s", record.label.c_str());
+                    }
+                };
+
+                for (const auto& record : checkpointRecords) {
+                    const bool isSelected = (selectedLabel == record.label);
+                    ImGui::TableNextRow();
+
+                    ImGui::TableSetColumnIndex(0);
+                    if (isSelected) {
+                        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f), "● ");
+                        ImGui::SameLine(0.0f, 2.0f);
+                    }
+                    if (ImGui::Selectable(record.label.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowItemOverlap)) {
+                        selectCheckpoint(record);
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                        ImGui::SetTooltip("Select checkpoint '%s' for restore, rename, or comparison.", record.label.c_str());
+                    }
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%llu", static_cast<unsigned long long>(record.stepIndex));
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::Text("%llu", static_cast<unsigned long long>(record.timestampTicks));
+
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::Text("0x%016llX", static_cast<unsigned long long>(record.stateHash));
+
+                    ImGui::TableSetColumnIndex(4);
+                    ImGui::Text("%llu", static_cast<unsigned long long>(record.payloadBytes));
+
+                    ImGui::TableSetColumnIndex(5);
+                    if (ImGui::SmallButton(("Load##" + record.label).c_str())) {
+                        std::snprintf(panel_.checkpointSelectedLabel, sizeof(panel_.checkpointSelectedLabel), "%s", record.label.c_str());
+                        std::snprintf(panel_.checkpointRenameTarget, sizeof(panel_.checkpointRenameTarget), "%s", record.label.c_str());
+                        cancelPendingSimulationSteps();
+                        std::string msg;
+                        if (runtime_.restoreCheckpoint(record.label, msg)) {
+                            requestSnapshotRefresh();
+                        }
+                        appendLog(msg);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(("Select##" + record.label).c_str())) {
+                        selectCheckpoint(record);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(("Delete##" + record.label).c_str())) {
+                        std::snprintf(panel_.checkpointDeleteLabel, sizeof(panel_.checkpointDeleteLabel), "%s", record.label.c_str());
+                        showCheckpointDeleteConfirm_ = true;
+                        ImGui::OpenPopup("Delete Checkpoint");
+                    }
+                }
+
+                ImGui::EndTable();
+            }
+
+            if (panel_.checkpointSelectedLabel[0] != '\0') {
+                const std::string selectedCheckpointLabel = panel_.checkpointSelectedLabel;
+                const auto selectedIt = std::find_if(
+                    checkpointRecords.begin(),
+                    checkpointRecords.end(),
+                    [&](const CheckpointInfo& record) { return record.label == selectedCheckpointLabel; });
+
+                if (selectedIt != checkpointRecords.end()) {
+                    if (panel_.checkpointRenameTarget[0] == '\0') {
+                        std::snprintf(panel_.checkpointRenameTarget, sizeof(panel_.checkpointRenameTarget), "%s", selectedIt->label.c_str());
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Selected checkpoint: %s", selectedIt->label.c_str());
+                    ImGui::TextDisabled(
+                        "Step %llu | ticks %llu | hash 0x%016llX | %llu bytes",
+                        static_cast<unsigned long long>(selectedIt->stepIndex),
+                        static_cast<unsigned long long>(selectedIt->timestampTicks),
+                        static_cast<unsigned long long>(selectedIt->stateHash),
+                        static_cast<unsigned long long>(selectedIt->payloadBytes));
+
+                    RuntimeCheckpoint currentCheckpoint{};
+                    std::string currentMsg;
+                    if (runtime_.captureCheckpoint(currentCheckpoint, currentMsg, false /* computeHash */)) {
+                        const auto& currentSnapshot = currentCheckpoint.stateSnapshot;
+                        ImGui::TextDisabled("Current runtime: step %llu | ticks %llu | hash 0x%016llX",
+                            static_cast<unsigned long long>(currentSnapshot.header.stepIndex),
+                            static_cast<unsigned long long>(currentSnapshot.header.timestampTicks),
+                            static_cast<unsigned long long>(currentSnapshot.stateHash));
+                        ImGui::TextDisabled(
+                            "Compare: step delta %+lld | hash match %s | profile match %s | run match %s",
+                            static_cast<long long>(currentSnapshot.header.stepIndex) - static_cast<long long>(selectedIt->stepIndex),
+                            currentSnapshot.stateHash == selectedIt->stateHash ? "yes" : "no",
+                            currentCheckpoint.profileFingerprint == selectedIt->profileFingerprint ? "yes" : "no",
+                            currentCheckpoint.runSignature.identityHash() == selectedIt->runIdentityHash ? "yes" : "no");
+                    } else {
+                        ImGui::TextDisabled("Current runtime snapshot unavailable: %s", currentMsg.c_str());
+                    }
+
+                    inputTextWithHint("Rename selected##cp", panel_.checkpointRenameTarget, sizeof(panel_.checkpointRenameTarget),
+                        "New label for the selected in-memory checkpoint.");
+                    if (PrimaryButton("Rename selected checkpoint", ImVec2(220.0f, 24.0f))) {
+                        std::string msg;
+                        if (runtime_.renameCheckpoint(selectedIt->label, panel_.checkpointRenameTarget, msg)) {
+                            std::snprintf(panel_.checkpointSelectedLabel, sizeof(panel_.checkpointSelectedLabel), "%s", panel_.checkpointRenameTarget);
+                            appendLog(msg);
+                        } else {
+                            appendLog(msg);
+                        }
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                        ImGui::SetTooltip("Rename the selected checkpoint label in-memory.");
+                    }
+                }
+            }
+        }
+    } else {
+        ImGui::TextWrapped("Checkpoint browser unavailable: %s", checkpointMsg.c_str());
+    }
+
     ImGui::Spacing();
     ImGui::TextDisabled("In-memory checkpoints are lost when the simulation stops.\nUse Save & Exit to persist to disk.");
 }
 
+// Draws confirmation modals for destructive actions.
+void drawConfirmationModals() {
+    if (showStopResetConfirm_) {
+        if (ImGui::BeginPopupModal("Confirm Stop and Reset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("Stop the runtime and reset the active simulation state? Unsaved progress after the latest checkpoint will be lost.");
+            ImGui::Spacing();
+            if (PrimaryButton("Stop and Reset", ImVec2(160.0f, 28.0f))) {
+                viz_.autoRun = false;
+                cancelPendingSimulationSteps();
+                if (!runtime_.activeWorldName().empty()) {
+                    saveDisplayPrefs();
+                }
+                std::string msg;
+                runtime_.stop(msg);
+                appendLog(msg);
+                requestSnapshotRefresh();
+                triggerOverlay(OverlayIcon::Pause);
+                showStopResetConfirm_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                showStopResetConfirm_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    if (showCheckpointDeleteConfirm_) {
+        if (ImGui::BeginPopupModal("Delete Checkpoint", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("Delete checkpoint '%s'? This cannot be undone.",
+                panel_.checkpointDeleteLabel[0] != '\0' ? panel_.checkpointDeleteLabel : "<unknown>");
+            ImGui::Spacing();
+            if (PrimaryButton("Delete", ImVec2(130.0f, 28.0f))) {
+                std::string msg;
+                if (runtime_.deleteCheckpoint(panel_.checkpointDeleteLabel, msg)) {
+                    if (std::string(panel_.checkpointSelectedLabel) == panel_.checkpointDeleteLabel) {
+                        panel_.checkpointSelectedLabel[0] = '\0';
+                        panel_.checkpointRenameTarget[0] = '\0';
+                    }
+                    panel_.checkpointDeleteLabel[0] = '\0';
+                    appendLog(msg);
+                } else {
+                    appendLog(msg);
+                }
+                showCheckpointDeleteConfirm_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                panel_.checkpointDeleteLabel[0] = '\0';
+                showCheckpointDeleteConfirm_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    if (showWizardResetConfirm_) {
+        if (ImGui::BeginPopupModal("Reset Wizard Parameters", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("Reset the wizard parameters back to the recommended defaults? Unsaved wizard edits will be lost.");
+            ImGui::Spacing();
+            if (PrimaryButton("Reset parameters", ImVec2(150.0f, 28.0f))) {
+                syncPanelFromConfig();
+                const auto recommended = GenerationAdvisor::recommendGenerationMode(sessionUi_.selectedModelCatalog, {});
+                const InitialConditionType refined = fallbackRuntimeSupportedMode(
+                    refineRecommendedModeForKnownModels(sessionUi_.selectedModelCatalog, recommended.recommendedType));
+                applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, refined, true);
+                applyAutoVariableBindingsForMode(panel_, sessionUi_.selectedModelCellStateVariables, refined);
+                viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(refined);
+                sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(refined);
+                sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
+                    sessionUi_.selectedModelCatalog,
+                    sessionUi_.selectedModelCellStateVariables,
+                    {"fire_state", "living", "water", "state", "concentration", "temperature", "vegetation", "velocity", "oxygen"},
+                    0);
+                sessionUi_.generationModeIndex = static_cast<int>(refined);
+                rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
+                panel_.useManualSeed = false;
+                panel_.seed = generateRandomSeed();
+                const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'
+                    ? std::string(sessionUi_.selectedModelName)
+                    : std::string("world");
+                std::string suggestedName = runtime_.suggestWorldNameFromHint(baseHint);
+                std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
+                sessionUi_.wizardStepIndex = 0;
+                deferredWizardInitialization_ = DeferredWizardInitialization{};
+                showWizardResetConfirm_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                showWizardResetConfirm_ = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+}
+
+// Draws guardrails section for numeric constraints.
 void drawGuardrailsSection() {
     ImGui::TextDisabled("Numeric guardrail tuning is controlled by the active profile and runtime execution mode.");
     ImGui::Spacing();
@@ -889,6 +1893,7 @@ void drawGuardrailsSection() {
 //
 // Tab: Display
 //
+// Draws display tab with visualization settings.
 void drawDisplayTab() {
     ImGui::BeginChild("DispTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -912,6 +1917,7 @@ void drawDisplayTab() {
     ImGui::EndChild();
 }
 
+// Draws viewport settings section.
 void drawViewportSettingsSection() {
     ensureViewportStateConsistency();
 
@@ -975,6 +1981,9 @@ void drawViewportSettingsSection() {
     }
 }
 
+// Draws single viewport editor.
+// @param vp Viewport configuration to edit
+// @param viewportIndex Viewport index
 void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
     static constexpr const char* dispTypeNames[] = {
         "Scalar Field", "Surface Category", "Relative Elevation", "Surface Water", "Moisture Map", "Wind Field"};
@@ -1265,6 +2274,7 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
     }
 }
 
+// Draws overlay section for vector/contour display.
 void drawOverlaySection() {
     ensureViewportStateConsistency();
     const int maxViewportIndex = std::max(0, static_cast<int>(viz_.viewports.size()) - 1);
@@ -1311,6 +2321,7 @@ void drawOverlaySection() {
     }
 }
 
+// Draws optics section for color mapping.
 void drawOpticsSection() {
     ensureViewportStateConsistency();
     const int maxViewportIndex = std::max(0, static_cast<int>(viz_.viewports.size()) - 1);
@@ -1357,6 +2368,7 @@ void drawOpticsSection() {
 }
 
 // Tab: Analysis
+// Draws analysis tab with statistics.
 void drawAnalysisTab() {
     ImGui::BeginChild("AnalysisTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -1415,6 +2427,7 @@ void drawAnalysisTab() {
     ImGui::EndChild();
 }
 
+// Draws field summary section.
 void drawFieldSummarySection() {
     // Field selector
     if (!viz_.fieldNames.empty()) {
@@ -1473,6 +2486,7 @@ void drawFieldSummarySection() {
     }
 }
 
+// Draws conservation section for constraint monitoring.
 void drawConservationSection() {
     if (!runtime_.isRunning()) {
         ImGui::TextDisabled("Run the simulation to see conservation metrics.");
@@ -1483,6 +2497,7 @@ void drawConservationSection() {
     ImGui::TextWrapped("%s", msg.c_str());
 }
 
+// Draws metrics section for performance statistics.
 void drawMetricsSection() {
     if (!runtime_.isRunning()) {
         ImGui::TextDisabled("Run the simulation to see metrics.");
@@ -1539,6 +2554,7 @@ void drawMetricsSection() {
         "Hard cap on total cells drawn per frame across all viewports.");
 }
 
+// Draws trace section for application log.
 void drawTraceSection() {
     ImGui::TextDisabled("Application log:");
     ImGui::BeginChild("AppLog", ImVec2(0, 150.0f), true,
@@ -1555,6 +2571,7 @@ void drawTraceSection() {
     if (SecondaryButton("Clear log", ImVec2(90.0f, 20.0f))) logs_.clear();
 }
 
+// Draws time series section for probe data.
 void drawTimeSeriesSection() {
     if (!runtime_.isRunning()) {
         ImGui::TextDisabled("Start the simulation to record probe time-series.");
@@ -1725,6 +2742,7 @@ void drawTimeSeriesSection() {
     }
 }
 
+// Draws histogram section for field distribution.
 void drawHistogramSection() {
     if (!viz_.hasCachedCheckpoint) {
         ImGui::TextDisabled("No snapshot available yet.");
@@ -1796,6 +2814,7 @@ void drawHistogramSection() {
         static_cast<float>(histogram.stats.kurtosis));
 }
 
+// Draws constraint monitor section.
 void drawConstraintMonitorSection() {
     if (!runtime_.isRunning()) {
         ImGui::TextDisabled("Start the simulation to track constraint violations.");
@@ -1874,6 +2893,7 @@ void drawConstraintMonitorSection() {
 //
 // Tab: Diagnostics
 //
+// Draws diagnostics tab with runtime information.
 void drawDiagnosticsTab() {
     ImGui::BeginChild("DiagTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -1907,21 +2927,32 @@ void drawDiagnosticsTab() {
     }
     PopSectionTint();
 
+    ImGui::Spacing();
+
+    PushSectionTint(3);
+    if (ImGui::CollapsingHeader("Notification History")) {
+        drawNotificationHistorySection();
+    }
+    PopSectionTint();
+
     ImGui::EndChild();
 }
 
+// Draws admission section for model validation.
 void drawAdmissionSection() {
     std::string statusMsg;
     runtime_.status(statusMsg);
     ImGui::TextWrapped("%s", statusMsg.c_str());
 }
 
+// Draws step diagnostics section.
 void drawStepDiagSection() {
     std::string metricsMsg;
     runtime_.metrics(metricsMsg);
     ImGui::TextWrapped("%s", metricsMsg.c_str());
 }
 
+// Draws ordering log section.
 void drawOrderingLogSection() {
     ImGui::BeginChild("OrdLog", ImVec2(0, 160.0f), true,
         ImGuiWindowFlags_AlwaysVerticalScrollbar);
@@ -1931,9 +2962,49 @@ void drawOrderingLogSection() {
     ImGui::EndChild();
 }
 
+// Draws notification history section.
+void drawNotificationHistorySection() {
+    if (toastHistory_.empty()) {
+        ImGui::TextDisabled("No notifications recorded yet.");
+        return;
+    }
+
+    if (SecondaryButton("Clear notification history", ImVec2(220.0f, 24.0f))) {
+        toastHistory_.clear();
+        return;
+    }
+
+    ImGui::BeginChild("NotificationHistory", ImVec2(0.0f, 170.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    for (auto it = toastHistory_.rbegin(); it != toastHistory_.rend(); ++it) {
+        const auto& toast = *it;
+        const char* level = "Info";
+        ImVec4 color = ImVec4(0.45f, 0.70f, 0.95f, 0.95f);
+        if (toast.level == ToastLevel::Error) {
+            level = "Error";
+            color = ImVec4(0.95f, 0.35f, 0.35f, 0.95f);
+        } else if (toast.level == ToastLevel::Warning) {
+            level = "Warning";
+            color = ImVec4(0.95f, 0.75f, 0.35f, 0.95f);
+        } else if (toast.level == ToastLevel::Success) {
+            level = "Success";
+            color = ImVec4(0.45f, 0.85f, 0.50f, 0.95f);
+        }
+
+        ImGui::TextColored(color, "[%s]", level);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(toast.title.empty() ? "Notice" : toast.title.c_str());
+        ImGui::PushTextWrapPos();
+        ImGui::TextUnformatted(toast.message.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+    }
+    ImGui::EndChild();
+}
+
 //
 // Tab: System
 //
+// Draws system tab with configuration.
 void drawSystemTab() {
     ImGui::BeginChild("SysTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -1967,6 +3038,7 @@ void drawSystemTab() {
     ImGui::EndChild();
 }
 
+// Draws profiles section.
 void drawProfilesSection() {
     inputTextWithHint("Name##prof", panel_.profileName, sizeof(panel_.profileName),
         "Profile name for save / load. Letters, digits, '_', '-' only.");
@@ -1994,6 +3066,7 @@ void drawProfilesSection() {
     }
 }
 
+// Draws grid and generation section.
 void drawGridAndGenerationSection() {
     ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.3f, 1.0f),
         "Changes below require Restart (Simulation tab) to take effect.");
@@ -2008,14 +3081,18 @@ void drawGridAndGenerationSection() {
     PopSectionTint();
 }
 
+// Draws shortcuts section.
 void drawShortcutsSection() {
     static constexpr struct { const char* key; const char* action; } kShortcuts[] = {
+        {"F1",         "Open keyboard shortcut help modal"},
+        {"Alt+Left",   "Navigate to previous application state"},
+        {"Alt+Right",  "Navigate to next application state"},
         {"Space",      "Toggle play / pause"},
         {"Ctrl+S",     "Save active world"},
         {"Right Arrow", "Step forward (when paused)"},
         {"R",          "Reset camera zoom and pan"},
         {"+  /  -",    "Zoom in / out"},
-        {"F1 - F12",    "Select viewport for editing (first 12 views)"},
+        {"F1 - F12",   "Select viewport for editing (first 12 views)"},
         {"Escape",     "Return keyboard focus to viewport"},
     };
     ImGui::Columns(2, "shortcols", false);
@@ -2030,6 +3107,7 @@ void drawShortcutsSection() {
 }
 
 // Grid setup section (used by System tab)
+// Draws grid setup section.
 void drawGridSetupSection() {
     PushSectionTint(6);
     if (ImGui::CollapsingHeader("Grid Registration", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2066,6 +3144,7 @@ void drawGridSetupSection() {
 }
 
 // World generation section (used by System tab & New World Wizard)
+// Draws world generation section.
 void drawWorldGenerationSection() {
     const auto& modelCellVars = sessionUi_.selectedModelCellStateVariables;
     auto drawVariableBindingSelector = [&](const char* comboLabel, const char* manualLabel, char* buffer, const std::size_t size, const char* hint) {
@@ -2480,6 +3559,7 @@ void drawWorldGenerationSection() {
 }
 
 // Accessibility
+// Draws accessibility section.
 void drawAccessibilitySection() {
     bool styleChanged = false;
     bool rebuildFonts = false;
@@ -2506,6 +3586,7 @@ void drawAccessibilitySection() {
 //
 // Helpers
 //
+// Syncs panel state from runtime configuration.
 void syncPanelFromConfig() {
     const auto& c = runtime_.config();
     panel_.seed           = c.seed;
@@ -2568,6 +3649,7 @@ void syncPanelFromConfig() {
     panel_.selectedParameterName[0] = '\0';
 }
 
+// Applies panel settings to runtime configuration.
 void applyConfigFromPanel() {
     app::LaunchConfig cfg = runtime_.config();
     cfg.seed        = panel_.seed;
@@ -2636,11 +3718,101 @@ void applyConfigFromPanel() {
     appendLog(out.str());
 }
 
+// Triggers overlay notification icon.
+// @param icon Overlay icon to display
 void triggerOverlay(const OverlayIcon icon) {
     overlay_.icon  = icon;
     overlay_.alpha = 1.0f;
 }
 
+// Pushes toast notification to display queue.
+// @param level Severity level
+// @param title Toast title
+// @param message Toast message
+// @param durationSec Display duration in seconds
+void pushToast(const ToastLevel level, const std::string& title, const std::string& message, const float durationSec = 4.0f) {
+    if (message.empty()) {
+        return;
+    }
+    ToastItem toast;
+    toast.level = level;
+    toast.title = title;
+    toast.message = message;
+    toast.createdSec = glfwGetTime();
+    toast.durationSec = std::clamp(durationSec, 1.0f, 10.0f);
+    toasts_.push_back(std::move(toast));
+    toastHistory_.push_back(toasts_.back());
+    if (toasts_.size() > 8u) {
+        toasts_.erase(toasts_.begin(), toasts_.begin() + static_cast<std::ptrdiff_t>(toasts_.size() - 8u));
+    }
+    if (toastHistory_.size() > 200u) {
+        toastHistory_.erase(
+            toastHistory_.begin(),
+            toastHistory_.begin() + static_cast<std::ptrdiff_t>(toastHistory_.size() - 200u));
+    }
+}
+
+// Draws toast notifications.
+void drawToasts() {
+    if (toasts_.empty()) {
+        return;
+    }
+
+    const double now = glfwGetTime();
+    toasts_.erase(
+        std::remove_if(toasts_.begin(), toasts_.end(), [&](const ToastItem& toast) {
+            return (now - toast.createdSec) >= static_cast<double>(toast.durationSec);
+        }),
+        toasts_.end());
+    if (toasts_.empty()) {
+        return;
+    }
+
+    const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    float cursorY = 16.0f;
+    ImGui::SetNextWindowPos(ImVec2(displaySize.x - 16.0f, 16.0f), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    if (!ImGui::Begin("##toast_host", nullptr,
+        ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoInputs)) {
+        ImGui::End();
+        return;
+    }
+
+    auto colorForLevel = [](const ToastLevel level) {
+        switch (level) {
+            case ToastLevel::Error: return ImVec4(0.95f, 0.35f, 0.35f, 0.95f);
+            case ToastLevel::Warning: return ImVec4(0.95f, 0.75f, 0.35f, 0.95f);
+            case ToastLevel::Success: return ImVec4(0.45f, 0.85f, 0.50f, 0.95f);
+            default: return ImVec4(0.45f, 0.70f, 0.95f, 0.95f);
+        }
+    };
+
+    for (const auto& toast : toasts_) {
+        ImGui::SetCursorPosY(cursorY);
+        const ImVec4 accent = colorForLevel(toast.level);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 24, 36, 238));
+        ImGui::PushID(&toast);
+        ImGui::BeginChild("toast_body", ImVec2(360.0f, 0.0f), ImGuiChildFlags_Borders, ImGuiWindowFlags_None);
+        ImGui::PopStyleColor();
+        ImGui::TextColored(accent, "%s", toast.title.empty() ? "Notice" : toast.title.c_str());
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 330.0f);
+        ImGui::TextUnformatted(toast.message.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+        ImGui::PopID();
+        cursorY += 70.0f;
+    }
+
+    ImGui::End();
+}
+
+// Enters simulation paused state.
 void enterSimulationPaused() {
     viz_.autoRun = false;
     cancelPendingSimulationSteps();
@@ -2670,11 +3842,20 @@ void enterSimulationPaused() {
     triggerOverlay(OverlayIcon::Pause);
 }
 
+// Appends line to application log.
+// @param line Log line to append
 void appendLog(const std::string& line) {
     if (line.empty()) return;
     logs_.push_back(line);
     if (logs_.size() > 2000)
         logs_.erase(logs_.begin(), logs_.begin() + static_cast<std::ptrdiff_t>(logs_.size() - 2000));
+
+    const std::string lower = app::toLower(line);
+    if (lower.find("failed") != std::string::npos || lower.find("error") != std::string::npos) {
+        pushToast(ToastLevel::Error, "Runtime error", line, 5.0f);
+    } else if (lower.find("warning") != std::string::npos || lower.find("slow") != std::string::npos) {
+        pushToast(ToastLevel::Warning, "Warning", line, 4.5f);
+    }
 }
 
 [[nodiscard]] std::filesystem::path displayPrefsPathForWorld(const std::string& w) const {
@@ -2685,6 +3866,7 @@ void appendLog(const std::string& line) {
     return displayPrefsPathForWorld(runtime_.activeWorldName());
 }
 
+// Opens selected world from model selector.
 void openSelectedWorld() {
     appendLog("open_world_button_clicked");
     if (sessionUi_.selectedWorldIndex < 0 ||
@@ -2693,6 +3875,8 @@ void openSelectedWorld() {
         return;
     }
     const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+    beginOperationStatus("open world", 0.15f, world.worldName.c_str());
+    const auto startedAt = std::chrono::steady_clock::now();
     std::string msg;
     if (runtime_.openWorld(world.worldName, msg)) {
         appendLog(msg);
@@ -2700,13 +3884,16 @@ void openSelectedWorld() {
         refreshFieldNames();
         resetDisplayConfigToDefaults();
         loadDisplayPrefs();
+        completeOperationStatus(startedAt, "world opened");
         enterSimulationPaused();
     } else {
         appendLog(msg);
+        completeOperationStatus(startedAt, "world open failed");
         std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", msg.c_str());
     }
 }
 
+// Resets display configuration to default values.
 void resetDisplayConfigToDefaults() {
     const VisualizationState defaults{};
     viz_.layout                      = defaults.layout;
@@ -2728,6 +3915,7 @@ void resetDisplayConfigToDefaults() {
     requestViewportEditorSelection(static_cast<std::size_t>(viz_.activeViewportEditor));
 }
 
+// Saves display preferences to file.
 void saveDisplayPrefs() {
     ensureViewportStateConsistency();
 
@@ -2800,6 +3988,7 @@ void saveDisplayPrefs() {
     }
 }
 
+// Loads display preferences from file.
 void loadDisplayPrefs() {
     ensureViewportStateConsistency();
 

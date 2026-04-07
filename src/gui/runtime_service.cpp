@@ -442,7 +442,7 @@ bool RuntimeService::saveActiveWorld(std::string& message) {
         const std::string modelKey = currentModelKey();
         worldProfileStore_.save(activeWorldName_, config_, modelKey);
         const auto checkpoint = runtime_->createCheckpoint(activeWorldName_, true /* computeHash */);
-        const auto checkpointPath = worldStore_.checkpointPathFor(activeWorldName_, modelKey);
+        const auto checkpointPath = worldStore_.writeCheckpointPathFor(activeWorldName_, modelKey);
         app::writeCheckpointFile(checkpoint, checkpointPath);
         std::ostringstream output;
         output << "world_saved name=" << activeWorldName_
@@ -1054,6 +1054,59 @@ bool RuntimeService::manualEventLog(std::vector<ManualEventRecord>& events, std:
     }
 }
 
+bool RuntimeService::timelineCheckpointSteps(std::vector<std::uint64_t>& steps, std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("timeline_checkpoint_steps", message)) {
+            return false;
+        }
+        steps = checkpointStorage_.listSteps();
+        message = "timeline_checkpoint_steps_ready count=" + std::to_string(steps.size());
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("timeline_checkpoint_steps_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::checkpointRecords(std::vector<CheckpointInfo>& records, std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("checkpoint_records", message)) {
+            return false;
+        }
+
+        records.clear();
+        records.reserve(checkpoints_.size());
+        for (const auto& [label, checkpoint] : checkpoints_) {
+            records.push_back(CheckpointInfo{
+                label,
+                checkpoint.stateSnapshot.header.stepIndex,
+                checkpoint.stateSnapshot.header.timestampTicks,
+                checkpoint.stateSnapshot.stateHash,
+                checkpoint.stateSnapshot.payloadBytes,
+                checkpoint.runSignature.identityHash(),
+                checkpoint.profileFingerprint});
+        }
+
+        std::stable_sort(records.begin(), records.end(), [](const CheckpointInfo& lhs, const CheckpointInfo& rhs) {
+            if (lhs.stepIndex != rhs.stepIndex) {
+                return lhs.stepIndex > rhs.stepIndex;
+            }
+            if (lhs.timestampTicks != rhs.timestampTicks) {
+                return lhs.timestampTicks > rhs.timestampTicks;
+            }
+            return lhs.label < rhs.label;
+        });
+
+        message = "checkpoint_records_ready count=" + std::to_string(records.size());
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("checkpoint_records_failed error=") + exception.what();
+        return false;
+    }
+}
+
 bool RuntimeService::createCheckpoint(const std::string& label, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
@@ -1102,19 +1155,83 @@ bool RuntimeService::restoreCheckpoint(const std::string& label, std::string& me
     }
 }
 
+bool RuntimeService::deleteCheckpoint(const std::string& label, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("checkpoint_delete", message)) {
+            return false;
+        }
+
+        const auto erased = checkpoints_.erase(label);
+        if (erased == 0u) {
+            message = "unknown checkpoint label: " + label;
+            return false;
+        }
+
+        message = "checkpoint_deleted label=" + label;
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("checkpoint_delete_failed error=") + exception.what();
+        return false;
+    }
+}
+
+bool RuntimeService::renameCheckpoint(const std::string& fromLabel, const std::string& toLabel, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("checkpoint_rename", message)) {
+            return false;
+        }
+
+        if (fromLabel.empty() || toLabel.empty()) {
+            message = "checkpoint rename requires source and target labels";
+            return false;
+        }
+        if (fromLabel == toLabel) {
+            message = "checkpoint rename target matches source";
+            return false;
+        }
+
+        const auto sourceIt = checkpoints_.find(fromLabel);
+        if (sourceIt == checkpoints_.end()) {
+            message = "unknown checkpoint label: " + fromLabel;
+            return false;
+        }
+        if (checkpoints_.contains(toLabel)) {
+            message = "checkpoint label already exists: " + toLabel;
+            return false;
+        }
+
+        RuntimeCheckpoint checkpoint = sourceIt->second;
+        checkpoint.stateSnapshot.checkpointLabel = toLabel;
+        checkpoints_.erase(sourceIt);
+        checkpoints_.emplace(toLabel, std::move(checkpoint));
+        message = "checkpoint_renamed from=" + fromLabel + " to=" + toLabel;
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("checkpoint_rename_failed error=") + exception.what();
+        return false;
+    }
+}
+
 bool RuntimeService::listCheckpoints(std::string& message) const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
-    if (checkpoints_.empty()) {
+    std::vector<CheckpointInfo> records;
+    if (!checkpointRecords(records, message)) {
+        return false;
+    }
+    if (records.empty()) {
         message = "checkpoints=empty";
         return true;
     }
 
     std::ostringstream output;
-    for (const auto& [label, checkpoint] : checkpoints_) {
-        output << "checkpoint label=" << label
-               << " step_index=" << checkpoint.stateSnapshot.header.stepIndex
-               << " state_hash=" << checkpoint.stateSnapshot.stateHash
-               << " payload_bytes=" << checkpoint.stateSnapshot.payloadBytes
+    for (const auto& record : records) {
+        output << "checkpoint label=" << record.label
+               << " step_index=" << record.stepIndex
+               << " timestamp_ticks=" << record.timestampTicks
+               << " state_hash=" << record.stateHash
+               << " payload_bytes=" << record.payloadBytes
                << '\n';
     }
 

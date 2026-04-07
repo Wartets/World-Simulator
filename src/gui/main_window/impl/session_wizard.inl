@@ -1,7 +1,90 @@
 #ifdef WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT
 
+    void beginOperationStatus(const char* label, const float progress = -1.0f, const char* detail = "") {
+        std::snprintf(sessionUi_.operationLabel, sizeof(sessionUi_.operationLabel), "%s", label != nullptr ? label : "operation");
+        std::snprintf(sessionUi_.operationDetail, sizeof(sessionUi_.operationDetail), "%s", detail != nullptr ? detail : "");
+        sessionUi_.operationProgress = progress;
+        sessionUi_.operationActive = true;
+    }
+
+    void completeOperationStatus(
+        const std::chrono::steady_clock::time_point startedAt,
+        const char* completionDetail = "") {
+        const float elapsedMs = static_cast<float>(
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startedAt).count());
+        sessionUi_.lastOperationDurationMs = elapsedMs;
+        sessionUi_.operationProgress = 1.0f;
+        sessionUi_.operationActive = false;
+
+        std::ostringstream detail;
+        if (completionDetail != nullptr && completionDetail[0] != '\0') {
+            detail << completionDetail << " | ";
+        }
+        detail << "duration_ms=" << static_cast<int>(elapsedMs);
+        std::snprintf(sessionUi_.operationDetail, sizeof(sessionUi_.operationDetail), "%s", detail.str().c_str());
+    }
+
+    void tickDeferredWizardInitialization() {
+        if (!deferredWizardInitialization_.active) {
+            return;
+        }
+
+        const std::size_t total = deferredWizardInitialization_.pendingSettings.size();
+        if (deferredWizardInitialization_.nextIndex < total) {
+            const auto& setting = deferredWizardInitialization_.pendingSettings[deferredWizardInitialization_.nextIndex];
+            const float restrictedValue = applyVariableRestriction(setting, setting.baseValue);
+            std::string patchMessage;
+            runtime_.applyManualPatch(
+                setting.variableId,
+                std::nullopt,
+                restrictedValue,
+                "wizard_variable_init",
+                patchMessage);
+            appendLog(patchMessage);
+            ++deferredWizardInitialization_.appliedVariableCount;
+            ++deferredWizardInitialization_.nextIndex;
+
+            const float progress = total > 0u
+                ? static_cast<float>(deferredWizardInitialization_.nextIndex) / static_cast<float>(total)
+                : 1.0f;
+            std::ostringstream detail;
+            detail << "Applying variable initializers "
+                   << deferredWizardInitialization_.nextIndex
+                   << "/" << total;
+            beginOperationStatus("world creation", progress, detail.str().c_str());
+            return;
+        }
+
+        const float elapsedMs = static_cast<float>(
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - deferredWizardInitialization_.startedAt)
+                .count());
+        {
+            std::ostringstream perf;
+            perf << "wizard_variable_init_complete vars=" << deferredWizardInitialization_.appliedVariableCount
+                 << " estimated_writes=" << deferredWizardInitialization_.estimatedWrites
+                 << " duration_ms=" << static_cast<int>(elapsedMs);
+            appendLog(perf.str());
+        }
+        for (const auto& warning : deferredWizardInitialization_.verificationWarnings) {
+            appendLog("verification_warning: " + warning);
+        }
+
+        completeOperationStatus(deferredWizardInitialization_.startedAt, "world creation complete");
+        deferredWizardInitialization_ = DeferredWizardInitialization{};
+        sessionUi_.needsRefresh = true;
+
+        syncPanelFromConfig();
+        refreshFieldNames();
+        resetDisplayConfigToDefaults();
+        loadDisplayPrefs();
+        enterSimulationPaused();
+    }
+
     void drawSessionManager() {
         if (sessionUi_.needsRefresh) {
+            beginOperationStatus("refresh world list", 0.25f, "loading stored worlds");
+            const auto refreshStartedAt = std::chrono::steady_clock::now();
             std::string listMessage;
             sessionUi_.worlds = runtime_.listStoredWorlds(listMessage);
             if (sessionUi_.selectedWorldIndex >= static_cast<int>(sessionUi_.worlds.size())) {
@@ -12,6 +95,7 @@
             }
             std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", listMessage.c_str());
             sessionUi_.needsRefresh = false;
+            completeOperationStatus(refreshStartedAt, "world list refreshed");
         }
 
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -58,6 +142,16 @@
             ImGui::EndChild();
         }
 
+        if (sessionUi_.operationLabel[0] != '\0' || sessionUi_.operationDetail[0] != '\0') {
+            ImGui::BeginChild("SessionOperationStatus", ImVec2(-1.0f, 58.0f), true);
+            ImGui::Text("Operation: %s", sessionUi_.operationLabel[0] != '\0' ? sessionUi_.operationLabel : "idle");
+            if (sessionUi_.operationProgress >= 0.0f) {
+                ImGui::ProgressBar(std::clamp(sessionUi_.operationProgress, 0.0f, 1.0f), ImVec2(-1.0f, 0.0f));
+            }
+            ImGui::TextDisabled("%s", sessionUi_.operationDetail[0] != '\0' ? sessionUi_.operationDetail : "No recent operation details.");
+            ImGui::EndChild();
+        }
+
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -68,6 +162,7 @@
 
         std::vector<int> filteredWorldIndices;
         filteredWorldIndices.reserve(sessionUi_.worlds.size());
+        static int worldCompareSelectionIndex = -1;
         const std::string query = app::toLower(std::string(sessionUi_.worldSearch));
         for (int i = 0; i < static_cast<int>(sessionUi_.worlds.size()); ++i) {
             const auto& world = sessionUi_.worlds[static_cast<std::size_t>(i)];
@@ -168,6 +263,12 @@
         ImGui::BeginChild("WorldDetails", ImVec2(-1.0f, -1.0f), true);
         if (sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
             const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+            if (worldCompareSelectionIndex == sessionUi_.selectedWorldIndex) {
+                worldCompareSelectionIndex = -1;
+            }
+            if (worldCompareSelectionIndex >= static_cast<int>(sessionUi_.worlds.size())) {
+                worldCompareSelectionIndex = -1;
+            }
             const std::uint64_t gridCells = static_cast<std::uint64_t>(world.gridWidth) * static_cast<std::uint64_t>(world.gridHeight);
             const std::uintmax_t totalBytes = world.profileBytes + world.checkpointBytes;
             ImGui::Text("Name: %s", world.worldName.c_str());
@@ -197,6 +298,60 @@
             ImGui::Spacing();
             ImGui::ProgressBar(static_cast<float>(qualityScore) / 100.0f, ImVec2(-1.0f, 0.0f));
             ImGui::TextDisabled("Integrity score: %d/100", qualityScore);
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextDisabled("Session inspector");
+            ImGui::Text("Profile bytes: %s", session_manager::formatBytes(world.profileBytes).c_str());
+            ImGui::Text("Session type: %s", world.hasCheckpoint ? "checkpoint-backed" : "profile-only");
+            ImGui::Text("Storage roots: %s", world.modelKey.empty() ? "global" : world.modelKey.c_str());
+
+            const char* compareLabel = "<none>";
+            if (worldCompareSelectionIndex >= 0 && worldCompareSelectionIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                compareLabel = sessionUi_.worlds[static_cast<std::size_t>(worldCompareSelectionIndex)].worldName.c_str();
+            }
+            if (ImGui::BeginCombo("Compare against", compareLabel)) {
+                const bool noCompare = (worldCompareSelectionIndex < 0);
+                if (ImGui::Selectable("<none>", noCompare)) {
+                    worldCompareSelectionIndex = -1;
+                }
+                if (noCompare) {
+                    ImGui::SetItemDefaultFocus();
+                }
+
+                for (int i = 0; i < static_cast<int>(sessionUi_.worlds.size()); ++i) {
+                    if (i == sessionUi_.selectedWorldIndex) {
+                        continue;
+                    }
+                    const bool selected = (worldCompareSelectionIndex == i);
+                    const auto& candidate = sessionUi_.worlds[static_cast<std::size_t>(i)];
+                    if (ImGui::Selectable(candidate.worldName.c_str(), selected)) {
+                        worldCompareSelectionIndex = i;
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (worldCompareSelectionIndex >= 0 && worldCompareSelectionIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                const auto& other = sessionUi_.worlds[static_cast<std::size_t>(worldCompareSelectionIndex)];
+                const std::int64_t widthDelta = static_cast<std::int64_t>(world.gridWidth) - static_cast<std::int64_t>(other.gridWidth);
+                const std::int64_t heightDelta = static_cast<std::int64_t>(world.gridHeight) - static_cast<std::int64_t>(other.gridHeight);
+                const std::int64_t stepDelta = static_cast<std::int64_t>(world.stepIndex) - static_cast<std::int64_t>(other.stepIndex);
+                const std::int64_t bytesDelta = static_cast<std::int64_t>(totalBytes) -
+                    static_cast<std::int64_t>(other.profileBytes + other.checkpointBytes);
+
+                ImGui::Text("Delta vs %s", other.worldName.c_str());
+                ImGui::BulletText("Grid delta: %+lld x %+lld", static_cast<long long>(widthDelta), static_cast<long long>(heightDelta));
+                ImGui::BulletText("Seed match: %s", world.seed == other.seed ? "yes" : "no");
+                ImGui::BulletText("Checkpoint step delta: %+lld", static_cast<long long>(stepDelta));
+                ImGui::BulletText("Data footprint delta: %+lld bytes", static_cast<long long>(bytesDelta));
+                ImGui::BulletText("Run identity match: %s", world.runIdentityHash == other.runIdentityHash ? "yes" : "no");
+                ImGui::BulletText("Profile size match: %s", world.profileBytes == other.profileBytes ? "yes" : "no");
+            }
         } else {
             EmptyStateCard("No world selected.", "Select a world from the list to enable the Open world action.");
         }
@@ -251,6 +406,8 @@
             rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
             panel_.useManualSeed = false;
             panel_.seed = generateRandomSeed();
+            sessionUi_.wizardStepIndex = 0;
+            deferredWizardInitialization_ = DeferredWizardInitialization{};
             appState_ = AppState::NewWorldWizard;
         }
         DelayedTooltip("Open world creation with smart default naming based on the selected model.");
@@ -319,25 +476,39 @@
 
         if (ImGui::BeginPopupModal("Duplicate World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::InputText("New world name", sessionUi_.pendingDuplicateName, IM_ARRAYSIZE(sessionUi_.pendingDuplicateName));
+            const std::string requestedName = sessionUi_.pendingDuplicateName;
+            const std::string normalizedName = runtime_.normalizeWorldNameForUi(requestedName);
+            const bool duplicateNameValid = !normalizedName.empty();
+            if (!duplicateNameValid) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Enter a valid world name.");
+            } else if (normalizedName != requestedName) {
+                ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Normalized name: %s", normalizedName.c_str());
+            } else {
+                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Name format: valid");
+            }
+
+            if (!duplicateNameValid) {
+                ImGui::BeginDisabled();
+            }
             if (PrimaryButton("Duplicate", ImVec2(140.0f, 28.0f))) {
                 if (sessionUi_.pendingDuplicateWorldIndex >= 0 && sessionUi_.pendingDuplicateWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
                     const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingDuplicateWorldIndex)];
                     std::string message;
-                    const std::string requestedName = sessionUi_.pendingDuplicateName;
-                    const std::string normalizedName = runtime_.normalizeWorldNameForUi(requestedName);
-                    if (normalizedName.empty()) {
-                        message = "world_duplicate_failed error=invalid_name";
-                    } else {
-                        if (requestedName != normalizedName) {
-                            std::snprintf(sessionUi_.pendingDuplicateName, sizeof(sessionUi_.pendingDuplicateName), "%s", normalizedName.c_str());
-                        }
-                        runtime_.duplicateWorld(world.worldName, normalizedName, message);
+                    beginOperationStatus("duplicate world", 0.4f, world.worldName.c_str());
+                    const auto startedAt = std::chrono::steady_clock::now();
+                    if (requestedName != normalizedName) {
+                        std::snprintf(sessionUi_.pendingDuplicateName, sizeof(sessionUi_.pendingDuplicateName), "%s", normalizedName.c_str());
                     }
+                    runtime_.duplicateWorld(world.worldName, normalizedName, message);
+                    completeOperationStatus(startedAt, "duplicate world finished");
                     std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
                     appendLog(message);
                     sessionUi_.needsRefresh = true;
                 }
                 ImGui::CloseCurrentPopup();
+            }
+            if (!duplicateNameValid) {
+                ImGui::EndDisabled();
             }
             ImGui::SameLine();
             if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
@@ -348,25 +519,39 @@
 
         if (ImGui::BeginPopupModal("Rename World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::InputText("World name", sessionUi_.pendingRenameName, IM_ARRAYSIZE(sessionUi_.pendingRenameName));
+            const std::string requestedName = sessionUi_.pendingRenameName;
+            const std::string normalizedName = runtime_.normalizeWorldNameForUi(requestedName);
+            const bool renameNameValid = !normalizedName.empty();
+            if (!renameNameValid) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Enter a valid world name.");
+            } else if (normalizedName != requestedName) {
+                ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Normalized name: %s", normalizedName.c_str());
+            } else {
+                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Name format: valid");
+            }
+
+            if (!renameNameValid) {
+                ImGui::BeginDisabled();
+            }
             if (PrimaryButton("Rename", ImVec2(140.0f, 28.0f))) {
                 if (sessionUi_.pendingRenameWorldIndex >= 0 && sessionUi_.pendingRenameWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
                     const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingRenameWorldIndex)];
                     std::string message;
-                    const std::string requestedName = sessionUi_.pendingRenameName;
-                    const std::string normalizedName = runtime_.normalizeWorldNameForUi(requestedName);
-                    if (normalizedName.empty()) {
-                        message = "world_rename_failed error=invalid_name";
-                    } else {
-                        if (requestedName != normalizedName) {
-                            std::snprintf(sessionUi_.pendingRenameName, sizeof(sessionUi_.pendingRenameName), "%s", normalizedName.c_str());
-                        }
-                        runtime_.renameWorld(world.worldName, normalizedName, message);
+                    beginOperationStatus("rename world", 0.4f, world.worldName.c_str());
+                    const auto startedAt = std::chrono::steady_clock::now();
+                    if (requestedName != normalizedName) {
+                        std::snprintf(sessionUi_.pendingRenameName, sizeof(sessionUi_.pendingRenameName), "%s", normalizedName.c_str());
                     }
+                    runtime_.renameWorld(world.worldName, normalizedName, message);
+                    completeOperationStatus(startedAt, "rename world finished");
                     std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
                     appendLog(message);
                     sessionUi_.needsRefresh = true;
                 }
                 ImGui::CloseCurrentPopup();
+            }
+            if (!renameNameValid) {
+                ImGui::EndDisabled();
             }
             ImGui::SameLine();
             if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
@@ -377,15 +562,37 @@
 
         if (ImGui::BeginPopupModal("Export World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::InputText("Export path", sessionUi_.pendingExportPath, IM_ARRAYSIZE(sessionUi_.pendingExportPath));
+            const std::string exportPath = sessionUi_.pendingExportPath;
+            const bool exportPathValid = !exportPath.empty();
+            if (!exportPathValid) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Export path is required.");
+            } else {
+                const std::filesystem::path normalizedExportPath(exportPath);
+                if (normalizedExportPath.extension() != ".wsexp") {
+                    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Recommended extension: .wsexp");
+                } else {
+                    ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Export target looks valid.");
+                }
+            }
+
+            if (!exportPathValid) {
+                ImGui::BeginDisabled();
+            }
             if (PrimaryButton("Export", ImVec2(140.0f, 28.0f))) {
                 if (sessionUi_.pendingExportWorldIndex >= 0 && sessionUi_.pendingExportWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
                     const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingExportWorldIndex)];
                     std::string message;
+                    beginOperationStatus("export world", 0.4f, world.worldName.c_str());
+                    const auto startedAt = std::chrono::steady_clock::now();
                     runtime_.exportWorld(world.worldName, std::filesystem::path(sessionUi_.pendingExportPath), message);
+                    completeOperationStatus(startedAt, "export world finished");
                     std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
                     appendLog(message);
                 }
                 ImGui::CloseCurrentPopup();
+            }
+            if (!exportPathValid) {
+                ImGui::EndDisabled();
             }
             ImGui::SameLine();
             if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
@@ -400,14 +607,34 @@
         }
         if (ImGui::BeginPopupModal("Import World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::InputText("Import file", sessionUi_.pendingImportPath, IM_ARRAYSIZE(sessionUi_.pendingImportPath));
+            const std::filesystem::path importPath = std::filesystem::path(sessionUi_.pendingImportPath);
+            const bool importPathProvided = !importPath.empty();
+            const bool importPathExists = importPathProvided && std::filesystem::exists(importPath);
+            if (!importPathProvided) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Import file path is required.");
+            } else if (!importPathExists) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Import file was not found.");
+            } else {
+                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Import source detected.");
+            }
+
+            if (!importPathExists) {
+                ImGui::BeginDisabled();
+            }
             if (PrimaryButton("Import", ImVec2(140.0f, 28.0f))) {
                 std::string importedName;
                 std::string message;
+                beginOperationStatus("import world", 0.4f, sessionUi_.pendingImportPath);
+                const auto startedAt = std::chrono::steady_clock::now();
                 runtime_.importWorld(std::filesystem::path(sessionUi_.pendingImportPath), importedName, message);
+                completeOperationStatus(startedAt, "import world finished");
                 std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
                 appendLog(message);
                 sessionUi_.needsRefresh = true;
                 ImGui::CloseCurrentPopup();
+            }
+            if (!importPathExists) {
+                ImGui::EndDisabled();
             }
             ImGui::SameLine();
             if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
@@ -427,7 +654,10 @@
                 if (sessionUi_.pendingDeleteWorldIndex >= 0 && sessionUi_.pendingDeleteWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
                     const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingDeleteWorldIndex)];
                     std::string message;
+                    beginOperationStatus("delete world", 0.4f, world.worldName.c_str());
+                    const auto startedAt = std::chrono::steady_clock::now();
                     runtime_.deleteWorld(world.worldName, message);
+                    completeOperationStatus(startedAt, "delete world finished");
                     appendLog(message);
                     std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
                     sessionUi_.needsRefresh = true;
@@ -456,6 +686,8 @@
     }
 
     void drawNewWorldWizard() {
+        tickDeferredWizardInitialization();
+
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->Pos);
         ImGui::SetNextWindowSize(viewport->Size);
@@ -475,6 +707,20 @@
 
         ImGui::BeginChild("WizardHeader", ImVec2(-1.0f, 88.0f), false);
         SectionHeader("Create New World", "Configure generation parameters before simulation start.");
+        static constexpr std::array<const char*, 4> kWizardSteps = {
+            "Basics",
+            "Bindings",
+            "Preflight",
+            "Review & Create"};
+        sessionUi_.wizardStepIndex = std::clamp(sessionUi_.wizardStepIndex, 0, static_cast<int>(kWizardSteps.size()) - 1);
+        ImGui::TextDisabled(
+            "Step %d/%d: %s",
+            sessionUi_.wizardStepIndex + 1,
+            static_cast<int>(kWizardSteps.size()),
+            kWizardSteps[static_cast<std::size_t>(sessionUi_.wizardStepIndex)]);
+        ImGui::ProgressBar(
+            static_cast<float>(sessionUi_.wizardStepIndex + 1) / static_cast<float>(kWizardSteps.size()),
+            ImVec2(-1.0f, 0.0f));
         ImGui::EndChild();
 
         if (sessionUi_.selectedModelName[0] != '\0') {
@@ -484,6 +730,16 @@
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
             ImGui::TextDisabled("%s", sessionUi_.selectedModelDescription);
             ImGui::PopTextWrapPos();
+            ImGui::EndChild();
+        }
+
+        if (sessionUi_.operationLabel[0] != '\0') {
+            ImGui::BeginChild("WizardOperationStatus", ImVec2(-1.0f, 58.0f), true);
+            ImGui::Text("Operation: %s", sessionUi_.operationLabel);
+            if (sessionUi_.operationProgress >= 0.0f) {
+                ImGui::ProgressBar(std::clamp(sessionUi_.operationProgress, 0.0f, 1.0f), ImVec2(-1.0f, 0.0f));
+            }
+            ImGui::TextDisabled("%s", sessionUi_.operationDetail[0] != '\0' ? sessionUi_.operationDetail : "");
             ImGui::EndChild();
         }
 
@@ -501,15 +757,39 @@
             ImGui::SetColumnWidth(0, rootW * 0.42f);
         }
 
-        SectionHeader("Generation parameters", "Define initial conditions and model setup.");
-        ImGui::Spacing();
-        ImGui::BeginChild("WizardForm", ImVec2(-1.0f, narrowLayout ? 320.0f : -1.0f), true);
-        inputTextWithHint("World Name", sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "Name for this world. Letters, numbers, '_' and '-' are recommended.");
-        LabeledHint("Smart naming uses model context and avoids collisions automatically.");
-        ImGui::Spacing();
-        drawGridSetupSection();
-        ImGui::Spacing();
-        drawWorldGenerationSection();
+        if (sessionUi_.wizardStepIndex == 0) {
+            SectionHeader("Generation parameters", "Define initial conditions and model setup.");
+            ImGui::Spacing();
+            ImGui::BeginChild("WizardForm", ImVec2(-1.0f, narrowLayout ? 320.0f : -1.0f), true);
+            inputTextWithHint("World Name", sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "Name for this world. Letters, numbers, '_' and '-' are recommended.");
+            {
+                const std::string normalizedName = runtime_.normalizeWorldNameForUi(sessionUi_.pendingWorldName);
+                if (normalizedName.empty()) {
+                    ImGui::TextColored(
+                        ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                        "World name will be auto-generated because current input is invalid or empty.");
+                } else if (normalizedName != sessionUi_.pendingWorldName) {
+                    ImGui::TextColored(
+                        ImVec4(0.95f, 0.80f, 0.45f, 1.0f),
+                        "Normalized world name: %s",
+                        normalizedName.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "World name format: valid");
+                }
+            }
+            LabeledHint("Smart naming uses model context and avoids collisions automatically.");
+            ImGui::Spacing();
+            drawGridSetupSection();
+            ImGui::Spacing();
+            drawWorldGenerationSection();
+        } else {
+            SectionHeader("Step guidance", "Follow the stepper to complete world creation.");
+            ImGui::BeginChild("WizardGuidance", ImVec2(-1.0f, 88.0f), true);
+            ImGui::TextWrapped("Current step: %s", kWizardSteps[static_cast<std::size_t>(sessionUi_.wizardStepIndex)]);
+            ImGui::TextDisabled("Use Back/Next below. Generation parameters are edited in Step 1.");
+            ImGui::EndChild();
+            ImGui::BeginChild("WizardForm", ImVec2(-1.0f, narrowLayout ? 320.0f : -1.0f), true);
+        }
 
         initialization::InitializationRequest bindingRequest;
         bindingRequest.type = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
@@ -522,41 +802,47 @@
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        SectionHeader("Initialization binding preview", "Validate model-variable bindings before world creation.");
-        if (sessionUi_.selectedModelCellStateVariables.empty()) {
-            LabeledHint("Model variable scan unavailable. Manual variable IDs are required.");
+        if (sessionUi_.wizardStepIndex == 1) {
+            SectionHeader("Initialization binding preview", "Validate model-variable bindings before world creation.");
+            if (sessionUi_.selectedModelCellStateVariables.empty()) {
+                LabeledHint("Model variable scan unavailable. Manual variable IDs are required.");
+            } else {
+                ImGui::TextDisabled(
+                    "Detected model cell-state variables: %d",
+                    static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()));
+            }
+            if (!sessionUi_.generationBindingPlan.decisions.empty()) {
+                for (const auto& decision : sessionUi_.generationBindingPlan.decisions) {
+                    ImGui::BulletText(
+                        "%s -> %s  (confidence %.2f)",
+                        decision.bindingKey.c_str(),
+                        decision.variableId.empty() ? "<unresolved>" : decision.variableId.c_str(),
+                        decision.confidence);
+                    ImGui::TextDisabled("    %s", decision.rationale.c_str());
+                }
+            }
+
+            if (!sessionUi_.generationBindingPlan.hasBlockingIssues()) {
+                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Binding status: ready");
+            } else {
+                ImGui::TextColored(
+                    ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                    "Binding status: unresolved (%d)",
+                    static_cast<int>(sessionUi_.generationBindingPlan.issues.size()));
+                for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
+                    ImGui::BulletText("%s: %s", issue.code.c_str(), issue.message.c_str());
+                }
+            }
+
+            checkboxWithHint(
+                "Expert override unresolved bindings",
+                &sessionUi_.allowUnresolvedGenerationBindings,
+                "Allows world creation even when bindings are unresolved. Use only for custom advanced workflows.");
         } else {
             ImGui::TextDisabled(
-                "Detected model cell-state variables: %d",
-                static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()));
+                "Binding status: %s",
+                sessionUi_.generationBindingPlan.hasBlockingIssues() ? "unresolved" : "ready");
         }
-        if (!sessionUi_.generationBindingPlan.decisions.empty()) {
-            for (const auto& decision : sessionUi_.generationBindingPlan.decisions) {
-                ImGui::BulletText(
-                    "%s -> %s  (confidence %.2f)",
-                    decision.bindingKey.c_str(),
-                    decision.variableId.empty() ? "<unresolved>" : decision.variableId.c_str(),
-                    decision.confidence);
-                ImGui::TextDisabled("    %s", decision.rationale.c_str());
-            }
-        }
-
-        if (!sessionUi_.generationBindingPlan.hasBlockingIssues()) {
-            ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Binding status: ready");
-        } else {
-            ImGui::TextColored(
-                ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
-                "Binding status: unresolved (%d)",
-                static_cast<int>(sessionUi_.generationBindingPlan.issues.size()));
-            for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
-                ImGui::BulletText("%s: %s", issue.code.c_str(), issue.message.c_str());
-            }
-        }
-
-        checkboxWithHint(
-            "Expert override unresolved bindings",
-            &sessionUi_.allowUnresolvedGenerationBindings,
-            "Allows world creation even when bindings are unresolved. Use only for custom advanced workflows.");
 
         struct VerificationReport {
             std::vector<std::string> blocking;
@@ -656,48 +942,65 @@
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        SectionHeader("Preflight verification", "Full readiness checks before world creation.");
-        ImGui::TextDisabled(
-            "Checks: %d blocking, %d warning, %d enabled x_i initializers, %llu estimated x_i writes",
-            static_cast<int>(verification.blocking.size()),
-            static_cast<int>(verification.warnings.size()),
-            verification.enabledVariableInitializers,
-            static_cast<unsigned long long>(verification.estimatedGlobalWrites));
+        if (sessionUi_.wizardStepIndex == 2) {
+            SectionHeader("Preflight verification", "Full readiness checks before world creation.");
+            ImGui::TextDisabled(
+                "Checks: %d blocking, %d warning, %d enabled x_i initializers, %llu estimated x_i writes",
+                static_cast<int>(verification.blocking.size()),
+                static_cast<int>(verification.warnings.size()),
+                verification.enabledVariableInitializers,
+                static_cast<unsigned long long>(verification.estimatedGlobalWrites));
 
-        checkboxWithHint(
-            "Expert override heavy initialization workload",
-            &sessionUi_.allowHeavyInitializationWork,
-            "Allows creating worlds with very large x_i initialization write counts. Use only when expected; may increase create-time stall risk.");
+            checkboxWithHint(
+                "Expert override heavy initialization workload",
+                &sessionUi_.allowHeavyInitializationWork,
+                "Allows creating worlds with very large x_i initialization write counts. Use only when expected; may increase create-time stall risk.");
 
-        if (verification.blocking.empty()) {
-            ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Blocking checks: PASS");
-        } else {
-            ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Blocking checks: FAIL");
-            for (const auto& message : verification.blocking) {
-                ImGui::BulletText("%s", message.c_str());
-            }
-        }
-
-        if (verification.warnings.empty()) {
-            ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Warnings: none");
-        } else {
-            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Warnings:");
-            for (const auto& message : verification.warnings) {
-                ImGui::BulletText("%s", message.c_str());
-            }
-        }
-
-        if (SecondaryButton("Auto-fix minor issues", ImVec2(190.0f, 22.0f))) {
-            for (auto& setting : sessionUi_.variableInitializationSettings) {
-                if (setting.restrictionMode == 1 && setting.clampMin > setting.clampMax) {
-                    std::swap(setting.clampMin, setting.clampMax);
-                }
-                if (!std::isfinite(setting.baseValue)) {
-                    setting.baseValue = 0.0f;
+            if (verification.blocking.empty()) {
+                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Blocking checks: PASS");
+            } else {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Blocking checks: FAIL");
+                for (const auto& message : verification.blocking) {
+                    ImGui::BulletText("%s", message.c_str());
                 }
             }
-            verification = collectVerificationReport();
-            appendLog("wizard_preflight_autofix_applied");
+
+            if (verification.warnings.empty()) {
+                ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Warnings: none");
+            } else {
+                ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Warnings:");
+                for (const auto& message : verification.warnings) {
+                    ImGui::BulletText("%s", message.c_str());
+                }
+            }
+
+            if (SecondaryButton("Auto-fix minor issues", ImVec2(190.0f, 22.0f))) {
+                for (auto& setting : sessionUi_.variableInitializationSettings) {
+                    if (setting.restrictionMode == 1 && setting.clampMin > setting.clampMax) {
+                        std::swap(setting.clampMin, setting.clampMax);
+                    }
+                    if (!std::isfinite(setting.baseValue)) {
+                        setting.baseValue = 0.0f;
+                    }
+                }
+                verification = collectVerificationReport();
+                appendLog("wizard_preflight_autofix_applied");
+            }
+        } else if (sessionUi_.wizardStepIndex == 3) {
+            SectionHeader("Review", "Final checklist before creating the world.");
+            ImGui::Text("World name: %s", sessionUi_.pendingWorldName[0] != '\0' ? sessionUi_.pendingWorldName : "<auto>");
+            ImGui::Text("Grid: %dx%d", panel_.gridWidth, panel_.gridHeight);
+            ImGui::Text("Generation mode: %s", generationModeLabel(static_cast<InitialConditionType>(panel_.initialConditionTypeIndex)));
+            ImGui::Text("Bindings: %s", sessionUi_.generationBindingPlan.hasBlockingIssues() ? "needs attention" : "ready");
+            ImGui::Text(
+                "Preflight: %d blocking, %d warnings",
+                static_cast<int>(verification.blocking.size()),
+                static_cast<int>(verification.warnings.size()));
+            if (!verification.blocking.empty()) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Resolve blocking items before creation.");
+            }
+        } else {
+            ImGui::TextDisabled("Preflight checks are available in Step 3.");
         }
         ImGui::EndChild();
 
@@ -1170,7 +1473,36 @@
         const float w = ImGui::GetContentRegionAvail().x;
         const float btnW = std::max(170.0f, (w - (2.0f * kS2)) / 3.0f);
 
-        if (PrimaryButton("Create world", ImVec2(btnW, 44.0f))) {
+        const bool wizardBusy = deferredWizardInitialization_.active;
+        const bool hasBlockingPreflight = !verification.blocking.empty();
+        const bool hasBindingBlocking = sessionUi_.generationBindingPlan.hasBlockingIssues() && !sessionUi_.allowUnresolvedGenerationBindings;
+        const bool canAdvance =
+            (sessionUi_.wizardStepIndex == 0) ||
+            (sessionUi_.wizardStepIndex == 1 && !hasBindingBlocking) ||
+            (sessionUi_.wizardStepIndex == 2 && !hasBlockingPreflight);
+        const bool atFinalStep = (sessionUi_.wizardStepIndex == 3);
+
+        if (wizardBusy) {
+            ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Creating world...");
+            ImGui::ProgressBar(
+                std::clamp(sessionUi_.operationProgress, 0.0f, 1.0f),
+                ImVec2(-1.0f, 0.0f),
+                sessionUi_.operationDetail[0] != '\0' ? sessionUi_.operationDetail : "Applying initialization");
+            ImGui::BeginDisabled();
+        }
+
+        if (PrimaryButton(atFinalStep ? "Create world" : "Next step", ImVec2(btnW, 44.0f))) {
+            if (!atFinalStep) {
+                if (canAdvance) {
+                    sessionUi_.wizardStepIndex = std::min(3, sessionUi_.wizardStepIndex + 1);
+                } else {
+                    if (sessionUi_.wizardStepIndex == 1 && hasBindingBlocking) {
+                        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", "wizard_step_blocked reason=unresolved_bindings");
+                    } else if (sessionUi_.wizardStepIndex == 2 && hasBlockingPreflight) {
+                        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", "wizard_step_blocked reason=preflight_blocking");
+                    }
+                }
+            } else {
             if (!panel_.useManualSeed) {
                 panel_.seed = generateRandomSeed();
             }
@@ -1255,22 +1587,22 @@
                     std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", worldName.c_str());
                 }
 
+                beginOperationStatus("world creation", 0.25f, worldName.c_str());
+                const auto createStartedAt = std::chrono::steady_clock::now();
                 std::string message;
                 if (runtime_.createWorld(worldName, runtime_.config(), message)) {
                     appendLog(message);
-                    syncPanelFromConfig();
-                    refreshFieldNames();
-                    resetDisplayConfigToDefaults();
-                    loadDisplayPrefs();
-                    enterSimulationPaused();
-
-                    const auto initStart = std::chrono::steady_clock::now();
-                    int appliedVariableCount = 0;
                     const InitialConditionType modeType = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
                     const std::string conwayTarget = panel_.conwayTargetVariable;
                     const std::string grayTargetA = panel_.grayScottTargetVariableA;
                     const std::string grayTargetB = panel_.grayScottTargetVariableB;
                     const std::string wavesTarget = panel_.wavesTargetVariable;
+
+                    deferredWizardInitialization_ = DeferredWizardInitialization{};
+                    deferredWizardInitialization_.active = true;
+                    deferredWizardInitialization_.startedAt = std::chrono::steady_clock::now();
+                    deferredWizardInitialization_.verificationWarnings = verification.warnings;
+
                     for (const auto& setting : sessionUi_.variableInitializationSettings) {
                         if (!setting.enabled || setting.variableId.empty()) {
                             continue;
@@ -1284,78 +1616,58 @@
                             continue;
                         }
 
-                        const float restrictedValue = applyVariableRestriction(setting, setting.baseValue);
-                        std::string patchMessage;
-                        runtime_.applyManualPatch(
-                            setting.variableId,
-                            std::nullopt,
-                            restrictedValue,
-                            "wizard_variable_init",
-                            patchMessage);
-                        appendLog(patchMessage);
-                        ++appliedVariableCount;
+                        deferredWizardInitialization_.pendingSettings.push_back(setting);
                     }
 
-                    const float initMs = static_cast<float>(
-                        std::chrono::duration<double, std::milli>(
-                            std::chrono::steady_clock::now() - initStart).count());
                     const std::uint64_t cellCount =
                         static_cast<std::uint64_t>(std::max(1, panel_.gridWidth)) *
                         static_cast<std::uint64_t>(std::max(1, panel_.gridHeight));
-                    const std::uint64_t estimatedWrites =
-                        cellCount * static_cast<std::uint64_t>(std::max(0, appliedVariableCount));
-                    {
-                        std::ostringstream perf;
-                        perf << "wizard_variable_init_complete vars=" << appliedVariableCount
-                             << " estimated_writes=" << estimatedWrites
-                             << " duration_ms=" << static_cast<int>(initMs);
-                        appendLog(perf.str());
-                    }
+                    deferredWizardInitialization_.estimatedWrites =
+                        cellCount * static_cast<std::uint64_t>(deferredWizardInitialization_.pendingSettings.size());
 
-                    sessionUi_.needsRefresh = true;
-                    for (const auto& warning : verification.warnings) {
-                        appendLog("verification_warning: " + warning);
+                    completeOperationStatus(createStartedAt, "world created, applying variable initializers");
+                    if (deferredWizardInitialization_.pendingSettings.empty()) {
+                        tickDeferredWizardInitialization();
+                    } else {
+                        const std::string detail =
+                            "Applying variable initializers 0/" +
+                            std::to_string(deferredWizardInitialization_.pendingSettings.size());
+                        beginOperationStatus("world creation", 0.0f, detail.c_str());
                     }
                 } else {
                     appendLog(message);
+                    completeOperationStatus(createStartedAt, "world creation failed");
                     std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
                 }
             }
+            }
         }
-        DelayedTooltip("Applies generation settings, creates the world, and enters simulation view.");
+        DelayedTooltip(atFinalStep
+            ? "Applies generation settings, creates the world, and enters simulation view."
+            : "Continue to the next wizard step.");
 
         ImGui::SameLine();
-        if (SecondaryButton("Back to world selection", ImVec2(btnW, 44.0f))) {
-            appState_ = AppState::SessionManager;
+        if (SecondaryButton(sessionUi_.wizardStepIndex == 0 ? "Back to world selection" : "Previous step", ImVec2(btnW, 44.0f))) {
+            if (sessionUi_.wizardStepIndex == 0) {
+                appState_ = AppState::SessionManager;
+            } else {
+                sessionUi_.wizardStepIndex = std::max(0, sessionUi_.wizardStepIndex - 1);
+            }
         }
-        DelayedTooltip("Return to world selection without creating a world.");
+        DelayedTooltip(sessionUi_.wizardStepIndex == 0
+            ? "Return to world selection without creating a world."
+            : "Return to the previous wizard step.");
 
         ImGui::SameLine();
         if (SecondaryButton("Reset parameters", ImVec2(btnW, 44.0f))) {
-            syncPanelFromConfig();
-            const auto recommended = GenerationAdvisor::recommendGenerationMode(sessionUi_.selectedModelCatalog, {});
-            const InitialConditionType refined = fallbackRuntimeSupportedMode(
-                refineRecommendedModeForKnownModels(sessionUi_.selectedModelCatalog, recommended.recommendedType));
-            applyGenerationDefaultsForMode(panel_, sessionUi_.selectedModelCatalog, refined, true);
-            applyAutoVariableBindingsForMode(panel_, sessionUi_.selectedModelCellStateVariables, refined);
-            viz_.generationPreviewDisplayType = recommendedPreviewDisplayTypeForMode(refined);
-            sessionUi_.generationPreviewSourceIndex = recommendedPreviewSourceForMode(refined);
-            sessionUi_.generationPreviewChannelIndex = findPreferredVariableIndex(
-                sessionUi_.selectedModelCatalog,
-                sessionUi_.selectedModelCellStateVariables,
-                {"fire_state", "living", "water", "state", "concentration", "temperature", "vegetation", "velocity", "oxygen"},
-                0);
-            sessionUi_.generationModeIndex = static_cast<int>(refined);
-            rebuildVariableInitializationSettings(sessionUi_, sessionUi_.selectedModelCatalog);
-            panel_.useManualSeed = false;
-            panel_.seed = generateRandomSeed();
-            const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'
-                ? std::string(sessionUi_.selectedModelName)
-                : std::string("world");
-            std::string suggestedName = runtime_.suggestWorldNameFromHint(baseHint);
-            std::snprintf(sessionUi_.pendingWorldName, sizeof(sessionUi_.pendingWorldName), "%s", suggestedName.c_str());
+            showWizardResetConfirm_ = true;
+            ImGui::OpenPopup("Reset Wizard Parameters");
         }
         DelayedTooltip("Restores parameters from the current runtime configuration.");
+
+        if (wizardBusy) {
+            ImGui::EndDisabled();
+        }
 
         if (sessionUi_.statusMessage[0] != '\0') {
             LabeledHint(sessionUi_.statusMessage);

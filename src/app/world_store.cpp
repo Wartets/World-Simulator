@@ -171,14 +171,34 @@ std::filesystem::path WorldStore::profilePathFor(const std::string& worldName, c
         worldProfileStore_.pathFor(normalized));
 }
 
+std::filesystem::path WorldStore::writeProfilePathFor(const std::string& worldName, const std::string& modelKey) const {
+    const auto normalized = normalizeWorldName(worldName);
+    if (normalized.empty()) {
+        return {};
+    }
+    return worldProfileStore_.writePathFor(normalized, modelKey);
+}
+
 std::filesystem::path WorldStore::checkpointPathFor(const std::string& worldName, const std::string& modelKey) const {
     const auto normalized = normalizeWorldName(worldName);
     if (normalized.empty()) {
         return {};
     }
     return resolveWithScopedFallback(
-        scopedCheckpointRoot(modelKey) / (normalized + ".wscp"),
+        writeCheckpointPathFor(normalized, modelKey),
         checkpointRoot_ / (normalized + ".wscp"));
+}
+
+std::filesystem::path WorldStore::writeCheckpointPathFor(const std::string& worldName, const std::string& modelKey) const {
+    const auto normalized = normalizeWorldName(worldName);
+    if (normalized.empty()) {
+        return {};
+    }
+    const auto normalizedModelKey = normalizeScopeKey(modelKey);
+    if (normalizedModelKey.empty()) {
+        return checkpointRoot_ / (normalized + ".wscp");
+    }
+    return scopedCheckpointRoot(modelKey) / (normalized + ".wscp");
 }
 
 std::filesystem::path WorldStore::displayPrefsPathFor(const std::string& worldName, const std::string& modelKey) const {
@@ -187,8 +207,20 @@ std::filesystem::path WorldStore::displayPrefsPathFor(const std::string& worldNa
         return {};
     }
     return resolveWithScopedFallback(
-        scopedCheckpointRoot(modelKey) / (normalized + ".displayprefs"),
+        writeDisplayPrefsPathFor(normalized, modelKey),
         checkpointRoot_ / (normalized + ".displayprefs"));
+}
+
+std::filesystem::path WorldStore::writeDisplayPrefsPathFor(const std::string& worldName, const std::string& modelKey) const {
+    const auto normalized = normalizeWorldName(worldName);
+    if (normalized.empty()) {
+        return {};
+    }
+    const auto normalizedModelKey = normalizeScopeKey(modelKey);
+    if (normalizedModelKey.empty()) {
+        return checkpointRoot_ / (normalized + ".displayprefs");
+    }
+    return scopedCheckpointRoot(modelKey) / (normalized + ".displayprefs");
 }
 
 bool WorldStore::worldExists(const std::string& worldName, const std::string& modelKey) const {
@@ -203,8 +235,11 @@ std::vector<StoredWorldRecord> WorldStore::list(const std::string& modelKey, std
 
     try {
         auto names = worldProfileStore_.list(modelKey);
-        if (names.empty() && !normalizeScopeKey(modelKey).empty()) {
-            names = worldProfileStore_.list();
+        if (!normalizeScopeKey(modelKey).empty()) {
+            auto fallbackNames = worldProfileStore_.list();
+            names.insert(names.end(), fallbackNames.begin(), fallbackNames.end());
+            std::sort(names.begin(), names.end());
+            names.erase(std::unique(names.begin(), names.end()), names.end());
         }
         worlds.reserve(names.size());
 
@@ -380,15 +415,27 @@ bool WorldStore::erase(const std::string& worldName, const std::string& modelKey
         const auto profilePath = profilePathFor(normalized, modelKey);
         const auto checkpointPath = checkpointPathFor(normalized, modelKey);
         const auto displayPath = displayPrefsPathFor(normalized, modelKey);
+        const auto scopedProfilePath = writeProfilePathFor(normalized, modelKey);
+        const auto scopedCheckpointPath = writeCheckpointPathFor(normalized, modelKey);
+        const auto scopedDisplayPath = writeDisplayPrefsPathFor(normalized, modelKey);
 
         if (!profilePath.empty() && std::filesystem::exists(profilePath)) {
             removedAny = std::filesystem::remove(profilePath) || removedAny;
         }
+        if (!scopedProfilePath.empty() && scopedProfilePath != profilePath && std::filesystem::exists(scopedProfilePath)) {
+            removedAny = std::filesystem::remove(scopedProfilePath) || removedAny;
+        }
         if (!checkpointPath.empty() && std::filesystem::exists(checkpointPath)) {
             removedAny = std::filesystem::remove(checkpointPath) || removedAny;
         }
+        if (!scopedCheckpointPath.empty() && scopedCheckpointPath != checkpointPath && std::filesystem::exists(scopedCheckpointPath)) {
+            removedAny = std::filesystem::remove(scopedCheckpointPath) || removedAny;
+        }
         if (!displayPath.empty() && std::filesystem::exists(displayPath)) {
             removedAny = std::filesystem::remove(displayPath) || removedAny;
+        }
+        if (!scopedDisplayPath.empty() && scopedDisplayPath != displayPath && std::filesystem::exists(scopedDisplayPath)) {
+            removedAny = std::filesystem::remove(scopedDisplayPath) || removedAny;
         }
 
         if (!removedAny) {
@@ -456,9 +503,9 @@ bool WorldStore::duplicate(const std::string& fromWorldName, const std::string& 
     const auto fromCheckpoint = checkpointPathFor(from, modelKey);
     const auto fromDisplay = displayPrefsPathFor(from, modelKey);
 
-    const auto toProfile = profilePathFor(to, modelKey);
-    const auto toCheckpoint = checkpointPathFor(to, modelKey);
-    const auto toDisplay = displayPrefsPathFor(to, modelKey);
+    const auto toProfile = writeProfilePathFor(to, modelKey);
+    const auto toCheckpoint = writeCheckpointPathFor(to, modelKey);
+    const auto toDisplay = writeDisplayPrefsPathFor(to, modelKey);
 
     if (!copyFileIfExists(fromProfile, toProfile, message) ||
         !copyFileIfExists(fromCheckpoint, toCheckpoint, message) ||
@@ -632,8 +679,8 @@ bool WorldStore::importWorld(
         return false;
     }
 
-    const auto profilePath = profilePathFor(candidate, modelKey);
-    const auto checkpointPath = checkpointPathFor(candidate, modelKey);
+    const auto profilePath = writeProfilePathFor(candidate, modelKey);
+    const auto checkpointPath = writeCheckpointPathFor(candidate, modelKey);
 
     std::error_code ec;
     std::filesystem::create_directories(profilePath.parent_path(), ec);

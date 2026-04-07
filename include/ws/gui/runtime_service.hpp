@@ -50,6 +50,17 @@ struct StoredWorldInfo {
     std::uint64_t runIdentityHash = 0;
 };
 
+// Information about an in-memory checkpoint exposed to the GUI.
+struct CheckpointInfo {
+    std::string label;
+    std::uint64_t stepIndex = 0;
+    std::uint64_t timestampTicks = 0;
+    std::uint64_t stateHash = 0;
+    std::uint64_t payloadBytes = 0;
+    std::uint64_t runIdentityHash = 0;
+    std::uint64_t profileFingerprint = 0;
+};
+
 // Central service managing runtime lifecycle, checkpoints, and world storage.
 class RuntimeService {
 public:
@@ -105,10 +116,14 @@ public:
     bool undoLastManualPatch(std::string& message);
     bool enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message);
     bool manualEventLog(std::vector<ManualEventRecord>& events, std::string& message) const;
+    bool timelineCheckpointSteps(std::vector<std::uint64_t>& steps, std::string& message) const;
 
     // Checkpoint management
     bool createCheckpoint(const std::string& label, std::string& message);
     bool restoreCheckpoint(const std::string& label, std::string& message);
+    bool deleteCheckpoint(const std::string& label, std::string& message);
+    bool renameCheckpoint(const std::string& fromLabel, const std::string& toLabel, std::string& message);
+    bool checkpointRecords(std::vector<CheckpointInfo>& records, std::string& message) const;
     bool listCheckpoints(std::string& message) const;
 
     // Profile management
