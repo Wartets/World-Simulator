@@ -219,6 +219,8 @@ func diffuse_temperature() {
 | Play/Pause | Space bar or button |
 | Step Forward | Right arrow |
 | Step Backward | Left arrow |
+| State History | Alt + Left / Alt + Right |
+| Shortcut Help | F1 |
 | Time Jump | Timeline slider |
 | Pan View | Middle mouse drag |
 | Zoom | Scroll wheel |
@@ -249,6 +251,8 @@ During runtime, you can:
 - **Paint cell values**: Select paint tool and draw on grid
 - **Inject perturbations**: Define forcing regions with the perturbation tool
 - **Create checkpoints**: Save state at any timestep for later replay
+- **Manage checkpoints**: Browse in-memory checkpoints, restore, rename, or delete them from the checkpoint panel
+- **Use native file pickers**: Browse parameter presets and event logs through the OS file chooser when available
 
 ---
 
