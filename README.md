@@ -4,7 +4,7 @@ A generalized 2D/3D physics simulation engine for interactive, real-time, grid-b
 
 ## Overview
 
-World-Simulator (also known as **Symbiose**) is a standalone, highly portable, and interactive software application dedicated to simulating complex physical systems in two dimensions (with potential extension to higher dimensions). The core principle of this project is **absolute decoupling** between simulation logic (the "Model") and the dynamic system state data (the "World State").
+World-Simulator is a standalone, highly portable, and interactive software application dedicated to simulating complex physical systems in two dimensions (with potential extension to higher dimensions). The core principle of this project is **absolute decoupling** between simulation logic (the "Model") and the dynamic system state data (the "World State").
 
 This separation allows users to transport, share, and reproduce complex simulation experiments using only two files: a physical model definition file (`.simmodel`) and a binary state dump file. Whether you're simulating weather patterns, ecological systems, fluid dynamics, or cellular automata, World-Simulator provides a unified, extensible framework.
 
