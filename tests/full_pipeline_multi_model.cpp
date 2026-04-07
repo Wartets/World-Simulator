@@ -64,6 +64,93 @@ std::vector<std::filesystem::path> discoverModels(const std::filesystem::path& m
     return models;
 }
 
+std::optional<std::string> tryAliasTarget(
+    const ws::ModelExecutionSpec& executionSpec,
+    const std::string& semanticKey,
+    const std::vector<std::string>& fieldNames) {
+    const auto aliasIt = executionSpec.semanticFieldAliases.find(semanticKey);
+    if (aliasIt == executionSpec.semanticFieldAliases.end() || aliasIt->second.empty()) {
+        return std::nullopt;
+    }
+
+    if (std::find(fieldNames.begin(), fieldNames.end(), aliasIt->second) == fieldNames.end()) {
+        return std::nullopt;
+    }
+    return aliasIt->second;
+}
+
+bool isDiscreteLikeField(const ws::initialization::ModelVariableCatalog& catalog, const std::string& variableName) {
+    const auto it = std::find_if(catalog.variables.begin(), catalog.variables.end(), [&](const auto& variable) {
+        return variable.id == variableName;
+    });
+    if (it == catalog.variables.end()) {
+        return variableName == "living" || variableName == "fire_state";
+    }
+
+    if (it->type == "bool" || it->type == "u32" || it->type == "i32") {
+        return true;
+    }
+    return variableName == "living" || variableName == "fire_state";
+}
+
+std::string chooseRepresentativeField(
+    const std::vector<std::string>& fieldNames,
+    const ws::initialization::ModelVariableCatalog& catalog,
+    const ws::ModelExecutionSpec& executionSpec) {
+    if (fieldNames.empty()) {
+        return {};
+    }
+
+    const std::array<const char*, 8> preferredAliases = {
+        "automaton.state",
+        "fire.state",
+        "temperature.current",
+        "hydrology.water",
+        "climate.current",
+        "vegetation.current",
+        "resources.current",
+        "generation.elevation"
+    };
+    for (const char* semanticKey : preferredAliases) {
+        const auto alias = tryAliasTarget(executionSpec, semanticKey, fieldNames);
+        if (alias.has_value()) {
+            return *alias;
+        }
+    }
+
+    if (!catalog.preferredDisplayVariable.empty() &&
+        std::find(fieldNames.begin(), fieldNames.end(), catalog.preferredDisplayVariable) != fieldNames.end()) {
+        return catalog.preferredDisplayVariable;
+    }
+
+    for (const auto& variable : catalog.variables) {
+        if (variable.support == "cell" && variable.role == "state" &&
+            std::find(fieldNames.begin(), fieldNames.end(), variable.id) != fieldNames.end()) {
+            return variable.id;
+        }
+    }
+
+    return fieldNames.front();
+}
+
+float preferredCellPatchValue(
+    const ws::initialization::ModelVariableCatalog& catalog,
+    const std::string& variableName) {
+    return isDiscreteLikeField(catalog, variableName) ? 1.0f : 0.25f;
+}
+
+float preferredGlobalPatchValue(
+    const ws::initialization::ModelVariableCatalog& catalog,
+    const std::string& variableName) {
+    return isDiscreteLikeField(catalog, variableName) ? 0.0f : 0.05f;
+}
+
+float preferredEvolutionKickValue(
+    const ws::initialization::ModelVariableCatalog& catalog,
+    const std::string& variableName) {
+    return isDiscreteLikeField(catalog, variableName) ? 1.0f : 0.125f;
+}
+
 void require(const bool ok, const std::string& context, const std::string& message) {
     if (!ok) {
         std::cerr << "[pipeline-failure] context=" << context << " message=" << message << "\n";
@@ -229,7 +316,8 @@ void verifyDisplayPipeline(
 
 void verifyParameterAndPatchPipeline(
     ws::gui::RuntimeService& service,
-    const std::vector<std::string>& fieldNames) {
+    const ws::initialization::ModelVariableCatalog& catalog,
+    const std::string& patchTarget) {
     std::string message;
 
     require(service.pause(message), "pause_before_parameter_patch", message);
@@ -245,12 +333,26 @@ void verifyParameterAndPatchPipeline(
         require(service.setParameterValue(control.name, control.maxValue, "pipeline_parameter_max", message), "set_parameter_max", message);
     }
 
-    assert(!fieldNames.empty());
-    const std::string patchTarget = fieldNames.front();
-    require(service.applyManualPatch(patchTarget, ws::Cell{0u, 0u}, 0.25f, "pipeline_manual_patch", message), "manual_patch_cell", message);
+    require(
+        service.applyManualPatch(
+            patchTarget,
+            ws::Cell{0u, 0u},
+            preferredCellPatchValue(catalog, patchTarget),
+            "pipeline_manual_patch",
+            message),
+        "manual_patch_cell",
+        message);
     require(service.step(1u, message), "step_after_manual_patch", message);
 
-    require(service.applyManualPatch(patchTarget, std::nullopt, 0.05f, "pipeline_manual_patch_global", message), "manual_patch_global", message);
+    require(
+        service.applyManualPatch(
+            patchTarget,
+            std::nullopt,
+            preferredGlobalPatchValue(catalog, patchTarget),
+            "pipeline_manual_patch_global",
+            message),
+        "manual_patch_global",
+        message);
     require(service.step(1u, message), "step_after_global_patch", message);
 
     require(service.undoLastManualPatch(message), "undo_manual_patch", message);
@@ -317,10 +419,8 @@ void verifyTimelineAndSeeking(ws::gui::RuntimeService& service) {
     assert(std::fabs(service.playbackSpeed() - 1.75f) < 1e-6f);
 }
 
-void verifyProbePipeline(ws::gui::RuntimeService& service, const std::vector<std::string>& fieldNames) {
+void verifyProbePipeline(ws::gui::RuntimeService& service, const std::string& variable) {
     std::string message;
-    assert(!fieldNames.empty());
-    const std::string& variable = fieldNames.front();
 
     ws::ProbeDefinition globalProbe;
     globalProbe.id = "pipeline_probe_global";
@@ -394,6 +494,13 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
         catalogMessage);
     assert(!catalog.variables.empty());
 
+    ws::ModelExecutionSpec executionSpec;
+    std::string executionMessage;
+    require(
+        ws::initialization::loadModelExecutionSpec(modelPath, executionSpec, executionMessage),
+        "load_model_execution_spec",
+        executionMessage);
+
     ws::gui::ModelScopeContext scope;
     scope.modelId = modelPath.stem().string();
     scope.modelName = modelPath.stem().string();
@@ -425,6 +532,8 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
     std::vector<std::string> fieldNames;
     require(service.fieldNames(fieldNames, message), "field_names", message);
     assert(!fieldNames.empty());
+    const std::string representativeField = chooseRepresentativeField(fieldNames, catalog, executionSpec);
+    assert(!representativeField.empty());
 
     auto worlds = service.listStoredWorlds(message);
     assert(hasWorld(worlds, worldName));
@@ -443,10 +552,14 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
     }
 
     if (!evolvedNaturally && !isConwayModel) {
-        const std::string patchTarget = fieldNames.front();
         require(service.pause(message), "state_evolution_kick_pause", message);
         require(
-            service.applyManualPatch(patchTarget, ws::Cell{0u, 0u}, 0.125f, "pipeline_evolution_kick", message),
+            service.applyManualPatch(
+                representativeField,
+                ws::Cell{0u, 0u},
+                preferredEvolutionKickValue(catalog, representativeField),
+                "pipeline_evolution_kick",
+                message),
             "state_evolution_kick_patch",
             message);
         require(service.resume(message), "state_evolution_kick_resume", message);
@@ -461,8 +574,8 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
     }
 
     verifyTimelineAndSeeking(service);
-    verifyProbePipeline(service, fieldNames);
-    verifyParameterAndPatchPipeline(service, fieldNames);
+    verifyProbePipeline(service, representativeField);
+    verifyParameterAndPatchPipeline(service, catalog, representativeField);
     verifyCheckpointAndDiagnostics(service);
 
     ws::RuntimeCheckpoint checkpoint{};
@@ -473,7 +586,7 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
     require(service.fieldDisplayTags(displayTags, message), "field_display_tags", message);
     verifyDisplayPipeline(checkpoint, displayTags);
 
-    require(service.summarizeField(fieldNames.front(), message), "summarize_field", message);
+    require(service.summarizeField(representativeField, message), "summarize_field", message);
     assert(message.find("summary variable=") != std::string::npos);
 
     require(service.saveProfile(profileName, message), "save_profile", message);

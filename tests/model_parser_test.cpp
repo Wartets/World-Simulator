@@ -57,6 +57,29 @@ void test_ir_parser() {
     }
 }
 
+void test_ir_parser_negative_literals() {
+    std::string logic = R"IR(
+        @interaction (patches) func adjust() {
+            %left = Load("temperature", -1, 0)
+            %down = Load("temperature", 0, -1)
+            %clamped = Clamp(%left, -1000.0, 1000.0)
+            %next = Add(%clamped, -0.25)
+            Store("temperature", %next)
+        }
+    )IR";
+
+    try {
+        auto prog = ir::parse_ir(logic);
+        assert(prog.globals.empty());
+        assert(prog.interactions.size() == 1u);
+        assert(!prog.interactions.front()->stmts.empty());
+        std::cout << "IR Parser negative literal tests passed.\n";
+    } catch (const std::exception& e) {
+        std::cerr << "IR Parser negative literal test failed: " << e.what() << "\n";
+        assert(false);
+    }
+}
+
 void test_model_parser() {
     std::string path = "models/environmental_model_2d.simmodel";
     if (std::filesystem::exists(path)) {
@@ -94,6 +117,47 @@ static std::filesystem::path resolveModelsRoot() {
     }
 
     return {};
+}
+
+static std::vector<std::filesystem::path> discoverModelDirectories() {
+    const auto root = resolveModelsRoot();
+    if (root.empty()) {
+        return {};
+    }
+
+    std::vector<std::filesystem::path> modelDirs;
+    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+        if (!entry.is_directory() || entry.path().extension() != ".simmodel") {
+            continue;
+        }
+        modelDirs.push_back(entry.path());
+    }
+    std::sort(modelDirs.begin(), modelDirs.end());
+    return modelDirs;
+}
+
+void test_all_shipped_models_parse() {
+    const auto modelDirs = discoverModelDirectories();
+    if (modelDirs.empty()) {
+        std::cout << "Skipping all-model parser test, models root not found.\n";
+        return;
+    }
+
+    std::size_t verified = 0u;
+    for (const auto& modelDir : modelDirs) {
+        try {
+            auto ctx = ModelParser::load(modelDir);
+            assert(!ctx.flatbuffers_bin.empty());
+            assert(ctx.ir_program != nullptr);
+            ++verified;
+        } catch (const std::exception& e) {
+            std::cerr << "All-model parser smoke test failed for " << modelDir.string()
+                      << ": " << e.what() << "\n";
+            assert(false);
+        }
+    }
+
+    std::cout << "All shipped model parser smoke tests passed for " << verified << " models.\n";
 }
 
 static std::filesystem::path resolveModelDir(const std::string& modelFolderName) {
@@ -838,7 +902,9 @@ void test_extended_variable_metadata_schema_loader() {
 int main() {
     test_unit_system();
     test_ir_parser();
+    test_ir_parser_negative_literals();
     test_model_parser();
+    test_all_shipped_models_parse();
     test_model_variable_catalog_loader();
     test_model_parameter_controls_loader();
     test_model_execution_spec_loader();

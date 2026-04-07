@@ -85,6 +85,9 @@ bool hasRequiredPhase4Aliases(const ws::ModelExecutionSpec& executionSpec) {
         if (!subsystem) {
             continue;
         }
+        if (subsystem->name() == "automaton" || subsystem->name() == "fire_spread") {
+            continue;
+        }
         for (const auto& key : subsystem->declaredReadSet()) {
             if (!key.empty()) {
                 requiredSemanticKeys.insert(key);
@@ -104,6 +107,28 @@ bool hasRequiredPhase4Aliases(const ws::ModelExecutionSpec& executionSpec) {
         }
     }
     return true;
+}
+
+std::vector<std::shared_ptr<ws::ISubsystem>> compatiblePhase4Subsystems(const ws::ModelExecutionSpec& executionSpec) {
+    std::vector<std::shared_ptr<ws::ISubsystem>> result;
+    result.reserve(ws::makePhase4Subsystems().size());
+
+    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+        if (!subsystem) {
+            continue;
+        }
+        if (subsystem->name() == "automaton" &&
+            executionSpec.semanticFieldAliases.find("automaton.state") == executionSpec.semanticFieldAliases.end()) {
+            continue;
+        }
+        if (subsystem->name() == "fire_spread" &&
+            executionSpec.semanticFieldAliases.find("fire.state") == executionSpec.semanticFieldAliases.end()) {
+            continue;
+        }
+        result.push_back(subsystem);
+    }
+
+    return result;
 }
 
 ModelFixture selectModelFixture() {
@@ -169,7 +194,7 @@ RuntimeFixture makeRuntimeFixture() {
 
     ws::Runtime runtime(config);
     runtime.registerSubsystem(std::make_shared<ws::BootstrapSubsystem>());
-    for (const auto& subsystem : ws::makePhase4Subsystems()) {
+    for (const auto& subsystem : compatiblePhase4Subsystems(fixture.executionSpec)) {
         runtime.registerSubsystem(subsystem);
     }
     runtime.start();
