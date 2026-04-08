@@ -325,7 +325,7 @@ void ModelEditorWindow::setActiveModelPath(const std::filesystem::path& modelPat
 void ModelEditorWindow::loadModel(const ModelContext& context) {
     window_open = true;
     error_message.clear();
-    status_message = "Model loaded (experimental editor)";
+    status_message = "Model loaded (experimental JSON editor)";
 
     // Copy model data (avoid copying unique_ptr)
     current_model.metadata_json = context.metadata_json;
@@ -457,7 +457,7 @@ void ModelEditorWindow::showFileActionPopups() {
     }
 
     if (ImGui::BeginPopupModal("SaveModelDialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Save model JSON path");
+        ImGui::TextUnformatted("Save JSON snapshot path");
         ImGui::InputText("##save_model_path", save_model_path_buffer, sizeof(save_model_path_buffer));
         ImGui::Spacing();
 
@@ -1015,14 +1015,14 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                 if (ImGui::MenuItem("Open Model", "Ctrl+O")) {
                     ImGui::OpenPopup("OpenModelDialog");
                 }
-                if (ImGui::MenuItem("Save Model", "Ctrl+S")) {
+                if (ImGui::MenuItem("Save JSON snapshot", "Ctrl+S")) {
                     saveModel();
                 }
-                if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
+                if (ImGui::MenuItem("Save JSON snapshot as...", "Ctrl+Shift+S")) {
                     ImGui::OpenPopup("SaveModelDialog");
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Export model JSON snapshot")) {
+                if (ImGui::MenuItem("Export JSON snapshot copy")) {
                     exportModel();
                 }
                 ImGui::BeginDisabled();
@@ -1159,7 +1159,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                 ImGui::TextDisabled("Status");
                 ImGui::Separator();
                 ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f),
-                    "Experimental: JSON graph editing is supported. Full package export is not available in this build.");
+                    "Experimental boundary: Save/Export produce JSON snapshots only; package round-trip regeneration is not guaranteed in this build.");
                 if (!error_message.empty()) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
                     ImGui::TextUnformatted(error_message.c_str());
@@ -1665,13 +1665,14 @@ void ModelEditorWindow::saveModel() {
         const std::filesystem::path savedPath(save_model_path_buffer);
         const PackageIntegritySummary integrity = summarizePackageIntegrity(current_model, savedPath);
         status_message = integrity.packageLooksComplete()
-            ? "Model JSON saved (package signals complete)"
-            : "Model JSON saved (JSON-only snapshot; package still incomplete)";
+            ? "JSON snapshot saved. Existing package artifacts detected; package regeneration is not guaranteed."
+            : "JSON snapshot saved. Package artifacts are incomplete; treat this as JSON-only output.";
         error_message.clear();
         is_modified = false;
         recordHistorySnapshot("Save model");
         appendStatusDetail("save=ok");
         appendStatusDetail("files_written=model.json");
+        appendStatusDetail("artifact_semantics=json_snapshot_only");
         appendStatusDetail("package_missing=" + integrity.missingSummary());
     } else {
         error_message = std::string("Failed to save model to '") + save_model_path_buffer + "'";
@@ -1692,11 +1693,12 @@ void ModelEditorWindow::exportModel() {
     if (writeTextFile(exportPath.string(), current_model.model_json)) {
         const PackageIntegritySummary integrity = summarizePackageIntegrity(current_model, exportPath);
         status_message = integrity.packageLooksComplete()
-            ? "Model JSON exported (package signals complete)"
-            : "Model JSON exported (JSON-only snapshot; package export unavailable in this build)";
+            ? "JSON snapshot exported. Existing package artifacts detected; package export remains unavailable in this build."
+            : "JSON snapshot exported. Package export is unavailable in this build.";
         error_message.clear();
         appendStatusDetail("export_path=" + exportPath.string());
         appendStatusDetail("files_written=model_editor_export.json");
+        appendStatusDetail("artifact_semantics=json_snapshot_only");
         appendStatusDetail("package_missing=" + integrity.missingSummary());
     } else {
         error_message = "Export failed";

@@ -37,6 +37,7 @@ struct SessionUiState {
     bool allowUnresolvedGenerationBindings = false;
     bool allowHeavyInitializationWork = false;
     bool generationShowOnlyViableModes = false;
+    bool wizardAdvancedMode = false;
     int wizardStepIndex = 0;
     int generationPreviewSourceIndex = 0;
     int generationPreviewChannelIndex = 0;
@@ -56,6 +57,7 @@ struct SessionUiState {
     char pendingImportPath[260] = "";
 
     char statusMessage[256] = "";
+    char statusTechnicalDetail[512] = "";
     char operationLabel[128] = "";
     char operationDetail[256] = "";
     float operationProgress = -1.0f;

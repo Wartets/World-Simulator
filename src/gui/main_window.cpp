@@ -1034,6 +1034,8 @@ public:
                 drawNewWorldWizard();
             }
 
+            drawTaskRailOverlay();
+
             recordAppStateHistory();
             drawShortcutHelpModal();
             drawToasts();
@@ -1133,6 +1135,7 @@ private:
 #include "main_window/impl/runtime_visualization.inl"
 #include "main_window/impl/session_wizard.inl"
 #include "main_window/impl/controls_and_config.inl"
+#include "main_window/impl/workflow_rail.inl"
 #undef WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT
 
     // member state
@@ -1147,10 +1150,12 @@ private:
     std::vector<AppState> appStateHistory_{};
     int appStateHistoryCursor_ = 0;
     bool appStateHistoryTraversalInProgress_ = false;
+    bool taskRailAnalyzeSelected_ = false;
     bool showShortcutHelpModal_ = false;
     bool showStopResetConfirm_ = false;
     bool showCheckpointDeleteConfirm_ = false;
     bool showWizardResetConfirm_ = false;
+    bool workflowRailAdvancedMode_ = false;
 
     struct DeferredWizardInitialization {
         bool active = false;

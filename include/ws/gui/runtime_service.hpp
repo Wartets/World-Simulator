@@ -145,6 +145,7 @@ public:
 
     // World management
     [[nodiscard]] std::vector<StoredWorldInfo> listStoredWorlds(std::string& message) const;
+    [[nodiscard]] std::vector<StoredWorldInfo> listStoredWorldsForModel(const std::string& modelKey, std::string& message) const;
     [[nodiscard]] std::string suggestNextWorldName() const;
     [[nodiscard]] std::string suggestWorldNameFromHint(const std::string& hint) const;
     [[nodiscard]] std::string normalizeWorldNameForUi(const std::string& worldName) const;

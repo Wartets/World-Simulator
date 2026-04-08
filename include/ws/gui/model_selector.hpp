@@ -22,8 +22,24 @@ struct ModelInfo {
     std::string minimum_engine_version{"unknown"};
     std::string compatibility{"n/a"};
     std::string identity_hash{"unknown"};
+    bool has_metadata_file{false};
+    bool has_version_file{false};
+    bool has_model_file{false};
+    bool has_logic_file{false};
     std::vector<std::string> tags;
     std::filesystem::file_time_type last_modified;
+};
+
+// Launch guidance for the selected model in the model browser.
+struct LaunchConfidenceInfo {
+    std::string readinessLabel;
+    std::string compatibilitySummary;
+    std::string packageSummary;
+    std::string lastSuccessfulWorldName;
+    std::string lastSuccessfulWorldTimestamp;
+    std::string recommendedActionLabel;
+    bool canOpenLastWorld{false};
+    int packageWarningCount{0};
 };
 
 // Dialog for browsing, selecting, and managing simulation models.
@@ -52,6 +68,8 @@ public:
     // Callbacks
     std::function<void(const ModelInfo&)> on_edit_model;
     std::function<void(const ModelInfo&)> on_load_model;
+    std::function<LaunchConfidenceInfo(const ModelInfo&)> on_get_launch_confidence;
+    std::function<void(const ModelInfo&, const LaunchConfidenceInfo&)> on_launch_recommended_entry;
     // The callback receives the full filesystem path to the created/imported model.
     std::function<void(const std::string&)> on_model_created;
     
@@ -65,6 +83,7 @@ private:
     int selected_model_index;
     bool show_new_model_dialog;
     bool show_import_dialog;
+    bool show_import_conflict_dialog;
     bool show_rename_dialog;
     bool show_export_dialog;
     bool show_delete_confirm_dialog;
@@ -85,6 +104,8 @@ private:
     char pending_export_path[512];
     char import_source_path[512];
     char import_target_name[256];
+    char pending_import_destination[512];
+    bool import_replace_existing;
     int pending_action_model_index;
     
     // Model data
@@ -94,6 +115,11 @@ private:
     // UI helpers
     void renderNewModelDialog();
     void renderImportDialog();
+    bool runImportWithConflictHandling(const std::filesystem::path& source,
+                                       std::filesystem::path destination,
+                                       bool replaceExisting,
+                                       std::string& importedPathOut,
+                                       std::string& errorOut);
     void renderRenameDialog();
     void renderExportDialog();
     void renderDeleteConfirmDialog();

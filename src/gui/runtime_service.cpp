@@ -300,9 +300,15 @@ bool RuntimeService::stop(std::string& message) {
 
 std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& message) const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const std::string modelKey = currentModelKey();
+    return listStoredWorldsForModel(modelKey, message);
+}
+
+std::vector<StoredWorldInfo> RuntimeService::listStoredWorldsForModel(const std::string& modelKey, std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
     std::vector<StoredWorldInfo> worlds;
 
-    const auto records = worldStore_.list(currentModelKey(), message);
+    const auto records = worldStore_.list(modelKey, message);
     worlds.reserve(records.size());
     for (const auto& record : records) {
         StoredWorldInfo info;

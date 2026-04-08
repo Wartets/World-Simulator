@@ -1,5 +1,6 @@
 #include "ws/gui/model_selector.hpp"
 #include "ws/core/model_parser.hpp"
+#include "ws/gui/ui_components.hpp"
 
 #include <imgui.h>
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <sstream>
 #include <optional>
 #include <nlohmann/json.hpp>
+#include <utility>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -28,6 +30,7 @@ constexpr const char* kCurrentEngineVersion = "1.0.0";
 // Table column identifiers for model browser table.
 enum TableColumnId {
     ColName = 0,
+    ColLaunchStatus,
     ColId,
     ColVersion,
     ColFormatVersion,
@@ -524,6 +527,87 @@ std::string identityHashForModel(const fs::path& modelDir) {
     return out.str();
 }
 
+// Returns a decision-focused readiness label for launcher workflows.
+// @param model Model metadata and package file presence
+// @return Readiness label for fast model selection
+const char* launchReadinessLabel(const ModelInfo& model) {
+    if (model.compatibility == "incompatible") {
+        return "Engine mismatch risk";
+    }
+    if (!model.has_model_file) {
+        return "Package incomplete";
+    }
+    if (!(model.has_metadata_file && model.has_version_file && model.has_logic_file)) {
+        return "Needs review";
+    }
+    return "Ready";
+}
+
+// Returns accent color for launch readiness label.
+// @param model Model metadata and package state
+// @return UI color corresponding to readiness level
+ImVec4 launchReadinessColor(const ModelInfo& model) {
+    const std::string status = launchReadinessLabel(model);
+    if (status == "Ready") {
+        return ImVec4(0.58f, 0.88f, 0.62f, 1.0f);
+    }
+    if (status == "Needs review") {
+        return ImVec4(0.95f, 0.80f, 0.45f, 1.0f);
+    }
+    return ImVec4(0.95f, 0.55f, 0.45f, 1.0f);
+}
+
+LaunchConfidenceInfo buildFallbackLaunchConfidenceInfo(const ModelInfo& model) {
+    LaunchConfidenceInfo info;
+    info.readinessLabel = launchReadinessLabel(model);
+    std::ostringstream compatibility;
+    compatibility << "Compatibility: " << (model.compatibility.empty() ? "n/a" : model.compatibility);
+    if (model.minimum_engine_version != "n/a" && model.minimum_engine_version != "unknown") {
+        compatibility << " | Minimum engine: " << model.minimum_engine_version;
+    }
+    info.compatibilitySummary = compatibility.str();
+
+    int packageWarnings = 0;
+    if (!model.has_metadata_file) ++packageWarnings;
+    if (!model.has_version_file) ++packageWarnings;
+    if (!model.has_model_file) ++packageWarnings;
+    if (!model.has_logic_file) ++packageWarnings;
+    info.packageWarningCount = packageWarnings;
+
+    std::ostringstream packageSummary;
+    packageSummary << "Package integrity warnings: " << packageWarnings << "/4 file checks";
+    if (packageWarnings == 0) {
+        packageSummary << " (all expected files present)";
+    }
+    info.packageSummary = packageSummary.str();
+
+    info.recommendedActionLabel = "Create new world";
+    return info;
+}
+
+// Generates a unique destination path by appending _copy, _copy_2, ... to stem.
+// @param destination Requested destination path
+// @return First non-existing destination variant
+fs::path makeUniqueImportDestination(const fs::path& destination) {
+    if (!fs::exists(destination)) {
+        return destination;
+    }
+
+    const fs::path parent = destination.parent_path();
+    const std::string stem = destination.stem().string();
+    const fs::path extension = destination.extension();
+
+    int copyIndex = 1;
+    for (;;) {
+        const std::string suffix = copyIndex == 1 ? "_copy" : ("_copy_" + std::to_string(copyIndex));
+        const fs::path candidate = parent / (stem + suffix + extension.string());
+        if (!fs::exists(candidate)) {
+            return candidate;
+        }
+        ++copyIndex;
+    }
+}
+
 } // namespace
 
 // Constructs model selector and initializes UI state.
@@ -533,19 +617,20 @@ ModelSelector::ModelSelector()
       selected_model_index(-1),
       show_new_model_dialog(false),
             show_import_dialog(false),
+        show_import_conflict_dialog(false),
             show_rename_dialog(false),
             show_export_dialog(false),
             show_delete_confirm_dialog(false),
             show_column_id(true),
             show_column_version(true),
-            show_column_format_version(true),
-            show_column_minimum_engine_version(true),
+            show_column_format_version(false),
+            show_column_minimum_engine_version(false),
             show_column_author(true),
-            show_column_creation_date(true),
-            show_column_tags(true),
+            show_column_creation_date(false),
+            show_column_tags(false),
             show_column_description(true),
-            show_column_compatibility(true),
-            show_column_identity_hash(true),
+            show_column_compatibility(false),
+            show_column_identity_hash(false),
             show_column_last_modified(true),
                 filter_compatible_only(false),
                 search_query{0},
@@ -553,6 +638,8 @@ ModelSelector::ModelSelector()
             pending_export_path{0},
             import_source_path{0},
             import_target_name{0},
+            pending_import_destination{0},
+            import_replace_existing(false),
             pending_action_model_index(-1) {
             loadRecentModels();
     refreshModelList();
@@ -584,8 +671,13 @@ void ModelSelector::refreshModelList() {
             std::error_code ec;
             info.last_modified = fs::last_write_time(entry.path(), ec);
             info.identity_hash = identityHashForModel(entry.path());
+            info.has_model_file = entry.is_regular_file();
 
             if (entry.is_directory()) {
+                info.has_metadata_file = fs::exists(entry.path() / "metadata.json");
+                info.has_version_file = fs::exists(entry.path() / "version.json");
+                info.has_model_file = fs::exists(entry.path() / "model.json");
+                info.has_logic_file = fs::exists(entry.path() / "logic.ir");
                 parseMetadataInto(info, entry.path() / "metadata.json");
                 parseVersionInto(info, entry.path() / "version.json");
                 parseModelJsonInto(info, entry.path() / "model.json");
@@ -708,6 +800,36 @@ void ModelSelector::render(ImVec2 available_size) {
 
     if (ImGui::Begin("Model Selector Full Page", nullptr, flags)) {
         // Top action bar
+        bool hasRecentAvailable = false;
+        int recentAvailableIndex = -1;
+        if (!recent_model_paths.empty()) {
+            for (const auto& recentPath : recent_model_paths) {
+                auto it = std::find_if(models.begin(), models.end(), [&](const ModelInfo& m) {
+                    return fs::path(m.path).lexically_normal().string() == recentPath;
+                });
+                if (it != models.end()) {
+                    hasRecentAvailable = true;
+                    recentAvailableIndex = static_cast<int>(std::distance(models.begin(), it));
+                    break;
+                }
+            }
+        }
+
+        if (!hasRecentAvailable) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Continue last model", ImVec2(160, 0))) {
+            if (recentAvailableIndex >= 0 && recentAvailableIndex < static_cast<int>(models.size()) && on_load_model) {
+                selected_model_index = recentAvailableIndex;
+                const auto& recent = models[static_cast<std::size_t>(recentAvailableIndex)];
+                recordRecentModel(recent);
+                on_load_model(recent);
+            }
+        }
+        if (!hasRecentAvailable) {
+            ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
         if (ImGui::Button("New Model", ImVec2(100, 0))) {
             show_new_model_dialog = true;
             ImGui::OpenPopup("New Model");
@@ -763,6 +885,37 @@ void ModelSelector::render(ImVec2 available_size) {
         const bool hasSelected = selected_model_index >= 0 && selected_model_index < static_cast<int>(models.size());
         if (hasSelected) {
             const auto& selected = models[selected_model_index];
+            LaunchConfidenceInfo launchInfo = buildFallbackLaunchConfidenceInfo(selected);
+            if (on_get_launch_confidence) {
+                LaunchConfidenceInfo provided = on_get_launch_confidence(selected);
+                if (!provided.readinessLabel.empty()) {
+                    launchInfo.readinessLabel = std::move(provided.readinessLabel);
+                }
+                if (!provided.compatibilitySummary.empty()) {
+                    launchInfo.compatibilitySummary = std::move(provided.compatibilitySummary);
+                }
+                if (!provided.packageSummary.empty()) {
+                    launchInfo.packageSummary = std::move(provided.packageSummary);
+                }
+                if (!provided.lastSuccessfulWorldName.empty()) {
+                    launchInfo.lastSuccessfulWorldName = std::move(provided.lastSuccessfulWorldName);
+                }
+                if (!provided.lastSuccessfulWorldTimestamp.empty()) {
+                    launchInfo.lastSuccessfulWorldTimestamp = std::move(provided.lastSuccessfulWorldTimestamp);
+                }
+                if (!provided.recommendedActionLabel.empty()) {
+                    launchInfo.recommendedActionLabel = std::move(provided.recommendedActionLabel);
+                }
+                launchInfo.canOpenLastWorld = provided.canOpenLastWorld;
+                launchInfo.packageWarningCount = provided.packageWarningCount;
+                if (launchInfo.recommendedActionLabel.empty()) {
+                    launchInfo.recommendedActionLabel = launchInfo.canOpenLastWorld ? "Open last world" : "Create new world";
+                }
+            }
+            if (launchInfo.recommendedActionLabel.empty()) {
+                launchInfo.recommendedActionLabel = launchInfo.canOpenLastWorld ? "Open last world" : "Create new world";
+            }
+
             ImGui::Text("Selected: %s", selected.name.c_str());
             ImGui::SameLine();
             if (ImGui::Button("Load")) {
@@ -778,6 +931,29 @@ void ModelSelector::render(ImVec2 available_size) {
                     on_edit_model(selected);
                 }
             }
+            ImGui::Spacing();
+            ImGui::BeginChild("LaunchConfidenceCard", ImVec2(0.0f, 132.0f), true);
+            ImGui::TextDisabled("Launch confidence");
+            ImGui::TextColored(launchReadinessColor(selected), "%s", launchInfo.readinessLabel.c_str());
+            ImGui::TextDisabled("%s", launchInfo.compatibilitySummary.c_str());
+            ImGui::TextDisabled("%s", launchInfo.packageSummary.c_str());
+            if (launchInfo.canOpenLastWorld && !launchInfo.lastSuccessfulWorldName.empty()) {
+                ImGui::Text("Last successful world: %s", launchInfo.lastSuccessfulWorldName.c_str());
+                if (!launchInfo.lastSuccessfulWorldTimestamp.empty()) {
+                    ImGui::TextDisabled("Most recent save/open: %s", launchInfo.lastSuccessfulWorldTimestamp.c_str());
+                }
+            } else {
+                ImGui::TextDisabled("No stored world is ready to resume for this model.");
+            }
+            ImGui::Spacing();
+            if (PrimaryButton(launchInfo.recommendedActionLabel.c_str(), ImVec2(-1.0f, 30.0f))) {
+                if (on_launch_recommended_entry) {
+                    on_launch_recommended_entry(selected, launchInfo);
+                } else if (on_load_model) {
+                    on_load_model(selected);
+                }
+            }
+            ImGui::EndChild();
             ImGui::SameLine();
             if (ImGui::Button("Duplicate")) {
                 duplicateModel(selected);
@@ -815,7 +991,7 @@ void ModelSelector::render(ImVec2 available_size) {
             ImGuiTableFlags_Resizable;
 
         const int visible_column_count =
-            1 +
+            2 +
             (show_column_id ? 1 : 0) +
             (show_column_version ? 1 : 0) +
             (show_column_format_version ? 1 : 0) +
@@ -891,6 +1067,7 @@ void ModelSelector::render(ImVec2 available_size) {
 
         if (ImGui::BeginTable("ModelsTable", visible_column_count, tableFlags, ImVec2(0, ImGui::GetContentRegionAvail().y - 60.0f))) {
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColName);
+            ImGui::TableSetupColumn("Launch status", 0, 0.0f, ColLaunchStatus);
             if (show_column_id) ImGui::TableSetupColumn("ID", 0, 0.0f, ColId);
             if (show_column_version) ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_DefaultSort, 0.0f, ColVersion);
             if (show_column_format_version) ImGui::TableSetupColumn("Format", 0, 0.0f, ColFormatVersion);
@@ -914,6 +1091,7 @@ void ModelSelector::render(ImVec2 available_size) {
 
             ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
             renderHeaderWithColumnMenu("Name");
+            renderHeaderWithColumnMenu("Launch status");
             if (show_column_id) {
                 renderHeaderWithColumnMenu("ID");
             }
@@ -959,6 +1137,7 @@ void ModelSelector::render(ImVec2 available_size) {
                         int cmp = 0;
                         switch (spec.ColumnUserID) {
                             case ColName: cmp = toLowerCopy(a.name).compare(toLowerCopy(b.name)); break;
+                            case ColLaunchStatus: cmp = std::string(launchReadinessLabel(a)).compare(launchReadinessLabel(b)); break;
                             case ColId: cmp = toLowerCopy(a.model_id).compare(toLowerCopy(b.model_id)); break;
                             case ColVersion: cmp = compareVersion(a.version, b.version); break;
                             case ColFormatVersion: cmp = a.format_version.compare(b.format_version); break;
@@ -1032,6 +1211,10 @@ void ModelSelector::render(ImVec2 available_size) {
                     ImU32 bg = row_selected ? IM_COL32(64, 128, 255, 96) : IM_COL32(96, 96, 128, 64);
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, bg);
                 }
+
+                // Launch status column
+                ImGui::TableNextColumn();
+                ImGui::TextColored(launchReadinessColor(model), "%s", launchReadinessLabel(model));
 
                 // ID column
                 if (show_column_id) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.model_id.c_str()); }
@@ -1135,6 +1318,7 @@ void ws::gui::ModelSelector::renderImportDialog() {
         ImGui::TextWrapped("Import a .simmodel directory or archive into this workspace.");
         ImGui::InputText("Source path", import_source_path, IM_ARRAYSIZE(import_source_path));
         ImGui::InputText("Model name (optional)", import_target_name, IM_ARRAYSIZE(import_target_name));
+        ImGui::TextDisabled("Conflict policy: existing targets require explicit Replace confirmation or can be imported as a copy.");
 
         if (ImGui::Button("Import")) {
             const fs::path source = import_source_path;
@@ -1152,38 +1336,133 @@ void ws::gui::ModelSelector::renderImportDialog() {
 
                 std::error_code ec;
                 if (fs::exists(destination, ec)) {
-                    if (fs::is_directory(destination, ec)) {
-                        fs::remove_all(destination, ec);
-                    } else {
-                        fs::remove(destination, ec);
-                    }
-                }
-
-                if (fs::is_directory(source)) {
-                    fs::copy(source, destination, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+                    std::snprintf(pending_import_destination, sizeof(pending_import_destination), "%s", destination.string().c_str());
+                    import_replace_existing = false;
+                    show_import_conflict_dialog = true;
+                    ImGui::OpenPopup("Import Conflict");
                 } else {
-                    fs::copy_file(source, destination, fs::copy_options::overwrite_existing, ec);
-                }
-
-                if (!ec) {
-                    refreshModelList();
-                    std::memset(import_source_path, 0, sizeof(import_source_path));
-                    std::memset(import_target_name, 0, sizeof(import_target_name));
-                    show_import_dialog = false;
-                    ImGui::CloseCurrentPopup();
-                    if (on_model_created) {
-                        on_model_created(destination.string());
+                    std::string importedPath;
+                    std::string error;
+                    if (runImportWithConflictHandling(source, destination, false, importedPath, error)) {
+                        refreshModelList();
+                        std::memset(import_source_path, 0, sizeof(import_source_path));
+                        std::memset(import_target_name, 0, sizeof(import_target_name));
+                        std::memset(pending_import_destination, 0, sizeof(pending_import_destination));
+                        show_import_conflict_dialog = false;
+                        show_import_dialog = false;
+                        ImGui::CloseCurrentPopup();
+                        if (on_model_created) {
+                            on_model_created(importedPath);
+                        }
                     }
                 }
             }
         }
+
+        if (show_import_conflict_dialog) {
+            ImGui::SetNextWindowSize(ImVec2(760.0f, 180.0f), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal("Import Conflict", &show_import_conflict_dialog, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextWrapped("A model already exists at the destination path:");
+                ImGui::TextDisabled("%s", pending_import_destination[0] != '\0' ? pending_import_destination : "<unknown>");
+                ImGui::Spacing();
+                ImGui::Checkbox("Replace existing destination", &import_replace_existing);
+                ImGui::TextDisabled("When disabled, import will create a unique copy suffix (_copy, _copy_2, ...). ");
+
+                if (ImGui::Button("Continue import")) {
+                    const fs::path source = import_source_path;
+                    const fs::path destination = pending_import_destination;
+                    std::string importedPath;
+                    std::string error;
+                    if (runImportWithConflictHandling(source, destination, import_replace_existing, importedPath, error)) {
+                    refreshModelList();
+                    std::memset(import_source_path, 0, sizeof(import_source_path));
+                    std::memset(import_target_name, 0, sizeof(import_target_name));
+                    std::memset(pending_import_destination, 0, sizeof(pending_import_destination));
+                    import_replace_existing = false;
+                    show_import_conflict_dialog = false;
+                    show_import_dialog = false;
+                    ImGui::CloseCurrentPopup();
+                    if (on_model_created) {
+                        on_model_created(importedPath);
+                    }
+                    } else {
+                        (void)error;
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel")) {
+                    std::memset(pending_import_destination, 0, sizeof(pending_import_destination));
+                    import_replace_existing = false;
+                    show_import_conflict_dialog = false;
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+        }
+
         if (ImGui::Button("Cancel")) {
+            std::memset(pending_import_destination, 0, sizeof(pending_import_destination));
+            import_replace_existing = false;
+            show_import_conflict_dialog = false;
             show_import_dialog = false;
             ImGui::CloseCurrentPopup();
         }
         
         ImGui::EndPopup();
     }
+}
+
+bool ws::gui::ModelSelector::runImportWithConflictHandling(
+    const std::filesystem::path& source,
+    std::filesystem::path destination,
+    const bool replaceExisting,
+    std::string& importedPathOut,
+    std::string& errorOut) {
+    importedPathOut.clear();
+    errorOut.clear();
+
+    if (source.empty() || !fs::exists(source)) {
+        errorOut = "Import source path is missing or unavailable.";
+        return false;
+    }
+
+    std::error_code ec;
+    const bool destinationExists = fs::exists(destination, ec);
+    if (ec) {
+        errorOut = "Failed to evaluate destination path state.";
+        return false;
+    }
+
+    if (destinationExists && !replaceExisting) {
+        destination = makeUniqueImportDestination(destination);
+    }
+
+    if (destinationExists && replaceExisting) {
+        if (fs::is_directory(destination, ec)) {
+            fs::remove_all(destination, ec);
+        } else {
+            fs::remove(destination, ec);
+        }
+        if (ec) {
+            errorOut = "Failed to replace existing destination.";
+            return false;
+        }
+    }
+
+    if (fs::is_directory(source)) {
+        fs::copy(source, destination, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+    } else {
+        fs::copy_file(source, destination, fs::copy_options::overwrite_existing, ec);
+    }
+
+    if (ec) {
+        errorOut = "Import copy failed.";
+        return false;
+    }
+
+    importedPathOut = destination.string();
+    return true;
 }
 
 void ws::gui::ModelSelector::renderRenameDialog() {

@@ -119,10 +119,6 @@
         return "Stored under the active model scope.";
     }
 
-    void setSessionStatusText(const std::string& message) {
-        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
-    }
-
     [[nodiscard]] static std::string translateSessionStatusMessage(const std::string& rawMessage) {
         if (rawMessage.empty()) {
             return {};
@@ -131,10 +127,10 @@
         const std::string lower = app::toLower(rawMessage);
 
         if (lower.find("wizard_step_blocked reason=unresolved_bindings") != std::string::npos) {
-            return "Cannot continue yet: resolve initialization binding issues first, or enable expert override.";
+            return "Cannot continue: the selected setup cannot write required model variables. Fix bindings or switch to Advanced mode to use expert override.";
         }
         if (lower.find("wizard_step_blocked reason=preflight_blocking") != std::string::npos) {
-            return "Cannot continue yet: preflight checks have blocking issues.";
+            return "Cannot continue: preflight found blocking issues that would produce an invalid or unsafe world.";
         }
         if (lower.find("world_create_blocked reason=verification_failed") != std::string::npos) {
             return "World creation blocked by preflight verification failures.";
@@ -177,6 +173,23 @@
         }
 
         return rawMessage;
+    }
+
+    void setSessionStatusText(const std::string& message) {
+        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+        sessionUi_.statusTechnicalDetail[0] = '\0';
+    }
+
+    void setSessionStatusFromRaw(const std::string& rawMessage) {
+        const std::string translated = translateSessionStatusMessage(rawMessage);
+        setSessionStatusText(translated);
+        if (!rawMessage.empty() && rawMessage != translated) {
+            std::snprintf(
+                sessionUi_.statusTechnicalDetail,
+                sizeof(sessionUi_.statusTechnicalDetail),
+                "%s",
+                rawMessage.c_str());
+        }
     }
 
     void tickDeferredWizardInitialization() {
@@ -552,7 +565,7 @@
         const bool canOpen = sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size());
         ImGui::BeginChild("SessionActions", ImVec2(-1.0f, actionBarH), false);
         const float w = ImGui::GetContentRegionAvail().x;
-        const float btnW = std::max(150.0f, (w - (3.0f * kS2)) / 4.0f);
+        const float btnW = std::max(170.0f, (w - (2.0f * kS2)) / 3.0f);
 
         if (!canOpen) {
             ImGui::BeginDisabled();
@@ -633,6 +646,9 @@
                 }
                 ImGui::OpenPopup("Export World");
             }
+            if (ImGui::MenuItem("Import world")) {
+                ImGui::OpenPopup("Import World");
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Delete world")) {
                 sessionUi_.pendingDeleteWorldIndex = sessionUi_.selectedWorldIndex;
@@ -671,7 +687,7 @@
                     if (duplicated) {
                         setSessionStatusText(std::string("Duplicated '") + world.worldName + "' as '" + normalizedName + "'.");
                     } else {
-                        setSessionStatusText(translateSessionStatusMessage(message));
+                        setSessionStatusFromRaw(message);
                     }
                     appendLog(message);
                     sessionUi_.needsRefresh = true;
@@ -718,7 +734,7 @@
                     if (renamed) {
                         setSessionStatusText(std::string("Renamed world to '") + normalizedName + "'.");
                     } else {
-                        setSessionStatusText(translateSessionStatusMessage(message));
+                        setSessionStatusFromRaw(message);
                     }
                     appendLog(message);
                     sessionUi_.needsRefresh = true;
@@ -781,7 +797,7 @@
                     if (exported) {
                         setSessionStatusText(std::string("Exported '") + world.worldName + "' to '" + std::string(sessionUi_.pendingExportPath) + "'.");
                     } else {
-                        setSessionStatusText(translateSessionStatusMessage(message));
+                        setSessionStatusFromRaw(message);
                     }
                     appendLog(message);
                 }
@@ -797,10 +813,6 @@
             ImGui::EndPopup();
         }
 
-        ImGui::SameLine();
-        if (SecondaryButton("Import", ImVec2(btnW, 42.0f))) {
-            ImGui::OpenPopup("Import World");
-        }
         if (ImGui::BeginPopupModal("Import World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::InputText("Import file", sessionUi_.pendingImportPath, IM_ARRAYSIZE(sessionUi_.pendingImportPath));
             ImGui::SameLine();
@@ -841,7 +853,7 @@
                         std::string("Imported world as '") + importedName +
                         "'. Review its storage summary before opening it.");
                 } else {
-                    setSessionStatusText(translateSessionStatusMessage(message));
+                    setSessionStatusFromRaw(message);
                 }
                 appendLog(message);
                 sessionUi_.needsRefresh = true;
@@ -876,7 +888,7 @@
                     if (deleted) {
                         setSessionStatusText(std::string("Deleted world '") + world.worldName + "'.");
                     } else {
-                        setSessionStatusText(translateSessionStatusMessage(message));
+                        setSessionStatusFromRaw(message);
                     }
                     sessionUi_.needsRefresh = true;
                 }
@@ -899,6 +911,12 @@
         }
         if (sessionUi_.statusMessage[0] != '\0') {
             LabeledHint(sessionUi_.statusMessage);
+            if (sessionUi_.statusTechnicalDetail[0] != '\0') {
+                ImGui::TextDisabled("Technical detail available. Hover for raw reason code.");
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip("%s", sessionUi_.statusTechnicalDetail);
+                }
+            }
         }
 
         ImGui::EndChild();
@@ -942,6 +960,8 @@
         ImGui::ProgressBar(
             static_cast<float>(sessionUi_.wizardStepIndex + 1) / static_cast<float>(kWizardSteps.size()),
             ImVec2(-1.0f, 0.0f));
+        ImGui::Checkbox("Advanced wizard mode", &sessionUi_.wizardAdvancedMode);
+        DelayedTooltip("Standard mode keeps only common setup decisions visible. Advanced mode exposes binding and workload override controls.");
         ImGui::EndChild();
 
         if (sessionUi_.selectedModelName[0] != '\0') {
@@ -1025,40 +1045,58 @@
         ImGui::Spacing();
         if (sessionUi_.wizardStepIndex == 1) {
             SectionHeader("Initialization binding preview", "Validate model-variable bindings before world creation.");
-            if (sessionUi_.selectedModelCellStateVariables.empty()) {
-                LabeledHint("Model variable scan unavailable. Manual variable IDs are required.");
-            } else {
-                ImGui::TextDisabled(
-                    "Detected model cell-state variables: %d",
-                    static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()));
-            }
-            if (!sessionUi_.generationBindingPlan.decisions.empty()) {
-                for (const auto& decision : sessionUi_.generationBindingPlan.decisions) {
-                    ImGui::BulletText(
-                        "%s -> %s  (confidence %.2f)",
-                        decision.bindingKey.c_str(),
-                        decision.variableId.empty() ? "<unresolved>" : decision.variableId.c_str(),
-                        decision.confidence);
-                    ImGui::TextDisabled("    %s", decision.rationale.c_str());
+            if (!sessionUi_.wizardAdvancedMode) {
+                if (!sessionUi_.generationBindingPlan.hasBlockingIssues()) {
+                    ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Binding status: ready");
+                    ImGui::TextWrapped("The selected generation setup has valid target variables in this model.");
+                } else {
+                    ImGui::TextColored(
+                        ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                        "Binding status: action required (%d issue%s)",
+                        static_cast<int>(sessionUi_.generationBindingPlan.issues.size()),
+                        sessionUi_.generationBindingPlan.issues.size() == 1u ? "" : "s");
+                    ImGui::TextWrapped("This model is missing one or more variables required by the selected generation setup.");
+                    for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
+                        ImGui::BulletText("%s", issue.message.c_str());
+                    }
+                    ImGui::TextDisabled("Switch to Advanced wizard mode to inspect binding details and optional override controls.");
                 }
-            }
-
-            if (!sessionUi_.generationBindingPlan.hasBlockingIssues()) {
-                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Binding status: ready");
             } else {
-                ImGui::TextColored(
-                    ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
-                    "Binding status: unresolved (%d)",
-                    static_cast<int>(sessionUi_.generationBindingPlan.issues.size()));
-                for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
-                    ImGui::BulletText("%s: %s", issue.code.c_str(), issue.message.c_str());
+                if (sessionUi_.selectedModelCellStateVariables.empty()) {
+                    LabeledHint("Model variable scan unavailable. Manual variable IDs are required.");
+                } else {
+                    ImGui::TextDisabled(
+                        "Detected model cell-state variables: %d",
+                        static_cast<int>(sessionUi_.selectedModelCellStateVariables.size()));
                 }
-            }
+                if (!sessionUi_.generationBindingPlan.decisions.empty()) {
+                    for (const auto& decision : sessionUi_.generationBindingPlan.decisions) {
+                        ImGui::BulletText(
+                            "%s -> %s  (confidence %.2f)",
+                            decision.bindingKey.c_str(),
+                            decision.variableId.empty() ? "<unresolved>" : decision.variableId.c_str(),
+                            decision.confidence);
+                        ImGui::TextDisabled("    %s", decision.rationale.c_str());
+                    }
+                }
 
-            checkboxWithHint(
-                "Expert override unresolved bindings",
-                &sessionUi_.allowUnresolvedGenerationBindings,
-                "Allows world creation even when bindings are unresolved. Use only for custom advanced workflows.");
+                if (!sessionUi_.generationBindingPlan.hasBlockingIssues()) {
+                    ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Binding status: ready");
+                } else {
+                    ImGui::TextColored(
+                        ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                        "Binding status: unresolved (%d)",
+                        static_cast<int>(sessionUi_.generationBindingPlan.issues.size()));
+                    for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
+                        ImGui::BulletText("%s: %s", issue.code.c_str(), issue.message.c_str());
+                    }
+                }
+
+                checkboxWithHint(
+                    "Expert override unresolved bindings",
+                    &sessionUi_.allowUnresolvedGenerationBindings,
+                    "Allows world creation even when bindings are unresolved. Use only for custom advanced workflows.");
+            }
         } else {
             ImGui::TextDisabled(
                 "Binding status: %s",
@@ -1084,7 +1122,7 @@
                 report.blocking.push_back("Selected generation mode is not yet supported by runtime initialization.");
             }
             if (!sessionUi_.allowUnresolvedGenerationBindings && sessionUi_.generationBindingPlan.hasBlockingIssues()) {
-                report.blocking.push_back("Initialization binding plan has unresolved blocking issues.");
+                report.blocking.push_back("Required target variables are missing for the selected generation setup.");
             }
 
             if (selectedType == InitialConditionType::Conway && std::strlen(panel_.conwayTargetVariable) == 0u) {
@@ -1111,16 +1149,16 @@
                 }
                 ++report.enabledVariableInitializers;
                 if (setting.variableId.empty()) {
-                    report.blocking.push_back("An enabled x_i initializer has an empty variable id.");
+                    report.blocking.push_back("An enabled variable initializer is missing its target variable id.");
                 }
                 if (!std::isfinite(setting.baseValue)) {
-                    report.blocking.push_back("Enabled x_i initializer has a non-finite base value.");
+                    report.blocking.push_back("An enabled variable initializer has an invalid numeric base value.");
                 }
                 if (setting.restrictionMode == 1 && setting.clampMin > setting.clampMax) {
-                    report.warnings.push_back("Clamp bounds are inverted for one or more x_i initializers (auto-fix available).");
+                    report.warnings.push_back("Clamp bounds are inverted for one or more variable initializers (auto-fix available).");
                 }
                 if (std::find(seenVariableIds.begin(), seenVariableIds.end(), setting.variableId) != seenVariableIds.end()) {
-                    report.warnings.push_back("Duplicate enabled x_i variable ids detected.");
+                    report.warnings.push_back("Duplicate enabled variable initializer target ids detected.");
                 } else {
                     seenVariableIds.push_back(setting.variableId);
                 }
@@ -1136,23 +1174,23 @@
             static constexpr std::uint64_t kBlockWrites = 8'000'000ull;
             if (report.estimatedGlobalWrites >= kWarnWrites) {
                 std::ostringstream warn;
-                warn << "Large x_i initialization workload detected (" << report.estimatedGlobalWrites
+                warn << "Large initialization workload detected (" << report.estimatedGlobalWrites
                      << " cell writes).";
                 report.warnings.push_back(warn.str());
             }
             if (report.estimatedGlobalWrites >= kBlockWrites && !sessionUi_.allowHeavyInitializationWork) {
                 std::ostringstream block;
-                block << "x_i initialization workload exceeds safe interactive threshold (" << report.estimatedGlobalWrites
-                      << " writes). Enable expert heavy workload override if intentional.";
+                block << "Initialization workload exceeds safe interactive threshold (" << report.estimatedGlobalWrites
+                      << " writes). Use Advanced wizard mode if this workload is intentional.";
                 report.blocking.push_back(block.str());
             }
 
             if (report.enabledVariableInitializers == 0) {
-                report.warnings.push_back("No per-variable x_i initializers are enabled.");
+                report.warnings.push_back("No optional variable initializers are enabled.");
             }
 
             if (sessionUi_.generationPreviewSourceIndex == 6 && sessionUi_.selectedModelCellStateVariables.empty()) {
-                report.warnings.push_back("Preview source is set to x_i channel, but no model variables are available.");
+                report.warnings.push_back("Preview source is set to a model variable channel, but no model variables are available.");
             }
 
             return report;
@@ -1172,26 +1210,71 @@
                 verification.enabledVariableInitializers,
                 static_cast<unsigned long long>(verification.estimatedGlobalWrites));
 
-            checkboxWithHint(
-                "Expert override heavy initialization workload",
-                &sessionUi_.allowHeavyInitializationWork,
-                "Allows creating worlds with very large x_i initialization write counts. Use only when expected; may increase create-time stall risk.");
+            const auto friendlyVerificationMessage = [&](const std::string& raw) {
+                std::string text = raw;
+                auto replaceAll = [&](const std::string& from, const std::string& to) {
+                    std::size_t pos = 0;
+                    while ((pos = text.find(from, pos)) != std::string::npos) {
+                        text.replace(pos, from.size(), to);
+                        pos += to.size();
+                    }
+                };
+                replaceAll("x_i", "model variable");
+                replaceAll("initializer", "initialization setting");
+                replaceAll("binding plan", "generation setup");
+                return text;
+            };
 
-            if (verification.blocking.empty()) {
-                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Blocking checks: PASS");
-            } else {
-                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Blocking checks: FAIL");
-                for (const auto& message : verification.blocking) {
-                    ImGui::BulletText("%s", message.c_str());
-                }
+            if (sessionUi_.wizardAdvancedMode) {
+                checkboxWithHint(
+                    "Expert override heavy initialization workload",
+                    &sessionUi_.allowHeavyInitializationWork,
+                    "Allows creating worlds with very large x_i initialization write counts. Use only when expected; may increase create-time stall risk.");
+            } else if (verification.estimatedGlobalWrites >= 8'000'000ull) {
+                ImGui::TextColored(
+                    ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                    "This setup is too large for Standard mode safeguards.");
+                ImGui::TextDisabled("Switch to Advanced wizard mode only if this workload is intentional.");
             }
 
-            if (verification.warnings.empty()) {
-                ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Warnings: none");
+            if (!sessionUi_.wizardAdvancedMode) {
+                if (verification.blocking.empty()) {
+                    ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Must fix before create: none");
+                } else {
+                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Must fix before create:");
+                    for (const auto& message : verification.blocking) {
+                        const std::string friendly = friendlyVerificationMessage(message);
+                        ImGui::BulletText("%s", friendly.c_str());
+                    }
+                }
+
+                if (verification.warnings.empty()) {
+                    ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Recommended to review: none");
+                } else {
+                    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Recommended to review:");
+                    for (const auto& message : verification.warnings) {
+                        const std::string friendly = friendlyVerificationMessage(message);
+                        ImGui::BulletText("%s", friendly.c_str());
+                    }
+                }
+                ImGui::TextDisabled("Need deeper diagnostics? Enable Advanced wizard mode.");
             } else {
-                ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Warnings:");
-                for (const auto& message : verification.warnings) {
-                    ImGui::BulletText("%s", message.c_str());
+                if (verification.blocking.empty()) {
+                    ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Blocking checks: PASS");
+                } else {
+                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Blocking checks: FAIL");
+                    for (const auto& message : verification.blocking) {
+                        ImGui::BulletText("%s", message.c_str());
+                    }
+                }
+
+                if (verification.warnings.empty()) {
+                    ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Warnings: none");
+                } else {
+                    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Warnings:");
+                    for (const auto& message : verification.warnings) {
+                        ImGui::BulletText("%s", message.c_str());
+                    }
                 }
             }
 
@@ -1212,6 +1295,7 @@
             ImGui::Text("World name: %s", sessionUi_.pendingWorldName[0] != '\0' ? sessionUi_.pendingWorldName : "<auto>");
             ImGui::Text("Grid: %dx%d", panel_.gridWidth, panel_.gridHeight);
             ImGui::Text("Generation mode: %s", generationModeLabel(static_cast<InitialConditionType>(panel_.initialConditionTypeIndex)));
+            ImGui::Text("Wizard depth: %s", sessionUi_.wizardAdvancedMode ? "Advanced" : "Standard");
             ImGui::Text("Bindings: %s", sessionUi_.generationBindingPlan.hasBlockingIssues() ? "needs attention" : "ready");
             ImGui::Text(
                 "Preflight: %d blocking, %d warnings",
@@ -1248,7 +1332,7 @@
             "Water proxy",
             "Moisture proxy",
             "Wind magnitude proxy",
-            "Model variable channel (x_i)"};
+            "Model variable channel"};
 
         int previewDisplayTypeIndex = static_cast<int>(viz_.generationPreviewDisplayType);
         ImGui::SetNextItemWidth(-1.0f);
@@ -1718,9 +1802,9 @@
                     sessionUi_.wizardStepIndex = std::min(3, sessionUi_.wizardStepIndex + 1);
                 } else {
                     if (sessionUi_.wizardStepIndex == 1 && hasBindingBlocking) {
-                        setSessionStatusText(translateSessionStatusMessage("wizard_step_blocked reason=unresolved_bindings"));
+                        setSessionStatusFromRaw("wizard_step_blocked reason=unresolved_bindings");
                     } else if (sessionUi_.wizardStepIndex == 2 && hasBlockingPreflight) {
-                        setSessionStatusText(translateSessionStatusMessage("wizard_step_blocked reason=preflight_blocking"));
+                        setSessionStatusFromRaw("wizard_step_blocked reason=preflight_blocking");
                     }
                 }
             } else {
@@ -1767,7 +1851,7 @@
             }
 
             if (preflightBlocked) {
-                setSessionStatusText(translateSessionStatusMessage(preflightReason));
+                setSessionStatusFromRaw(preflightReason);
                 appendLog(preflightReason);
             }
 
@@ -1789,7 +1873,7 @@
                         }
                         status << sessionUi_.generationBindingPlan.issues[i].code;
                     }
-                    setSessionStatusText(translateSessionStatusMessage(status.str()));
+                    setSessionStatusFromRaw(status.str());
                     appendLog(status.str());
                     preflightBlocked = true;
                 }
@@ -1858,7 +1942,7 @@
                 } else {
                     appendLog(message);
                     completeOperationStatus(createStartedAt, "world creation failed");
-                    setSessionStatusText(translateSessionStatusMessage(message));
+                    setSessionStatusFromRaw(message);
                 }
             }
             }
@@ -1892,6 +1976,12 @@
 
         if (sessionUi_.statusMessage[0] != '\0') {
             LabeledHint(sessionUi_.statusMessage);
+            if (sessionUi_.statusTechnicalDetail[0] != '\0') {
+                ImGui::TextDisabled("Technical detail available. Hover for raw reason code.");
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip("%s", sessionUi_.statusTechnicalDetail);
+                }
+            }
         } else {
             LabeledHint("Create world starts simulation only after all settings are finalized.");
         }

@@ -531,6 +531,7 @@ void drawStatusHeader() {
     ImGui::SameLine();
     ImGui::TextDisabled("State: %s", appStateLabel(static_cast<int>(appState_)));
 
+    bool pendingRestart = false;
     if (running) {
         const auto& cfg = runtime_.config();
         const int runtimeTierIndex =
@@ -541,7 +542,7 @@ void drawStatusHeader() {
             (runtimeTemporal == "uniform") ? 0 :
             (runtimeTemporal == "phased") ? 1 : 2;
 
-        const bool pendingRestart =
+        pendingRestart =
             runtimeTierIndex != panel_.tierIndex ||
             runtimeTemporalIndex != panel_.temporalIndex;
 
@@ -549,6 +550,27 @@ void drawStatusHeader() {
             ImGui::TextColored(
                 ImVec4(0.95f, 0.80f, 0.45f, 1.0f),
                 "Pending restart changes: execution profile or temporal behavior");
+        }
+    }
+
+    std::vector<ManualEventRecord> pendingEvents;
+    std::string pendingEventsMsg;
+    const bool hasPendingEventLog = runtime_.manualEventLog(pendingEvents, pendingEventsMsg) && !pendingEvents.empty();
+
+    if (pendingRestart || hasPendingEventLog) {
+        ImGui::TextDisabled("Change scope summary");
+        if (pendingRestart) {
+            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Restart required");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Execution profile / temporal behavior differs from running runtime.");
+        }
+        if (hasPendingEventLog) {
+            ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Saved with world after explicit save");
+            ImGui::SameLine();
+            ImGui::TextDisabled(
+                "%zu runtime edit%s recorded in manual event log. Use Save Active World (Ctrl+S) to persist.",
+                pendingEvents.size(),
+                pendingEvents.size() == 1u ? "" : "s");
         }
     }
 
@@ -1257,6 +1279,14 @@ void drawPerturbationSection() {
         return;
     }
 
+    ImGui::TextDisabled("Change scope");
+    ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Scheduled event");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Applies at configured step window");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Persists after Save Active World");
+    ImGui::TextDisabled("Perturbations are queued. They do not mutate state immediately until start step is reached.");
+
     static constexpr const char* kPerturbationTypes[] = {
         "Gaussian pulse", "Rectangular region", "Sine wave", "White noise", "Gradient"};
     ImGui::Combo("Perturbation type", &panel_.perturbationTypeIndex, kPerturbationTypes, static_cast<int>(std::size(kPerturbationTypes)));
@@ -1723,6 +1753,12 @@ void drawCheckpointSection() {
         ImGui::TextDisabled("Start the simulation to use checkpoints.");
         return;
     }
+
+    ImGui::TextDisabled("Change scope");
+    ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Applies now");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Session only");
+    ImGui::TextDisabled("In-memory checkpoints are immediate runtime tools and are cleared when runtime stops.");
 
     inputTextWithHint("Label##cp", panel_.checkpointLabel, sizeof(panel_.checkpointLabel),
         "Identifier used to save/restore this checkpoint.\nAny alphanumeric string is valid.");
