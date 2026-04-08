@@ -3460,7 +3460,12 @@ void drawWorldGenerationSection() {
 
     const InitialConditionType selectedMode = static_cast<InitialConditionType>(panel_.initialConditionTypeIndex);
     const char* selectedLabel = generationModeLabel(selectedMode);
-    ImGui::SetNextItemWidth(-1.0f);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float generationModeLabelWidth = ImGui::CalcTextSize("Generation Mode").x;
+    const float generationModeWidth = std::max(
+        180.0f,
+        ImGui::GetContentRegionAvail().x - generationModeLabelWidth - style.ItemInnerSpacing.x);
+    ImGui::SetNextItemWidth(generationModeWidth);
     if (ImGui::BeginCombo("Generation Mode", selectedLabel)) {
         for (const auto modeType : kAllGenerationModes) {
             const bool viable = isModeViable(modeType);
@@ -3647,19 +3652,27 @@ void drawWorldGenerationSection() {
         static constexpr const char* kRestrictionModes[] = {
             "None", "Clamp[min,max]", "Non-negative", "Clamp[-1,1]", "tanh(x)", "sigmoid(x)"};
 
-        const float actionW = (ImGui::GetContentRegionAvail().x - (3.0f * kS2)) * 0.25f;
+        const float controlsWidth = ImGui::GetContentRegionAvail().x;
+        const bool compactActionLayout = controlsWidth < 560.0f;
+        const float actionW = compactActionLayout
+            ? std::max(120.0f, (controlsWidth - kS2) * 0.5f)
+            : std::max(95.0f, (controlsWidth - (3.0f * kS2)) * 0.25f);
+
         if (SecondaryButton("Enable all", ImVec2(actionW, 22.0f))) {
             for (auto& setting : sessionUi_.variableInitializationSettings) {
                 setting.enabled = true;
             }
         }
-        ImGui::SameLine();
+        ImGui::SameLine(0.0f, kS2);
         if (SecondaryButton("Disable all", ImVec2(actionW, 22.0f))) {
             for (auto& setting : sessionUi_.variableInitializationSettings) {
                 setting.enabled = false;
             }
         }
-        ImGui::SameLine();
+
+        if (!compactActionLayout) {
+            ImGui::SameLine(0.0f, kS2);
+        }
         if (SecondaryButton("Enable suggested", ImVec2(actionW, 22.0f))) {
             for (auto& setting : sessionUi_.variableInitializationSettings) {
                 setting.enabled = false;
@@ -3694,7 +3707,12 @@ void drawWorldGenerationSection() {
                 sessionUi_.variableInitializationSettings[static_cast<std::size_t>(candidates[static_cast<std::size_t>(i)])].enabled = true;
             }
         }
-        ImGui::SameLine();
+
+        if (compactActionLayout) {
+            ImGui::SameLine(0.0f, kS2);
+        } else {
+            ImGui::SameLine(0.0f, kS2);
+        }
         if (SecondaryButton("Enabled -> midpoint", ImVec2(actionW, 22.0f))) {
             for (auto& setting : sessionUi_.variableInitializationSettings) {
                 if (!setting.enabled) {
@@ -3706,6 +3724,7 @@ void drawWorldGenerationSection() {
             }
         }
 
+        const bool compactPairLayout = ImGui::GetContentRegionAvail().x < (240.0f + kS2);
         if (SecondaryButton("Enabled -> zero", ImVec2(120.0f, 22.0f))) {
             for (auto& setting : sessionUi_.variableInitializationSettings) {
                 if (setting.enabled) {
@@ -3713,7 +3732,9 @@ void drawWorldGenerationSection() {
                 }
             }
         }
-        ImGui::SameLine();
+        if (!compactPairLayout) {
+            ImGui::SameLine(0.0f, kS2);
+        }
         if (SecondaryButton("Enabled -> one", ImVec2(120.0f, 22.0f))) {
             for (auto& setting : sessionUi_.variableInitializationSettings) {
                 if (setting.enabled) {
@@ -3722,7 +3743,11 @@ void drawWorldGenerationSection() {
             }
         }
 
-        ImGui::SetNextItemWidth(-1.0f);
+        const float previewSliderLabelWidth = ImGui::CalcTextSize("Preview focus variable").x;
+        const float previewSliderWidth = std::max(
+            160.0f,
+            ImGui::GetContentRegionAvail().x - previewSliderLabelWidth - style.ItemInnerSpacing.x);
+        ImGui::SetNextItemWidth(previewSliderWidth);
         const int previewMax = static_cast<int>(sessionUi_.variableInitializationSettings.size()) - 1;
         if (previewMax >= 0) {
             ImGui::SliderInt("Preview focus variable", &sessionUi_.generationPreviewChannelIndex, 0, previewMax);

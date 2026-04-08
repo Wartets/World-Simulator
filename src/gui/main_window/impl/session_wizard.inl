@@ -119,6 +119,35 @@
         return "Stored under the active model scope.";
     }
 
+    [[nodiscard]] static bool worldHasStorageIncomplete(const StoredWorldInfo& world) {
+        return !(world.hasProfile && world.hasCheckpoint);
+    }
+
+    [[nodiscard]] static bool worldIsRecentlyActive(const StoredWorldInfo& world, const std::chrono::hours window = std::chrono::hours(72)) {
+        bool hasAnyTimestamp = false;
+        std::filesystem::file_time_type latest{};
+
+        if (world.hasProfileTimestamp) {
+            latest = world.profileLastWrite;
+            hasAnyTimestamp = true;
+        }
+        if (world.hasCheckpointTimestamp && (!hasAnyTimestamp || world.checkpointLastWrite > latest)) {
+            latest = world.checkpointLastWrite;
+            hasAnyTimestamp = true;
+        }
+        if (world.hasDisplayPrefsTimestamp && (!hasAnyTimestamp || world.displayPrefsLastWrite > latest)) {
+            latest = world.displayPrefsLastWrite;
+            hasAnyTimestamp = true;
+        }
+
+        if (!hasAnyTimestamp) {
+            return false;
+        }
+
+        const auto now = std::filesystem::file_time_type::clock::now();
+        return latest + window >= now;
+    }
+
     [[nodiscard]] static std::filesystem::path uniquePathWithCopySuffix(const std::filesystem::path& destination) {
         if (destination.empty() || !std::filesystem::exists(destination)) {
             return destination;
@@ -379,6 +408,15 @@
             if (sessionUi_.filterProfileOnly && !world.hasProfile) {
                 continue;
             }
+            if (sessionUi_.filterResumeFromCheckpoint && !world.hasCheckpoint) {
+                continue;
+            }
+            if (sessionUi_.filterStorageIncomplete && !worldHasStorageIncomplete(world)) {
+                continue;
+            }
+            if (sessionUi_.filterRecentlyActive && !worldIsRecentlyActive(world)) {
+                continue;
+            }
             if (!query.empty()) {
                 const std::string worldName = app::toLower(world.worldName);
                 const std::string mode = app::toLower(world.initialConditionMode);
@@ -428,16 +466,57 @@
         }
 
         SectionHeader("Saved worlds", "Search, filter, and select a world.");
-        ImGui::InputTextWithHint("##world_search", "Search by name or mode", sessionUi_.worldSearch, IM_ARRAYSIZE(sessionUi_.worldSearch));
-        ImGui::SameLine();
         static constexpr const char* kSortModes[] = {"Name", "Recent", "Grid size", "Storage size"};
-        ImGui::SetNextItemWidth(130.0f);
-        ImGui::Combo("##world_sort", &sessionUi_.sortMode, kSortModes, static_cast<int>(std::size(kSortModes)));
-        ImGui::SameLine();
-        ImGui::Checkbox("Checkpoint", &sessionUi_.filterCheckpointOnly);
-        ImGui::SameLine();
-        ImGui::Checkbox("Profile", &sessionUi_.filterProfileOnly);
+        const float worldFilterWidth = ImGui::GetContentRegionAvail().x;
+        const bool compactWorldFilterLayout = worldFilterWidth < 640.0f;
+
+        if (!compactWorldFilterLayout) {
+            const float sortWidth = 130.0f;
+            const float reserved = sortWidth + (3.0f * kS2) + 180.0f;
+            ImGui::SetNextItemWidth(std::max(180.0f, worldFilterWidth - reserved));
+            ImGui::InputTextWithHint("##world_search", "Search by name or mode", sessionUi_.worldSearch, IM_ARRAYSIZE(sessionUi_.worldSearch));
+            ImGui::SameLine(0.0f, kS2);
+            ImGui::SetNextItemWidth(sortWidth);
+            ImGui::Combo("##world_sort", &sessionUi_.sortMode, kSortModes, static_cast<int>(std::size(kSortModes)));
+            ImGui::SameLine(0.0f, kS2);
+            ImGui::Checkbox("Checkpoint", &sessionUi_.filterCheckpointOnly);
+            ImGui::SameLine(0.0f, kS2);
+            ImGui::Checkbox("Profile", &sessionUi_.filterProfileOnly);
+        } else {
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint("##world_search", "Search by name or mode", sessionUi_.worldSearch, IM_ARRAYSIZE(sessionUi_.worldSearch));
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::Combo("##world_sort", &sessionUi_.sortMode, kSortModes, static_cast<int>(std::size(kSortModes)));
+            const float togglesWidth = ImGui::GetContentRegionAvail().x;
+            if (togglesWidth >= 300.0f) {
+                ImGui::Checkbox("Checkpoint", &sessionUi_.filterCheckpointOnly);
+                ImGui::SameLine(0.0f, kS2);
+                ImGui::Checkbox("Profile", &sessionUi_.filterProfileOnly);
+            } else {
+                ImGui::Checkbox("Checkpoint", &sessionUi_.filterCheckpointOnly);
+                ImGui::Checkbox("Profile", &sessionUi_.filterProfileOnly);
+            }
+        }
         DelayedTooltip("Filter worlds requiring checkpoint/profile presence.");
+        ImGui::Spacing();
+        ImGui::TextDisabled("Quick filters");
+        const float quickFilterWidth = ImGui::GetContentRegionAvail().x;
+        if (quickFilterWidth >= 560.0f) {
+            ImGui::Checkbox("Resume now", &sessionUi_.filterResumeFromCheckpoint);
+            DelayedTooltip("Show only worlds that can resume from a checkpoint immediately.");
+            ImGui::SameLine(0.0f, kS2);
+            ImGui::Checkbox("Storage incomplete", &sessionUi_.filterStorageIncomplete);
+            DelayedTooltip("Show worlds missing either a profile or checkpoint artifact.");
+            ImGui::SameLine(0.0f, kS2);
+            ImGui::Checkbox("Recently active", &sessionUi_.filterRecentlyActive);
+        } else {
+            ImGui::Checkbox("Resume now", &sessionUi_.filterResumeFromCheckpoint);
+            DelayedTooltip("Show only worlds that can resume from a checkpoint immediately.");
+            ImGui::Checkbox("Storage incomplete", &sessionUi_.filterStorageIncomplete);
+            DelayedTooltip("Show worlds missing either a profile or checkpoint artifact.");
+            ImGui::Checkbox("Recently active", &sessionUi_.filterRecentlyActive);
+        }
+        DelayedTooltip("Show worlds updated within roughly the last 72 hours.");
         ImGui::Spacing();
         ImGui::BeginChild("WorldList", ImVec2(-1.0f, narrowLayout ? 210.0f : -1.0f), true);
         if (filteredWorldIndices.empty()) {
@@ -474,6 +553,8 @@
         }
 
         SectionHeader("World details", "Review metadata, storage, and checkpoint status.");
+        ImGui::Checkbox("Forensic detail mode", &sessionUi_.forensicDetailsMode);
+        DelayedTooltip("Decision mode focuses on open/readiness cues. Enable forensic mode for full diagnostics.");
         ImGui::Spacing();
         ImGui::BeginChild("WorldDetails", ImVec2(-1.0f, -1.0f), true);
         if (sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
@@ -497,92 +578,106 @@
             ImGui::TextDisabled("%s", persistenceSummary.c_str());
             ImGui::PopTextWrapPos();
 
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::TextDisabled("World profile");
-            ImGui::Text("Grid: %ux%u", world.gridWidth, world.gridHeight);
-            ImGui::Text("Cells: %llu", static_cast<unsigned long long>(gridCells));
-            ImGui::Text("Seed: %llu", static_cast<unsigned long long>(world.seed));
-            ImGui::Text("Temporal: %s", world.temporalPolicy.empty() ? "n/a" : world.temporalPolicy.c_str());
-            ImGui::Text("Initialization: %s", world.initialConditionMode.empty() ? "n/a" : world.initialConditionMode.c_str());
-            ImGui::Text("Data footprint: %s", session_manager::formatBytes(totalBytes).c_str());
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::TextDisabled("Persistence details");
-            ImGui::Text("Profile: %s", world.profilePath.string().c_str());
-            ImGui::Text("Profile size: %s", session_manager::formatBytes(world.profileBytes).c_str());
-            ImGui::Text("Profile updated: %s", session_manager::formatFileTime(world.profileLastWrite, world.hasProfileTimestamp).c_str());
-            ImGui::Text("Checkpoint: %s", world.hasCheckpoint ? "Saved" : "Missing");
-            if (world.hasCheckpoint) {
-                ImGui::Text("Last saved step: %llu", static_cast<unsigned long long>(world.stepIndex));
-                ImGui::Text("Run identity: %016llx", static_cast<unsigned long long>(world.runIdentityHash));
-                ImGui::Text("Checkpoint size: %s", session_manager::formatBytes(world.checkpointBytes).c_str());
-                ImGui::Text("Checkpoint updated: %s", session_manager::formatFileTime(world.checkpointLastWrite, world.hasCheckpointTimestamp).c_str());
+            if (!sessionUi_.forensicDetailsMode) {
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                ImGui::TextDisabled("Decision summary");
+                ImGui::BulletText("Open source: %s", world.hasCheckpoint ? "checkpoint resume" : "profile rebuild");
+                ImGui::BulletText("Checkpoint step: %llu", static_cast<unsigned long long>(world.stepIndex));
+                ImGui::BulletText("Grid: %ux%u", world.gridWidth, world.gridHeight);
+                ImGui::BulletText("Storage integrity: %s", worldHasStorageIncomplete(world) ? "incomplete" : "complete");
+                ImGui::BulletText("Activity: %s", worldIsRecentlyActive(world) ? "recent" : "older");
+                ImGui::Spacing();
+                ImGui::TextDisabled("Enable forensic detail mode for full paths, sizes, timestamps, and comparisons.");
             } else {
-                ImGui::TextDisabled("Open will start from the saved profile because no checkpoint is available.");
-            }
-            ImGui::Text("View layout: %s", world.hasDisplayPrefs ? "Saved" : "Not saved");
-            if (world.hasDisplayPrefs) {
-                ImGui::Text("View layout size: %s", session_manager::formatBytes(world.displayPrefsBytes).c_str());
-                ImGui::Text("View layout updated: %s", session_manager::formatFileTime(world.displayPrefsLastWrite, world.hasDisplayPrefsTimestamp).c_str());
-            }
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                ImGui::TextDisabled("World profile");
+                ImGui::Text("Grid: %ux%u", world.gridWidth, world.gridHeight);
+                ImGui::Text("Cells: %llu", static_cast<unsigned long long>(gridCells));
+                ImGui::Text("Seed: %llu", static_cast<unsigned long long>(world.seed));
+                ImGui::Text("Temporal: %s", world.temporalPolicy.empty() ? "n/a" : world.temporalPolicy.c_str());
+                ImGui::Text("Initialization: %s", world.initialConditionMode.empty() ? "n/a" : world.initialConditionMode.c_str());
+                ImGui::Text("Data footprint: %s", session_manager::formatBytes(totalBytes).c_str());
 
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::TextDisabled("Storage scope");
-            ImGui::Text("Scope key: %s", world.modelKey.empty() ? "default" : world.modelKey.c_str());
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-            ImGui::TextWrapped("%s", storageScopeSummary.c_str());
-            ImGui::PopTextWrapPos();
-
-            const char* compareLabel = "<none>";
-            if (worldCompareSelectionIndex >= 0 && worldCompareSelectionIndex < static_cast<int>(sessionUi_.worlds.size())) {
-                compareLabel = sessionUi_.worlds[static_cast<std::size_t>(worldCompareSelectionIndex)].worldName.c_str();
-            }
-            if (ImGui::BeginCombo("Compare against", compareLabel)) {
-                const bool noCompare = (worldCompareSelectionIndex < 0);
-                if (ImGui::Selectable("<none>", noCompare)) {
-                    worldCompareSelectionIndex = -1;
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                ImGui::TextDisabled("Persistence details");
+                ImGui::Text("Profile: %s", world.profilePath.string().c_str());
+                ImGui::Text("Profile size: %s", session_manager::formatBytes(world.profileBytes).c_str());
+                ImGui::Text("Profile updated: %s", session_manager::formatFileTime(world.profileLastWrite, world.hasProfileTimestamp).c_str());
+                ImGui::Text("Checkpoint: %s", world.hasCheckpoint ? "Saved" : "Missing");
+                if (world.hasCheckpoint) {
+                    ImGui::Text("Last saved step: %llu", static_cast<unsigned long long>(world.stepIndex));
+                    ImGui::Text("Run identity: %016llx", static_cast<unsigned long long>(world.runIdentityHash));
+                    ImGui::Text("Checkpoint size: %s", session_manager::formatBytes(world.checkpointBytes).c_str());
+                    ImGui::Text("Checkpoint updated: %s", session_manager::formatFileTime(world.checkpointLastWrite, world.hasCheckpointTimestamp).c_str());
+                } else {
+                    ImGui::TextDisabled("Open will start from the saved profile because no checkpoint is available.");
                 }
-                if (noCompare) {
-                    ImGui::SetItemDefaultFocus();
+                ImGui::Text("View layout: %s", world.hasDisplayPrefs ? "Saved" : "Not saved");
+                if (world.hasDisplayPrefs) {
+                    ImGui::Text("View layout size: %s", session_manager::formatBytes(world.displayPrefsBytes).c_str());
+                    ImGui::Text("View layout updated: %s", session_manager::formatFileTime(world.displayPrefsLastWrite, world.hasDisplayPrefsTimestamp).c_str());
                 }
 
-                for (int i = 0; i < static_cast<int>(sessionUi_.worlds.size()); ++i) {
-                    if (i == sessionUi_.selectedWorldIndex) {
-                        continue;
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                ImGui::TextDisabled("Storage scope");
+                ImGui::Text("Scope key: %s", world.modelKey.empty() ? "default" : world.modelKey.c_str());
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+                ImGui::TextWrapped("%s", storageScopeSummary.c_str());
+                ImGui::PopTextWrapPos();
+
+                const char* compareLabel = "<none>";
+                if (worldCompareSelectionIndex >= 0 && worldCompareSelectionIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                    compareLabel = sessionUi_.worlds[static_cast<std::size_t>(worldCompareSelectionIndex)].worldName.c_str();
+                }
+                if (ImGui::BeginCombo("Compare against", compareLabel)) {
+                    const bool noCompare = (worldCompareSelectionIndex < 0);
+                    if (ImGui::Selectable("<none>", noCompare)) {
+                        worldCompareSelectionIndex = -1;
                     }
-                    const bool selected = (worldCompareSelectionIndex == i);
-                    const auto& candidate = sessionUi_.worlds[static_cast<std::size_t>(i)];
-                    if (ImGui::Selectable(candidate.worldName.c_str(), selected)) {
-                        worldCompareSelectionIndex = i;
-                    }
-                    if (selected) {
+                    if (noCompare) {
                         ImGui::SetItemDefaultFocus();
                     }
+
+                    for (int i = 0; i < static_cast<int>(sessionUi_.worlds.size()); ++i) {
+                        if (i == sessionUi_.selectedWorldIndex) {
+                            continue;
+                        }
+                        const bool selected = (worldCompareSelectionIndex == i);
+                        const auto& candidate = sessionUi_.worlds[static_cast<std::size_t>(i)];
+                        if (ImGui::Selectable(candidate.worldName.c_str(), selected)) {
+                            worldCompareSelectionIndex = i;
+                        }
+                        if (selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
                 }
-                ImGui::EndCombo();
-            }
 
-            if (worldCompareSelectionIndex >= 0 && worldCompareSelectionIndex < static_cast<int>(sessionUi_.worlds.size())) {
-                const auto& other = sessionUi_.worlds[static_cast<std::size_t>(worldCompareSelectionIndex)];
-                const std::int64_t widthDelta = static_cast<std::int64_t>(world.gridWidth) - static_cast<std::int64_t>(other.gridWidth);
-                const std::int64_t heightDelta = static_cast<std::int64_t>(world.gridHeight) - static_cast<std::int64_t>(other.gridHeight);
-                const std::int64_t stepDelta = static_cast<std::int64_t>(world.stepIndex) - static_cast<std::int64_t>(other.stepIndex);
-                const std::int64_t bytesDelta = static_cast<std::int64_t>(totalBytes) -
-                    static_cast<std::int64_t>(other.profileBytes + other.checkpointBytes + other.displayPrefsBytes);
+                if (worldCompareSelectionIndex >= 0 && worldCompareSelectionIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                    const auto& other = sessionUi_.worlds[static_cast<std::size_t>(worldCompareSelectionIndex)];
+                    const std::int64_t widthDelta = static_cast<std::int64_t>(world.gridWidth) - static_cast<std::int64_t>(other.gridWidth);
+                    const std::int64_t heightDelta = static_cast<std::int64_t>(world.gridHeight) - static_cast<std::int64_t>(other.gridHeight);
+                    const std::int64_t stepDelta = static_cast<std::int64_t>(world.stepIndex) - static_cast<std::int64_t>(other.stepIndex);
+                    const std::int64_t bytesDelta = static_cast<std::int64_t>(totalBytes) -
+                        static_cast<std::int64_t>(other.profileBytes + other.checkpointBytes + other.displayPrefsBytes);
 
-                ImGui::Text("Delta vs %s", other.worldName.c_str());
-                ImGui::BulletText("Grid delta: %+lld x %+lld", static_cast<long long>(widthDelta), static_cast<long long>(heightDelta));
-                ImGui::BulletText("Seed match: %s", world.seed == other.seed ? "yes" : "no");
-                ImGui::BulletText("Checkpoint step delta: %+lld", static_cast<long long>(stepDelta));
-                ImGui::BulletText("Data footprint delta: %+lld bytes", static_cast<long long>(bytesDelta));
-                ImGui::BulletText("Run identity match: %s", world.runIdentityHash == other.runIdentityHash ? "yes" : "no");
-                ImGui::BulletText("Profile size match: %s", world.profileBytes == other.profileBytes ? "yes" : "no");
+                    ImGui::Text("Delta vs %s", other.worldName.c_str());
+                    ImGui::BulletText("Grid delta: %+lld x %+lld", static_cast<long long>(widthDelta), static_cast<long long>(heightDelta));
+                    ImGui::BulletText("Seed match: %s", world.seed == other.seed ? "yes" : "no");
+                    ImGui::BulletText("Checkpoint step delta: %+lld", static_cast<long long>(stepDelta));
+                    ImGui::BulletText("Data footprint delta: %+lld bytes", static_cast<long long>(bytesDelta));
+                    ImGui::BulletText("Run identity match: %s", world.runIdentityHash == other.runIdentityHash ? "yes" : "no");
+                    ImGui::BulletText("Profile size match: %s", world.profileBytes == other.profileBytes ? "yes" : "no");
+                }
             }
         } else {
             EmptyStateCard("No world selected.", "Select a world from the list to enable the Open world action.");
@@ -1077,9 +1172,9 @@
 
         ImGui::Begin("New World Wizard", nullptr, flags);
 
-        const float rootW = std::min(kPageMaxWidth, viewport->Size.x - (2.0f * kS5));
-        const float rootH = std::max(420.0f, viewport->Size.y - (2.0f * kS5));
-        const ImVec2 rootPos(viewport->Size.x * 0.5f - rootW * 0.5f, kS5);
+        const float rootW = viewport->Size.x;
+        const float rootH = viewport->Size.y;
+        const ImVec2 rootPos(0.0f, 0.0f);
 
         ImGui::SetCursorPos(rootPos);
         ImGui::BeginChild("WizardRoot", ImVec2(rootW, rootH), true);
@@ -1159,6 +1254,24 @@
                 }
             }
             LabeledHint("Smart naming uses model context and avoids collisions automatically.");
+
+            if (!sessionUi_.wizardAdvancedMode) {
+                const auto recommendation = GenerationAdvisor::recommendGenerationMode(sessionUi_.selectedModelCatalog, {});
+                const InitialConditionType recommendedMode = fallbackRuntimeSupportedMode(
+                    refineRecommendedModeForKnownModels(sessionUi_.selectedModelCatalog, recommendation.recommendedType));
+                const InitialConditionType selectedMode = static_cast<InitialConditionType>(
+                    std::clamp(panel_.initialConditionTypeIndex, 0, static_cast<int>(InitialConditionType::DiffusionLimit)));
+                const std::string normalizedWorldName = runtime_.normalizeWorldNameForUi(sessionUi_.pendingWorldName);
+
+                ImGui::Spacing();
+                ImGui::BeginChild("WizardGoalSummary", ImVec2(-1.0f, 96.0f), true);
+                ImGui::TextDisabled("Step 1 goals");
+                ImGui::BulletText("Confirm world identity: %s", normalizedWorldName.empty() ? "auto-name on create" : normalizedWorldName.c_str());
+                ImGui::BulletText("Recommended generation mode: %s", generationModeLabel(recommendedMode));
+                ImGui::BulletText("Current mode: %s", generationModeLabel(selectedMode));
+                ImGui::EndChild();
+            }
+
             ImGui::Spacing();
             drawGridSetupSection();
             ImGui::Spacing();
@@ -1188,18 +1301,33 @@
             if (!sessionUi_.wizardAdvancedMode) {
                 if (!sessionUi_.generationBindingPlan.hasBlockingIssues()) {
                     ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Binding status: ready");
-                    ImGui::TextWrapped("The selected generation setup has valid target variables in this model.");
+                    ImGui::TextWrapped("You're ready for the next step. The selected setup can write required model variables.");
                 } else {
                     ImGui::TextColored(
                         ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
                         "Binding status: action required (%d issue%s)",
                         static_cast<int>(sessionUi_.generationBindingPlan.issues.size()),
                         sessionUi_.generationBindingPlan.issues.size() == 1u ? "" : "s");
-                    ImGui::TextWrapped("This model is missing one or more variables required by the selected generation setup.");
+                    ImGui::TextWrapped("Fix the items below, then continue.");
                     for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
-                        ImGui::BulletText("%s", issue.message.c_str());
+                        std::string action = "Choose a generation mode that matches available model variables.";
+                        const std::string codeLower = app::toLower(issue.code);
+                        if (codeLower.find("conway") != std::string::npos) {
+                            action = "Pick a Conway target variable in Step 1 generation settings.";
+                        } else if (codeLower.find("grayscott") != std::string::npos || codeLower.find("gray_scott") != std::string::npos) {
+                            action = "Set both Gray-Scott target variables in Step 1 generation settings.";
+                        } else if (codeLower.find("waves") != std::string::npos) {
+                            action = "Pick a Waves target variable in Step 1 generation settings.";
+                        }
+                        ImGui::BulletText("%s", action.c_str());
                     }
-                    ImGui::TextDisabled("Switch to Advanced wizard mode to inspect binding details and optional override controls.");
+
+                    if (ImGui::CollapsingHeader("Diagnostics (advanced)")) {
+                        ImGui::TextDisabled("Binding issues");
+                        for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
+                            ImGui::BulletText("%s: %s", issue.code.c_str(), issue.message.c_str());
+                        }
+                    }
                 }
             } else {
                 if (sessionUi_.selectedModelCellStateVariables.empty()) {
@@ -1343,12 +1471,19 @@
         ImGui::Spacing();
         if (sessionUi_.wizardStepIndex == 2) {
             SectionHeader("Preflight verification", "Full readiness checks before world creation.");
-            ImGui::TextDisabled(
-                "Checks: %d blocking, %d warning, %d enabled x_i initializers, %llu estimated x_i writes",
-                static_cast<int>(verification.blocking.size()),
-                static_cast<int>(verification.warnings.size()),
-                verification.enabledVariableInitializers,
-                static_cast<unsigned long long>(verification.estimatedGlobalWrites));
+            if (sessionUi_.wizardAdvancedMode) {
+                ImGui::TextDisabled(
+                    "Checks: %d blocking, %d warning, %d enabled x_i initializers, %llu estimated x_i writes",
+                    static_cast<int>(verification.blocking.size()),
+                    static_cast<int>(verification.warnings.size()),
+                    verification.enabledVariableInitializers,
+                    static_cast<unsigned long long>(verification.estimatedGlobalWrites));
+            } else {
+                ImGui::TextDisabled("Checks: %d blocking, %d recommendation%s",
+                    static_cast<int>(verification.blocking.size()),
+                    static_cast<int>(verification.warnings.size()),
+                    verification.warnings.size() == 1u ? "" : "s");
+            }
 
             const auto friendlyVerificationMessage = [&](const std::string& raw) {
                 std::string text = raw;
@@ -1384,7 +1519,7 @@
                     ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Must fix before create:");
                     for (const auto& message : verification.blocking) {
                         const std::string friendly = friendlyVerificationMessage(message);
-                        ImGui::BulletText("%s", friendly.c_str());
+                        ImGui::BulletText("Do this: %s", friendly.c_str());
                     }
                 }
 
@@ -1397,7 +1532,24 @@
                         ImGui::BulletText("%s", friendly.c_str());
                     }
                 }
-                ImGui::TextDisabled("Need deeper diagnostics? Enable Advanced wizard mode.");
+                if (ImGui::CollapsingHeader("Diagnostics (advanced)")) {
+                    ImGui::TextDisabled("Binding diagnostics");
+                    if (sessionUi_.generationBindingPlan.issues.empty()) {
+                        ImGui::TextDisabled("No unresolved binding issues.");
+                    } else {
+                        for (const auto& issue : sessionUi_.generationBindingPlan.issues) {
+                            ImGui::BulletText("%s: %s", issue.code.c_str(), issue.message.c_str());
+                        }
+                    }
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Preflight technical diagnostics");
+                    for (const auto& message : verification.blocking) {
+                        ImGui::BulletText("blocking: %s", message.c_str());
+                    }
+                    for (const auto& message : verification.warnings) {
+                        ImGui::BulletText("warning: %s", message.c_str());
+                    }
+                }
             } else {
                 if (verification.blocking.empty()) {
                     ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Blocking checks: PASS");
@@ -1436,11 +1588,15 @@
             ImGui::Text("Grid: %dx%d", panel_.gridWidth, panel_.gridHeight);
             ImGui::Text("Generation mode: %s", generationModeLabel(static_cast<InitialConditionType>(panel_.initialConditionTypeIndex)));
             ImGui::Text("Wizard depth: %s", sessionUi_.wizardAdvancedMode ? "Advanced" : "Standard");
-            ImGui::Text("Bindings: %s", sessionUi_.generationBindingPlan.hasBlockingIssues() ? "needs attention" : "ready");
-            ImGui::Text(
-                "Preflight: %d blocking, %d warnings",
-                static_cast<int>(verification.blocking.size()),
-                static_cast<int>(verification.warnings.size()));
+            if (sessionUi_.wizardAdvancedMode) {
+                ImGui::Text("Bindings: %s", sessionUi_.generationBindingPlan.hasBlockingIssues() ? "needs attention" : "ready");
+                ImGui::Text(
+                    "Preflight: %d blocking, %d warnings",
+                    static_cast<int>(verification.blocking.size()),
+                    static_cast<int>(verification.warnings.size()));
+            } else {
+                ImGui::Text("Create readiness: %s", verification.blocking.empty() ? "ready" : "action required");
+            }
             if (!verification.blocking.empty()) {
                 ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Resolve blocking items before creation.");
             }

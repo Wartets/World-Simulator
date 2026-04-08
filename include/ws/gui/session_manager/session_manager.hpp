@@ -46,6 +46,10 @@ struct SessionUiState {
     char worldSearch[128] = "";
     bool filterCheckpointOnly = false;
     bool filterProfileOnly = false;
+    bool filterResumeFromCheckpoint = false;
+    bool filterStorageIncomplete = false;
+    bool filterRecentlyActive = false;
+    bool forensicDetailsMode = false;
     int sortMode = 1;
 
     int pendingDuplicateWorldIndex = -1;
