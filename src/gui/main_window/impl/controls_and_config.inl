@@ -89,7 +89,7 @@ void drawShortcutHelpModal() {
         {"Right Arrow", "Step forward (when paused)"},
         {"R",           "Reset active viewport camera"},
         {"+ / -",       "Zoom active viewport"},
-        {"F1 - F12",    "Select viewport editor tab (Simulation state)"},
+        {"F2 - F12",    "Select viewport editor tab (Simulation state)"},
         {"Escape",      "Clear focused ImGui widget"},
     };
 
@@ -163,11 +163,11 @@ void handleKeyboardShortcuts() {
 
     ensureViewportStateConsistency();
 
-    // F1-F12 -> switch active viewport editor (when available)
-    static constexpr std::array<ImGuiKey, 12> kViewportHotkeys = {
-        ImGuiKey_F1, ImGuiKey_F2, ImGuiKey_F3, ImGuiKey_F4,
-        ImGuiKey_F5, ImGuiKey_F6, ImGuiKey_F7, ImGuiKey_F8,
-        ImGuiKey_F9, ImGuiKey_F10, ImGuiKey_F11, ImGuiKey_F12};
+    // F2-F12 -> switch active viewport editor (reserve F1 for global help)
+    static constexpr std::array<ImGuiKey, 11> kViewportHotkeys = {
+        ImGuiKey_F2, ImGuiKey_F3, ImGuiKey_F4, ImGuiKey_F5,
+        ImGuiKey_F6, ImGuiKey_F7, ImGuiKey_F8, ImGuiKey_F9,
+        ImGuiKey_F10, ImGuiKey_F11, ImGuiKey_F12};
     for (std::size_t i = 0; i < kViewportHotkeys.size(); ++i) {
         if (ImGui::IsKeyPressed(kViewportHotkeys[i], false) && i < viz_.viewports.size()) {
             requestViewportEditorSelection(i);
@@ -1950,8 +1950,8 @@ void drawViewportSettingsSection() {
     if (ImGui::BeginTabBar("ViewportTabs")) {
         for (std::size_t i = 0; i < viz_.viewports.size(); ++i) {
             std::string label = "View " + std::to_string(i + 1u);
-            if (i < 12u) {
-                label += " [F" + std::to_string(i + 1u) + "]";
+            if (i < 11u) {
+                label += " [F" + std::to_string(i + 2u) + "]";
             }
             bool tabOpen = true;
             const ImGuiTabItemFlags tabFlags = (viewportTabSelectionRequest_ == static_cast<int>(i))
@@ -3092,7 +3092,7 @@ void drawShortcutsSection() {
         {"Right Arrow", "Step forward (when paused)"},
         {"R",          "Reset camera zoom and pan"},
         {"+  /  -",    "Zoom in / out"},
-        {"F1 - F12",   "Select viewport for editing (first 12 views)"},
+        {"F2 - F12",   "Select viewport for editing (first 11 views)"},
         {"Escape",     "Return keyboard focus to viewport"},
     };
     ImGui::Columns(2, "shortcols", false);
@@ -3885,11 +3885,21 @@ void openSelectedWorld() {
         resetDisplayConfigToDefaults();
         loadDisplayPrefs();
         completeOperationStatus(startedAt, "world opened");
+        if (world.hasCheckpoint) {
+            setSessionStatusText(
+                std::string("Opened '") + world.worldName +
+                "' from its saved checkpoint" +
+                (world.stepIndex > 0 ? std::string(" at step ") + std::to_string(world.stepIndex) + "." : std::string(".")));
+        } else {
+            setSessionStatusText(
+                std::string("Opened '") + world.worldName +
+                "' from profile settings because no checkpoint was available.");
+        }
         enterSimulationPaused();
     } else {
         appendLog(msg);
         completeOperationStatus(startedAt, "world open failed");
-        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", msg.c_str());
+        setSessionStatusText(msg);
     }
 }
 

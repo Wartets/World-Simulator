@@ -1,12 +1,12 @@
 # World-Simulator
 
-A generalized 2D/3D physics simulation engine for interactive, real-time, grid-based numerical simulations.
+A deterministic, interactive grid simulation environment for model-driven 2D experiments.
 
 ## Overview
 
-World-Simulator is a standalone, highly portable, and interactive software application dedicated to simulating complex physical systems in two dimensions (with potential extension to higher dimensions). The core principle of this project is **absolute decoupling** between simulation logic (the "Model") and the dynamic system state data (the "World State").
+World-Simulator is a standalone, portable application for simulating complex physical and ecological systems on structured grids. The core principle is strict decoupling between simulation logic (the model package) and dynamic system state (world/profile/checkpoint data).
 
-This separation allows users to transport, share, and reproduce complex simulation experiments using only two files: a physical model definition file (`.simmodel`) and a binary state dump file. Whether you're simulating weather patterns, ecological systems, fluid dynamics, or cellular automata, World-Simulator provides a unified, extensible framework.
+This separation supports reproducible experiments across machines when model identity, configuration, and seed are preserved.
 
 ### Target Audiences
 
@@ -23,19 +23,19 @@ This separation allows users to transport, share, and reproduce complex simulati
 
 - **Multi-Physics Simulation**: Support for diverse simulation types including fluid dynamics, reaction-diffusion systems, ecological models, atmospheric science, urban climate, and more
 - **Interactive Runtime**: Real-time parameter modification, perturbation injection, and live visualization
-- **Model Editor**: Visual and text-based editing for creating and modifying simulation models
+- **Model Editor (Experimental)**: Graph-oriented structure editor for inspection and early-stage editing workflows
 - **World Generator**: Procedural terrain and state initialization using Perlin/Simplex noise
-- **Checkpoints & Replay**: Full state persistence with time-travel capabilities
+- **Checkpoints & Replay**: Runtime checkpoints, event logging, and replay support
 - **Live Patching**: Modify simulation parameters and inject perturbations during runtime
 
 ### Technical Features
 
 - **Strictly Typed IR**: High-performance Intermediate Representation for simulation logic
 - **Domain Constraints**: Physical validity checks and automatic clamping
-- **Multiple Time Integrators**: Explicit Euler, RK4, Verlet, Crank-Nicolson, and more
+- **Time Integrators**: Built-in `Euler Explicit` and `RK4` registry entries
 - **Spatial Operators**: Laplacian, gradient, advection, diffusion with configurable schemes
 - **Deterministic Execution**: Reproducible results across runs and platforms
-- **GPU-Ready Architecture**: Designed for SIMD and GPU acceleration
+- **Performance Architecture**: Deterministic stepping, worker-based runtime/snapshot flow, and CPU vectorization-friendly layout
 
 ### Built-in Models
 
@@ -148,6 +148,56 @@ Launch the graphical interface:
 
 ---
 
+## Runtime Semantics and Persistence
+
+World-Simulator has multiple persistence layers. Understanding these layers avoids accidental data loss and improves reproducibility.
+
+### Change-scope quick guide
+
+| Change type | Typical effect | Persisted automatically | Notes |
+|---|---|---|---|
+| Playback controls (play/pause/step/seek) | Immediate runtime control | No | Affects current runtime session state only |
+| Runtime parameter edits / manual patches | Immediate or next-step runtime effect | No | Save world/checkpoint/event log to retain changes |
+| Wizard generation settings | Applied at world creation | No | Applies to newly created world, not already-running world |
+| Display/viewport preferences | UI behavior/rendering | Session/display prefs | May be stored separately from world state |
+| Checkpoint creation | Snapshot of runtime state | Yes (checkpoint storage) | Supports deterministic scrubbing/replay workflows |
+| Save active world | Writes world/profile data | Yes | Use before switching model/state to avoid losing in-memory changes |
+
+### Persistence layers
+
+- **Profile**: configuration metadata and runtime-facing settings for a world.
+- **Checkpoint**: concrete state snapshot at a simulation step.
+- **Saved world**: world identity plus associated persisted artifacts.
+- **Event log**: intervention history for replayable operations.
+
+Resume behavior depends on available artifacts (checkpoint-backed resume vs profile-only regeneration).
+
+---
+
+## Current Scope and Important Limitations
+
+### Model Editor scope
+
+The model editor currently provides strong structural inspection and basic graph editing, but some authoring workflows are still maturing.
+
+- `Export as ZIP` currently writes JSON export content, not a full packaged ZIP pipeline.
+- Undo/redo signaling exists, but full model-state restoration semantics are still under active development.
+- Validation includes useful checks, but advanced dependency/cycle analysis is not yet complete.
+
+Use it as an experimental authoring surface and structure viewer unless your workflow is validated end-to-end for your model package.
+
+### External data import formats
+
+- Supported now: **CSV**, **PGM image (`P2`/`P5`)**.
+- Not yet available in this build: **GeoTIFF**, **NetCDF**.
+
+### Shortcut behavior
+
+- `F1` is reserved for global help/shortcut reference.
+- Prefer avoiding `F1` for custom viewport-local bindings to prevent context conflicts.
+
+---
+
 ## Simulation Models
 
 ### Available Models
@@ -217,15 +267,13 @@ func diffuse_temperature() {
 | Action | Control |
 |-------:|:--------|
 | Play/Pause | Space bar or button |
-| Step Forward | Right arrow |
-| Step Backward | Left arrow |
+| Step Forward | Ctrl + Right |
+| Step Backward | Ctrl + Left |
 | State History | Alt + Left / Alt + Right |
 | Shortcut Help | F1 |
 | Time Jump | Timeline slider |
 | Pan View | Middle mouse drag |
 | Zoom | Scroll wheel |
-| Paint Tool | Left click + drag |
-| Select Region | Ctrl + drag |
 
 ### Command-Line Options
 
@@ -248,7 +296,7 @@ Options:
 During runtime, you can:
 
 - **Modify global parameters**: Double-click parameter in the panel
-- **Paint cell values**: Select paint tool and draw on grid
+- **Paint cell values**: Available through viewport/world editing workflows where enabled
 - **Inject perturbations**: Define forcing regions with the perturbation tool
 - **Create checkpoints**: Save state at any timestep for later replay
 - **Manage checkpoints**: Browse in-memory checkpoints, restore, rename, or delete them from the checkpoint panel
@@ -277,7 +325,7 @@ World-Simulator/
 2. **Stage-Based Execution**: Ordered computation stages per timestep
 3. **Double Buffering**: Read/write state isolation for parallelism
 4. **Type Safety**: Strict typing in IR prevents runtime errors
-5. **Optimized IR**: Compilation to SIMD/GPU-native code
+5. **Deterministic Runtime Contract**: input patch ingestion → event queue apply → scheduler execution → state metadata/hash commit
 
 ### Technical Stack
 

@@ -8,6 +8,7 @@
 #include <memory>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <nlohmann/json.hpp>
 
@@ -278,7 +279,8 @@ void ModelEditorWindow::loadModel(const ModelContext& context) {
     // Parse model.json to populate node graph
     try {
         populateNodeGraphFromModel(context.model_json);
-        history->recordSnapshot("Model loaded");
+        history->clear();
+        recordHistorySnapshot("Model loaded");
         appendStatusDetail("load=ok");
         appendStatusDetail("nodes=" + std::to_string(node_editor->getAllNodes().size()));
     } catch (const std::exception& e) {
@@ -318,7 +320,7 @@ void ModelEditorWindow::deleteSelectedNodes() {
     }
     node_editor->clearSelection();
     markDirty();
-    history->recordSnapshot("Deleted selected nodes");
+    recordHistorySnapshot("Deleted selected nodes");
     status_message = "Deleted selected nodes";
     appendStatusDetail("deleted=" + std::to_string(selected.size()));
 }
@@ -354,7 +356,7 @@ void ModelEditorWindow::duplicateSelectedNodes() {
 
     if (copied > 0) {
         markDirty();
-        history->recordSnapshot("Duplicated selected nodes");
+        recordHistorySnapshot("Duplicated selected nodes");
         status_message = "Duplicated selected nodes";
         appendStatusDetail("duplicated=" + std::to_string(copied));
     }
@@ -372,10 +374,11 @@ void ModelEditorWindow::showFileActionPopups() {
                 current_model.model_json = payload;
                 try {
                     populateNodeGraphFromModel(payload);
+                    history->clear();
                     is_modified = false;
                     status_message = "Model opened";
                     error_message.clear();
-                    history->recordSnapshot("Opened model from file");
+                    recordHistorySnapshot("Opened model from file");
                     appendStatusDetail("open_path=" + std::string(open_model_path_buffer));
                     ImGui::CloseCurrentPopup();
                 } catch (const std::exception& e) {
@@ -398,24 +401,10 @@ void ModelEditorWindow::showFileActionPopups() {
         ImGui::Spacing();
 
         if (ImGui::Button("Save", ImVec2(120.0f, 0.0f))) {
-            if (current_model.model_json.empty()) {
-                error_message = "Save failed: no model data";
-            } else {
-                std::filesystem::path target(save_model_path_buffer);
-                if (target.has_parent_path()) {
-                    std::error_code ec;
-                    std::filesystem::create_directories(target.parent_path(), ec);
-                }
-                if (writeTextFile(save_model_path_buffer, current_model.model_json)) {
-                    is_modified = false;
-                    status_message = "Model saved";
-                    error_message.clear();
-                    history->recordSnapshot("Saved model to file");
-                    appendStatusDetail("save_path=" + std::string(save_model_path_buffer));
-                    ImGui::CloseCurrentPopup();
-                } else {
-                    error_message = std::string("Save failed: cannot write file '") + save_model_path_buffer + "'";
-                }
+            saveModel();
+            if (error_message.empty()) {
+                appendStatusDetail("save_path=" + std::string(save_model_path_buffer));
+                ImGui::CloseCurrentPopup();
             }
         }
         ImGui::SameLine();
@@ -618,6 +607,296 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
     node_editor->autoLayout();
 }
 
+std::string ModelEditorWindow::serializeModelFromGraph() const {
+    json model = json::object();
+    model["domains"] = json::object();
+    model["variables"] = json::array();
+    model["stages"] = json::array();
+
+    const auto& nodes = node_editor->getAllNodes();
+    const auto& connections = node_editor->getConnections();
+
+    std::unordered_map<std::string, const Node*> nodesById;
+    nodesById.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        nodesById.emplace(node->id, node.get());
+    }
+
+    auto stripKnownPrefix = [](const std::string& value, const std::string& prefix) {
+        if (value.rfind(prefix, 0u) == 0u) {
+            return value.substr(prefix.size());
+        }
+        return value;
+    };
+
+    auto dataTypeToString = [](const DataType type) {
+        switch (type) {
+            case DataType::F64: return "f64";
+            case DataType::I32: return "i32";
+            case DataType::U32: return "u32";
+            case DataType::Bool: return "bool";
+            case DataType::Vec2: return "vec2";
+            case DataType::Vec3: return "vec3";
+            case DataType::F32:
+            default: return "f32";
+        }
+    };
+
+    auto roleToString = [](const VariableRole role) {
+        switch (role) {
+            case VariableRole::Parameter: return "parameter";
+            case VariableRole::Forcing: return "forcing";
+            case VariableRole::Derived: return "derived";
+            case VariableRole::Auxiliary: return "auxiliary";
+            case VariableRole::State:
+            default: return "state";
+        }
+    };
+
+    auto supportToString = [](const VariableSupport support) {
+        return support == VariableSupport::Cell ? "cell" : "global";
+    };
+
+    auto nodeIdLess = [](const auto* lhs, const auto* rhs) {
+        return lhs->id < rhs->id;
+    };
+
+    std::vector<const Node*> domainNodes;
+    std::vector<const Node*> variableNodes;
+    std::vector<const Node*> stageNodes;
+    std::vector<const Node*> interactionNodes;
+    domainNodes.reserve(nodes.size());
+    variableNodes.reserve(nodes.size());
+    stageNodes.reserve(nodes.size());
+    interactionNodes.reserve(nodes.size());
+
+    for (const auto& node : nodes) {
+        switch (node->type) {
+            case NodeType::Domain:
+                domainNodes.push_back(node.get());
+                break;
+            case NodeType::GlobalVariable:
+            case NodeType::CellVariable:
+            case NodeType::Parameter:
+            case NodeType::Derived:
+                variableNodes.push_back(node.get());
+                break;
+            case NodeType::Stage:
+                stageNodes.push_back(node.get());
+                break;
+            case NodeType::Equation:
+            case NodeType::Operator:
+                interactionNodes.push_back(node.get());
+                break;
+            default:
+                break;
+        }
+    }
+
+    std::sort(domainNodes.begin(), domainNodes.end(), nodeIdLess);
+    std::sort(variableNodes.begin(), variableNodes.end(), nodeIdLess);
+    std::sort(stageNodes.begin(), stageNodes.end(), nodeIdLess);
+    std::sort(interactionNodes.begin(), interactionNodes.end(), nodeIdLess);
+
+    for (const Node* domainNode : domainNodes) {
+        std::string domainId = !domainNode->domain_ref.empty()
+            ? domainNode->domain_ref
+            : stripKnownPrefix(domainNode->id, "domain_");
+        if (domainId.empty()) {
+            domainId = domainNode->id;
+        }
+
+        json domain = json::object();
+        domain["kind"] = "interval";
+        if (!domainNode->label.empty()) {
+            domain["label"] = domainNode->label;
+        }
+        if (!domainNode->description.empty()) {
+            domain["description"] = domainNode->description;
+        }
+
+        model["domains"][domainId] = domain;
+    }
+
+    std::unordered_map<std::string, std::string> variableNameByNodeId;
+    variableNameByNodeId.reserve(variableNodes.size());
+    for (const Node* variableNode : variableNodes) {
+        std::string variableId = !variableNode->variable_name.empty()
+            ? variableNode->variable_name
+            : stripKnownPrefix(variableNode->id, "var_");
+        if (variableId.empty()) {
+            variableId = variableNode->id;
+        }
+
+        json variable = json::object();
+        variable["id"] = variableId;
+        variable["type"] = dataTypeToString(variableNode->data_type);
+        variable["role"] = roleToString(variableNode->role);
+        variable["support"] = supportToString(variableNode->support);
+        if (!variableNode->label.empty()) {
+            variable["label"] = variableNode->label;
+        }
+        if (!variableNode->units.empty()) {
+            variable["units"] = variableNode->units;
+        }
+        if (!variableNode->domain_ref.empty()) {
+            variable["domain"] = variableNode->domain_ref;
+        }
+        if (!variableNode->description.empty()) {
+            variable["description"] = variableNode->description;
+        }
+        if (!variableNode->initial_value.empty()) {
+            variable["initial_value"] = variableNode->initial_value;
+        }
+
+        model["variables"].push_back(variable);
+        variableNameByNodeId[variableNode->id] = variableId;
+    }
+
+    std::unordered_map<std::string, json> stageById;
+    std::unordered_map<std::string, std::vector<json>> stageInteractions;
+    std::vector<std::string> stageOrder;
+    stageOrder.reserve(stageNodes.size());
+    for (const Node* stageNode : stageNodes) {
+        std::string stageId = stripKnownPrefix(stageNode->id, "stage_");
+        if (stageId.empty()) {
+            stageId = stageNode->id;
+        }
+
+        json stage = json::object();
+        stage["id"] = stageId;
+        if (!stageNode->label.empty()) {
+            stage["label"] = stageNode->label;
+        }
+        if (!stageNode->description.empty()) {
+            stage["description"] = stageNode->description;
+        }
+        stageById[stageId] = stage;
+        stageOrder.push_back(stageId);
+    }
+
+    auto findAssignedStageId = [&](const std::string& interactionNodeId) -> std::string {
+        for (const auto& connection : connections) {
+            if (connection.to_node_id != interactionNodeId) {
+                continue;
+            }
+
+            const auto fromIt = nodesById.find(connection.from_node_id);
+            if (fromIt == nodesById.end() || fromIt->second->type != NodeType::Stage) {
+                continue;
+            }
+
+            std::string stageId = stripKnownPrefix(fromIt->second->id, "stage_");
+            if (!stageId.empty()) {
+                return stageId;
+            }
+        }
+        return {};
+    };
+
+    std::vector<json> unassignedInteractions;
+    for (const Node* interactionNode : interactionNodes) {
+        json interaction = json::object();
+        std::string interactionId = stripKnownPrefix(interactionNode->id, "interaction_");
+        if (interactionId.empty()) {
+            interactionId = interactionNode->id;
+        }
+        interaction["id"] = interactionId;
+        if (!interactionNode->label.empty()) {
+            interaction["label"] = interactionNode->label;
+        }
+        interaction["formula"] = interactionNode->formula_logic;
+        interaction["target_type"] = interactionNode->target_type.empty() ? std::string("grid") : interactionNode->target_type;
+
+        std::vector<std::string> reads;
+        std::vector<std::string> writes;
+        for (const auto& connection : connections) {
+            if (connection.to_node_id == interactionNode->id) {
+                const auto sourceVarIt = variableNameByNodeId.find(connection.from_node_id);
+                if (sourceVarIt != variableNameByNodeId.end()) {
+                    reads.push_back(sourceVarIt->second);
+                }
+            }
+            if (connection.from_node_id == interactionNode->id) {
+                const auto targetVarIt = variableNameByNodeId.find(connection.to_node_id);
+                if (targetVarIt != variableNameByNodeId.end()) {
+                    writes.push_back(targetVarIt->second);
+                }
+            }
+        }
+        std::sort(reads.begin(), reads.end());
+        reads.erase(std::unique(reads.begin(), reads.end()), reads.end());
+        std::sort(writes.begin(), writes.end());
+        writes.erase(std::unique(writes.begin(), writes.end()), writes.end());
+        interaction["reads"] = reads;
+        interaction["writes"] = writes;
+
+        const std::string stageId = findAssignedStageId(interactionNode->id);
+        if (!stageId.empty()) {
+            stageInteractions[stageId].push_back(std::move(interaction));
+        } else {
+            unassignedInteractions.push_back(std::move(interaction));
+        }
+    }
+
+    if (!unassignedInteractions.empty()) {
+        if (!stageById.contains("unassigned")) {
+            json fallbackStage = json::object();
+            fallbackStage["id"] = "unassigned";
+            fallbackStage["label"] = "Unassigned Stage";
+            stageById["unassigned"] = fallbackStage;
+            stageOrder.push_back("unassigned");
+        }
+        auto& targetInteractions = stageInteractions["unassigned"];
+        for (auto& interaction : unassignedInteractions) {
+            targetInteractions.push_back(std::move(interaction));
+        }
+    }
+
+    for (const auto& stageId : stageOrder) {
+        auto stageIt = stageById.find(stageId);
+        if (stageIt == stageById.end()) {
+            continue;
+        }
+
+        auto stage = stageIt->second;
+        auto interactionsIt = stageInteractions.find(stageId);
+        if (interactionsIt != stageInteractions.end()) {
+            stage["interactions"] = interactionsIt->second;
+        } else {
+            stage["interactions"] = json::array();
+        }
+        model["stages"].push_back(std::move(stage));
+    }
+
+    return model.dump(2);
+}
+
+bool ModelEditorWindow::restoreFromSerializedModel(const std::string& model_json_str) {
+    if (model_json_str.empty()) {
+        error_message = "Restore failed: empty model payload";
+        return false;
+    }
+
+    try {
+        populateNodeGraphFromModel(model_json_str);
+        current_model.model_json = model_json_str;
+        pending_history_snapshot = false;
+        is_modified = true;
+        error_message.clear();
+        return true;
+    } catch (const std::exception& e) {
+        error_message = std::string("Restore failed: ") + e.what();
+        return false;
+    }
+}
+
+void ModelEditorWindow::recordHistorySnapshot(const std::string& description) {
+    current_model.model_json = serializeModelFromGraph();
+    history->recordSnapshot(description, current_model.model_json);
+    pending_history_snapshot = false;
+}
+
 void ModelEditorWindow::render(ImVec2 available_size) {
     if (!window_open) return;
 
@@ -682,7 +961,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                     ImGui::OpenPopup("SaveModelDialog");
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Export as ZIP")) {
+                if (ImGui::MenuItem("Export model JSON")) {
                     exportModel();
                 }
                 ImGui::Separator();
@@ -694,13 +973,15 @@ void ModelEditorWindow::render(ImVec2 available_size) {
 
             if (ImGui::BeginMenu("Edit")) {
                 if (ImGui::MenuItem("Undo", "Ctrl+Z", false, history->canUndo())) {
-                    if (history->undo()) {
+                    std::string restoredState;
+                    if (history->undo(restoredState) && restoreFromSerializedModel(restoredState)) {
                         status_message = "Undo applied";
                         appendStatusDetail("undo=true");
                     }
                 }
                 if (ImGui::MenuItem("Redo", "Ctrl+Shift+Z", false, history->canRedo())) {
-                    if (history->redo()) {
+                    std::string restoredState;
+                    if (history->redo(restoredState) && restoreFromSerializedModel(restoredState)) {
                         status_message = "Redo applied";
                         appendStatusDetail("redo=true");
                     }
@@ -837,6 +1118,10 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                 }
             }
             ImGui::EndChild();
+        }
+
+        if (pending_history_snapshot) {
+            recordHistorySnapshot("Graph edit");
         }
 
         ImGui::End();
@@ -1232,16 +1517,74 @@ void ModelEditorWindow::runValidation() {
 }
 
 bool ModelEditorWindow::hasCyclicDependencies() const {
-    // Simplified cycle detection using DFS
-    // In a full implementation, use topological sort with cycle detection
+    const auto& nodes = node_editor->getAllNodes();
+    const auto& connections = node_editor->getConnections();
+
+    if (nodes.empty() || connections.empty()) {
+        return false;
+    }
+
+    std::unordered_map<std::string, std::vector<std::string>> adjacency;
+    adjacency.reserve(nodes.size());
+
+    for (const auto& node : nodes) {
+        adjacency.emplace(node->id, std::vector<std::string>{});
+    }
+
+    for (const auto& connection : connections) {
+        auto fromIt = adjacency.find(connection.from_node_id);
+        auto toIt = adjacency.find(connection.to_node_id);
+        if (fromIt == adjacency.end() || toIt == adjacency.end()) {
+            continue;
+        }
+        fromIt->second.push_back(connection.to_node_id);
+    }
+
+    std::unordered_set<std::string> visited;
+    std::unordered_set<std::string> recursionStack;
+    visited.reserve(adjacency.size());
+    recursionStack.reserve(adjacency.size());
+
+    const auto hasCycleFrom = [&](const auto& self, const std::string& nodeId) -> bool {
+        if (recursionStack.contains(nodeId)) {
+            return true;
+        }
+        if (visited.contains(nodeId)) {
+            return false;
+        }
+
+        visited.insert(nodeId);
+        recursionStack.insert(nodeId);
+
+        const auto adjIt = adjacency.find(nodeId);
+        if (adjIt != adjacency.end()) {
+            for (const auto& neighbor : adjIt->second) {
+                if (self(self, neighbor)) {
+                    return true;
+                }
+            }
+        }
+
+        recursionStack.erase(nodeId);
+        return false;
+    };
+
+    for (const auto& [nodeId, _] : adjacency) {
+        if (!visited.contains(nodeId) && hasCycleFrom(hasCycleFrom, nodeId)) {
+            return true;
+        }
+    }
+
     return false;
 }
 
 void ModelEditorWindow::markDirty() {
     is_modified = true;
+    pending_history_snapshot = true;
 }
 
 void ModelEditorWindow::saveModel() {
+    current_model.model_json = serializeModelFromGraph();
     if (current_model.model_json.empty()) {
         current_model.model_json = defaultModelTemplateJson();
     }
@@ -1256,7 +1599,7 @@ void ModelEditorWindow::saveModel() {
         status_message = "Model saved successfully";
         error_message.clear();
         is_modified = false;
-        history->recordSnapshot("Save model");
+        recordHistorySnapshot("Save model");
         appendStatusDetail("save=ok");
     } else {
         error_message = std::string("Failed to save model to '") + save_model_path_buffer + "'";
@@ -1265,11 +1608,7 @@ void ModelEditorWindow::saveModel() {
 }
 
 void ModelEditorWindow::exportModel() {
-    if (current_model.model_json.empty()) {
-        error_message = "No model loaded";
-        appendStatusDetail("export=error");
-        return;
-    }
+    current_model.model_json = serializeModelFromGraph();
 
     std::filesystem::path exportPath = std::filesystem::path(save_model_path_buffer);
     if (exportPath.empty()) {
@@ -1279,7 +1618,7 @@ void ModelEditorWindow::exportModel() {
     std::error_code ec;
     std::filesystem::create_directories(exportPath.parent_path(), ec);
     if (writeTextFile(exportPath.string(), current_model.model_json)) {
-        status_message = "Model exported successfully";
+        status_message = "Model JSON exported successfully";
         error_message.clear();
         appendStatusDetail("export_path=" + exportPath.string());
     } else {
@@ -1294,7 +1633,8 @@ void ModelEditorWindow::createNewModel() {
     node_editor->clearSelection();
     try {
         populateNodeGraphFromModel(current_model.model_json);
-        history->recordSnapshot("Create new model");
+        history->clear();
+        recordHistorySnapshot("Create new model");
     } catch (const std::exception& e) {
         error_message = std::string("Failed to initialize new model: ") + e.what();
     }

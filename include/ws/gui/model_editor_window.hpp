@@ -91,6 +91,9 @@ private:
     
     // Model graph operations
     void populateNodeGraphFromModel(const std::string& model_json_str);
+    std::string serializeModelFromGraph() const;
+    bool restoreFromSerializedModel(const std::string& model_json_str);
+    void recordHistorySnapshot(const std::string& description);
     void addVariableNode(NodeType node_type, VariableSupport support);
     void addInteractionNode(NodeType node_type);
     void addStageNode();
@@ -100,6 +103,8 @@ private:
     void runValidation();
     bool hasCyclicDependencies() const;
     void markDirty();
+
+    bool pending_history_snapshot{false};
 };
 
 } // namespace ws::gui

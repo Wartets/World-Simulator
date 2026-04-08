@@ -228,6 +228,7 @@ ws_add_test(ui_state_transitions_multi_model_test tests/ui_state_transitions_mul
 ws_add_test(shell_support_test tests/shell_support.cpp)
 ws_add_test(live_patching_test tests/live_patching.cpp)
 ws_add_test(profile_store_test tests/profile_store.cpp)
+ws_add_test(model_history_test tests/model_history.cpp)
 ws_add_test(performance_optimization_test tests/performance_optimization.cpp)
 ws_add_test(advanced_features_test tests/advanced_features.cpp)
 target_sources(live_patching_test PRIVATE
@@ -239,6 +240,9 @@ target_sources(shell_support_test PRIVATE
 target_sources(profile_store_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+)
+target_sources(model_history_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_history.cpp
 )
 
 add_executable(viewport_manager_test

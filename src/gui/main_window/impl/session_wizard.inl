@@ -24,6 +24,105 @@
         std::snprintf(sessionUi_.operationDetail, sizeof(sessionUi_.operationDetail), "%s", detail.str().c_str());
     }
 
+    [[nodiscard]] static const char* worldStorageStatusLabel(const StoredWorldInfo& world) {
+        if (!world.hasProfile && !world.hasCheckpoint) {
+            return "Storage incomplete";
+        }
+        if (world.hasProfile && world.hasCheckpoint) {
+            return world.usesLegacyFallback() ? "Ready to resume (legacy path)" : "Ready to resume";
+        }
+        if (world.hasProfile) {
+            return "Opens from profile only";
+        }
+        return "Checkpoint without profile";
+    }
+
+    [[nodiscard]] static ImVec4 worldStorageStatusColor(const StoredWorldInfo& world) {
+        if (!world.hasProfile && !world.hasCheckpoint) {
+            return ImVec4(0.95f, 0.55f, 0.45f, 1.0f);
+        }
+        if (world.hasProfile && world.hasCheckpoint && !world.usesLegacyFallback()) {
+            return ImVec4(0.58f, 0.88f, 0.62f, 1.0f);
+        }
+        if (world.hasProfile && world.hasCheckpoint) {
+            return ImVec4(0.95f, 0.80f, 0.45f, 1.0f);
+        }
+        if (world.hasProfile) {
+            return ImVec4(0.95f, 0.80f, 0.45f, 1.0f);
+        }
+        return ImVec4(0.95f, 0.55f, 0.45f, 1.0f);
+    }
+
+    [[nodiscard]] static std::string worldResumeSummary(const StoredWorldInfo& world) {
+        std::ostringstream out;
+        if (world.hasCheckpoint) {
+            out << "Open restores the checkpointed runtime state";
+            if (world.stepIndex > 0) {
+                out << " at step " << world.stepIndex;
+            }
+            if (world.hasCheckpointTimestamp) {
+                out << " saved " << session_manager::formatFileTime(world.checkpointLastWrite, true);
+            }
+            out << ".";
+            return out.str();
+        }
+        if (world.hasProfile) {
+            out << "Open rebuilds the world from profile settings";
+            if (world.hasProfileTimestamp) {
+                out << " saved " << session_manager::formatFileTime(world.profileLastWrite, true);
+            }
+            out << ". No checkpointed runtime state is available.";
+            return out.str();
+        }
+        return "This record is missing both profile and checkpoint data and may not open successfully.";
+    }
+
+    [[nodiscard]] static std::string worldPersistenceSummary(const StoredWorldInfo& world) {
+        std::ostringstream out;
+        out << (world.hasProfile ? "Profile saved" : "Profile missing")
+            << " | "
+            << (world.hasCheckpoint ? "Checkpoint saved" : "Checkpoint missing")
+            << " | "
+            << (world.hasDisplayPrefs ? "View layout saved" : "No saved view layout");
+        return out.str();
+    }
+
+    [[nodiscard]] static std::string worldStorageScopeSummary(const StoredWorldInfo& world) {
+        if (world.usesLegacyFallback()) {
+            std::vector<std::string> fallbackParts;
+            if (world.profileUsesFallback) {
+                fallbackParts.push_back("profile");
+            }
+            if (world.checkpointUsesFallback) {
+                fallbackParts.push_back("checkpoint");
+            }
+            if (world.displayPrefsUsesFallback) {
+                fallbackParts.push_back("view layout");
+            }
+
+            std::ostringstream out;
+            out << "Uses legacy fallback path for ";
+            for (std::size_t i = 0; i < fallbackParts.size(); ++i) {
+                if (i > 0) {
+                    out << (i + 1 == fallbackParts.size() ? " and " : ", ");
+                }
+                out << fallbackParts[i];
+            }
+            out << ".";
+            return out.str();
+        }
+
+        if (world.modelKey.empty() || world.modelKey == "default") {
+            return "Stored in the default workspace scope.";
+        }
+
+        return "Stored under the active model scope.";
+    }
+
+    void setSessionStatusText(const std::string& message) {
+        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+    }
+
     void tickDeferredWizardInitialization() {
         if (!deferredWizardInitialization_.active) {
             return;
@@ -93,7 +192,14 @@
             if (sessionUi_.selectedWorldIndex < 0 && !sessionUi_.worlds.empty()) {
                 sessionUi_.selectedWorldIndex = 0;
             }
-            std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", listMessage.c_str());
+            if (sessionUi_.worlds.empty()) {
+                setSessionStatusText("No saved worlds were found for the active model.");
+            } else {
+                setSessionStatusText(
+                    std::string("Loaded ") + std::to_string(sessionUi_.worlds.size()) +
+                    " saved world" + (sessionUi_.worlds.size() == 1u ? "" : "s") +
+                    ". Select one to review how it will open.");
+            }
             sessionUi_.needsRefresh = false;
             completeOperationStatus(refreshStartedAt, "world list refreshed");
         }
@@ -197,8 +303,8 @@
                 return app::toLower(a.worldName) < app::toLower(b.worldName);
             }
             if (sessionUi_.sortMode == 3) {
-                const std::uintmax_t bytesA = a.profileBytes + a.checkpointBytes;
-                const std::uintmax_t bytesB = b.profileBytes + b.checkpointBytes;
+                const std::uintmax_t bytesA = a.profileBytes + a.checkpointBytes + a.displayPrefsBytes;
+                const std::uintmax_t bytesB = b.profileBytes + b.checkpointBytes + b.displayPrefsBytes;
                 if (bytesA != bytesB) {
                     return bytesA > bytesB;
                 }
@@ -240,14 +346,18 @@
                 const int worldIndex = filteredWorldIndices[static_cast<std::size_t>(i)];
                 const auto& world = sessionUi_.worlds[static_cast<std::size_t>(worldIndex)];
                 const bool selected = (sessionUi_.selectedWorldIndex == worldIndex);
-                if (ImGui::Selectable(world.worldName.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0.0f, 30.0f))) {
+                if (ImGui::Selectable(world.worldName.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0.0f, 36.0f))) {
                     sessionUi_.selectedWorldIndex = worldIndex;
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         openSelectedWorld();
                     }
                 }
                 ImGui::SameLine();
-                ImGui::TextDisabled("  %s%s", world.initialConditionMode.empty() ? "n/a" : world.initialConditionMode.c_str(), world.hasCheckpoint ? "  [cp]" : "");
+                const std::string rowDetail =
+                    std::string(world.initialConditionMode.empty() ? "n/a" : world.initialConditionMode.c_str()) +
+                    " | " + worldStorageStatusLabel(world) +
+                    " | " + (world.hasCheckpoint ? "restores checkpoint" : "rebuilds from profile");
+                ImGui::TextDisabled("  %s", rowDetail.c_str());
             }
         }
         ImGui::EndChild();
@@ -270,42 +380,59 @@
                 worldCompareSelectionIndex = -1;
             }
             const std::uint64_t gridCells = static_cast<std::uint64_t>(world.gridWidth) * static_cast<std::uint64_t>(world.gridHeight);
-            const std::uintmax_t totalBytes = world.profileBytes + world.checkpointBytes;
+            const std::uintmax_t totalBytes = world.profileBytes + world.checkpointBytes + world.displayPrefsBytes;
+            const ImVec4 statusColor = worldStorageStatusColor(world);
+            const std::string resumeSummary = worldResumeSummary(world);
+            const std::string persistenceSummary = worldPersistenceSummary(world);
+            const std::string storageScopeSummary = worldStorageScopeSummary(world);
             ImGui::Text("Name: %s", world.worldName.c_str());
+            ImGui::TextColored(statusColor, "%s", worldStorageStatusLabel(world));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+            ImGui::TextWrapped("%s", resumeSummary.c_str());
+            ImGui::TextDisabled("%s", persistenceSummary.c_str());
+            ImGui::PopTextWrapPos();
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextDisabled("World profile");
             ImGui::Text("Grid: %ux%u", world.gridWidth, world.gridHeight);
             ImGui::Text("Cells: %llu", static_cast<unsigned long long>(gridCells));
             ImGui::Text("Seed: %llu", static_cast<unsigned long long>(world.seed));
             ImGui::Text("Temporal: %s", world.temporalPolicy.empty() ? "n/a" : world.temporalPolicy.c_str());
             ImGui::Text("Initialization: %s", world.initialConditionMode.empty() ? "n/a" : world.initialConditionMode.c_str());
             ImGui::Text("Data footprint: %s", session_manager::formatBytes(totalBytes).c_str());
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextDisabled("Persistence details");
             ImGui::Text("Profile: %s", world.profilePath.string().c_str());
             ImGui::Text("Profile size: %s", session_manager::formatBytes(world.profileBytes).c_str());
             ImGui::Text("Profile updated: %s", session_manager::formatFileTime(world.profileLastWrite, world.hasProfileTimestamp).c_str());
-            ImGui::Text("Checkpoint available: %s", world.hasCheckpoint ? "Yes" : "No");
+            ImGui::Text("Checkpoint: %s", world.hasCheckpoint ? "Saved" : "Missing");
             if (world.hasCheckpoint) {
                 ImGui::Text("Last saved step: %llu", static_cast<unsigned long long>(world.stepIndex));
                 ImGui::Text("Run identity: %016llx", static_cast<unsigned long long>(world.runIdentityHash));
                 ImGui::Text("Checkpoint size: %s", session_manager::formatBytes(world.checkpointBytes).c_str());
                 ImGui::Text("Checkpoint updated: %s", session_manager::formatFileTime(world.checkpointLastWrite, world.hasCheckpointTimestamp).c_str());
             } else {
-                LabeledHint("This world will open from profile defaults because no checkpoint is available.");
+                ImGui::TextDisabled("Open will start from the saved profile because no checkpoint is available.");
             }
-
-            const int qualityScore =
-                (world.hasProfile ? 40 : 0) +
-                (world.hasCheckpoint ? 40 : 0) +
-                (world.gridWidth > 0 && world.gridHeight > 0 ? 20 : 0);
-            ImGui::Spacing();
-            ImGui::ProgressBar(static_cast<float>(qualityScore) / 100.0f, ImVec2(-1.0f, 0.0f));
-            ImGui::TextDisabled("Integrity score: %d/100", qualityScore);
+            ImGui::Text("View layout: %s", world.hasDisplayPrefs ? "Saved" : "Not saved");
+            if (world.hasDisplayPrefs) {
+                ImGui::Text("View layout size: %s", session_manager::formatBytes(world.displayPrefsBytes).c_str());
+                ImGui::Text("View layout updated: %s", session_manager::formatFileTime(world.displayPrefsLastWrite, world.hasDisplayPrefsTimestamp).c_str());
+            }
 
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
-            ImGui::TextDisabled("Session inspector");
-            ImGui::Text("Profile bytes: %s", session_manager::formatBytes(world.profileBytes).c_str());
-            ImGui::Text("Session type: %s", world.hasCheckpoint ? "checkpoint-backed" : "profile-only");
-            ImGui::Text("Storage roots: %s", world.modelKey.empty() ? "global" : world.modelKey.c_str());
+            ImGui::TextDisabled("Storage scope");
+            ImGui::Text("Scope key: %s", world.modelKey.empty() ? "default" : world.modelKey.c_str());
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+            ImGui::TextWrapped("%s", storageScopeSummary.c_str());
+            ImGui::PopTextWrapPos();
 
             const char* compareLabel = "<none>";
             if (worldCompareSelectionIndex >= 0 && worldCompareSelectionIndex < static_cast<int>(sessionUi_.worlds.size())) {
@@ -342,7 +469,7 @@
                 const std::int64_t heightDelta = static_cast<std::int64_t>(world.gridHeight) - static_cast<std::int64_t>(other.gridHeight);
                 const std::int64_t stepDelta = static_cast<std::int64_t>(world.stepIndex) - static_cast<std::int64_t>(other.stepIndex);
                 const std::int64_t bytesDelta = static_cast<std::int64_t>(totalBytes) -
-                    static_cast<std::int64_t>(other.profileBytes + other.checkpointBytes);
+                    static_cast<std::int64_t>(other.profileBytes + other.checkpointBytes + other.displayPrefsBytes);
 
                 ImGui::Text("Delta vs %s", other.worldName.c_str());
                 ImGui::BulletText("Grid delta: %+lld x %+lld", static_cast<long long>(widthDelta), static_cast<long long>(heightDelta));
@@ -377,7 +504,7 @@
         if (PrimaryButton("Open world", ImVec2(btnW, 42.0f))) {
             openSelectedWorld();
         }
-        DelayedTooltip("Loads the selected world without restarting the application.");
+        DelayedTooltip("Restores the saved checkpoint when available; otherwise rebuilds the world from saved profile settings.");
         if (!canOpen) {
             ImGui::EndDisabled();
         }
@@ -499,9 +626,13 @@
                     if (requestedName != normalizedName) {
                         std::snprintf(sessionUi_.pendingDuplicateName, sizeof(sessionUi_.pendingDuplicateName), "%s", normalizedName.c_str());
                     }
-                    runtime_.duplicateWorld(world.worldName, normalizedName, message);
+                    const bool duplicated = runtime_.duplicateWorld(world.worldName, normalizedName, message);
                     completeOperationStatus(startedAt, "duplicate world finished");
-                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    if (duplicated) {
+                        setSessionStatusText(std::string("Duplicated '") + world.worldName + "' as '" + normalizedName + "'.");
+                    } else {
+                        setSessionStatusText(message);
+                    }
                     appendLog(message);
                     sessionUi_.needsRefresh = true;
                 }
@@ -542,9 +673,13 @@
                     if (requestedName != normalizedName) {
                         std::snprintf(sessionUi_.pendingRenameName, sizeof(sessionUi_.pendingRenameName), "%s", normalizedName.c_str());
                     }
-                    runtime_.renameWorld(world.worldName, normalizedName, message);
+                    const bool renamed = runtime_.renameWorld(world.worldName, normalizedName, message);
                     completeOperationStatus(startedAt, "rename world finished");
-                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    if (renamed) {
+                        setSessionStatusText(std::string("Renamed world to '") + normalizedName + "'.");
+                    } else {
+                        setSessionStatusText(message);
+                    }
                     appendLog(message);
                     sessionUi_.needsRefresh = true;
                 }
@@ -562,8 +697,25 @@
 
         if (ImGui::BeginPopupModal("Export World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::InputText("Export path", sessionUi_.pendingExportPath, IM_ARRAYSIZE(sessionUi_.pendingExportPath));
+            ImGui::SameLine();
+            if (SecondaryButton("Browse...", ImVec2(110.0f, 0.0f))) {
+                const std::filesystem::path defaultExportPath = std::filesystem::path(sessionUi_.pendingExportPath);
+                if (const auto exportPath = pickNativeFilePath(
+                        L"Export World",
+                        L"World Export (*.wsexp)\0*.wsexp\0All Files (*.*)\0*.*\0\0",
+                        defaultExportPath,
+                        true)) {
+                    std::snprintf(sessionUi_.pendingExportPath, sizeof(sessionUi_.pendingExportPath), "%s", exportPath->string().c_str());
+                }
+            }
             const std::string exportPath = sessionUi_.pendingExportPath;
             const bool exportPathValid = !exportPath.empty();
+            if (sessionUi_.pendingExportWorldIndex >= 0 && sessionUi_.pendingExportWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
+                const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingExportWorldIndex)];
+                ImGui::TextDisabled(
+                    "Export copies the saved profile%s into a portable world file.",
+                    world.hasCheckpoint ? " and checkpoint" : "");
+            }
             if (!exportPathValid) {
                 ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Export path is required.");
             } else {
@@ -584,9 +736,13 @@
                     std::string message;
                     beginOperationStatus("export world", 0.4f, world.worldName.c_str());
                     const auto startedAt = std::chrono::steady_clock::now();
-                    runtime_.exportWorld(world.worldName, std::filesystem::path(sessionUi_.pendingExportPath), message);
+                    const bool exported = runtime_.exportWorld(world.worldName, std::filesystem::path(sessionUi_.pendingExportPath), message);
                     completeOperationStatus(startedAt, "export world finished");
-                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    if (exported) {
+                        setSessionStatusText(std::string("Exported '") + world.worldName + "' to '" + std::string(sessionUi_.pendingExportPath) + "'.");
+                    } else {
+                        setSessionStatusText(message);
+                    }
                     appendLog(message);
                 }
                 ImGui::CloseCurrentPopup();
@@ -607,9 +763,21 @@
         }
         if (ImGui::BeginPopupModal("Import World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::InputText("Import file", sessionUi_.pendingImportPath, IM_ARRAYSIZE(sessionUi_.pendingImportPath));
+            ImGui::SameLine();
+            if (SecondaryButton("Browse...", ImVec2(110.0f, 0.0f))) {
+                const std::filesystem::path defaultImportPath = std::filesystem::path(sessionUi_.pendingImportPath);
+                if (const auto importPath = pickNativeFilePath(
+                        L"Import World",
+                        L"World Export (*.wsexp)\0*.wsexp\0All Files (*.*)\0*.*\0\0",
+                        defaultImportPath,
+                        false)) {
+                    std::snprintf(sessionUi_.pendingImportPath, sizeof(sessionUi_.pendingImportPath), "%s", importPath->string().c_str());
+                }
+            }
             const std::filesystem::path importPath = std::filesystem::path(sessionUi_.pendingImportPath);
             const bool importPathProvided = !importPath.empty();
             const bool importPathExists = importPathProvided && std::filesystem::exists(importPath);
+            ImGui::TextDisabled("Imports always create a stored copy. If the incoming world name already exists, a numbered copy is created instead.");
             if (!importPathProvided) {
                 ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Import file path is required.");
             } else if (!importPathExists) {
@@ -626,9 +794,15 @@
                 std::string message;
                 beginOperationStatus("import world", 0.4f, sessionUi_.pendingImportPath);
                 const auto startedAt = std::chrono::steady_clock::now();
-                runtime_.importWorld(std::filesystem::path(sessionUi_.pendingImportPath), importedName, message);
+                const bool imported = runtime_.importWorld(std::filesystem::path(sessionUi_.pendingImportPath), importedName, message);
                 completeOperationStatus(startedAt, "import world finished");
-                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                if (imported) {
+                    setSessionStatusText(
+                        std::string("Imported world as '") + importedName +
+                        "'. Review its storage summary before opening it.");
+                } else {
+                    setSessionStatusText(message);
+                }
                 appendLog(message);
                 sessionUi_.needsRefresh = true;
                 ImGui::CloseCurrentPopup();
@@ -656,10 +830,14 @@
                     std::string message;
                     beginOperationStatus("delete world", 0.4f, world.worldName.c_str());
                     const auto startedAt = std::chrono::steady_clock::now();
-                    runtime_.deleteWorld(world.worldName, message);
+                    const bool deleted = runtime_.deleteWorld(world.worldName, message);
                     completeOperationStatus(startedAt, "delete world finished");
                     appendLog(message);
-                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    if (deleted) {
+                        setSessionStatusText(std::string("Deleted world '") + world.worldName + "'.");
+                    } else {
+                        setSessionStatusText(message);
+                    }
                     sessionUi_.needsRefresh = true;
                 }
                 sessionUi_.pendingDeleteWorldIndex = -1;
@@ -675,6 +853,9 @@
 
         if (!canOpen) {
             LabeledHint("Open world is disabled until a world is selected.");
+        } else {
+            const auto& selectedWorld = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+            LabeledHint(worldResumeSummary(selectedWorld).c_str());
         }
         if (sessionUi_.statusMessage[0] != '\0') {
             LabeledHint(sessionUi_.statusMessage);

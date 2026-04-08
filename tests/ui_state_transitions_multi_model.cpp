@@ -68,6 +68,13 @@ bool hasWorld(const std::vector<ws::gui::StoredWorldInfo>& worlds, const std::st
     });
 }
 
+const ws::gui::StoredWorldInfo* findWorld(const std::vector<ws::gui::StoredWorldInfo>& worlds, const std::string& worldName) {
+    const auto it = std::find_if(worlds.begin(), worlds.end(), [&](const ws::gui::StoredWorldInfo& world) {
+        return world.worldName == worldName;
+    });
+    return it == worlds.end() ? nullptr : &(*it);
+}
+
 void runModelStateTransitions(const std::filesystem::path& modelPath, std::size_t index) {
     ws::gui::RuntimeService service;
 
@@ -116,6 +123,12 @@ void runModelStateTransitions(const std::filesystem::path& modelPath, std::size_
     auto worlds = service.listStoredWorlds(message);
     assert(hasWorld(worlds, worldA));
     assert(hasWorld(worlds, worldB));
+    const auto* worldAInfo = findWorld(worlds, worldA);
+    const auto* worldBInfo = findWorld(worlds, worldB);
+    assert(worldAInfo != nullptr && worldAInfo->hasProfile && worldAInfo->hasCheckpoint);
+    assert(worldBInfo != nullptr && worldBInfo->hasProfile && worldBInfo->hasCheckpoint);
+    assert(worldAInfo != nullptr && !worldAInfo->usesLegacyFallback());
+    assert(worldBInfo != nullptr && !worldBInfo->usesLegacyFallback());
 
     require(service.renameWorld(worldA, worldARenamed, message), "rename_world_a", message);
     require(service.duplicateWorld(worldARenamed, worldA, message), "duplicate_world_a", message);
@@ -124,6 +137,9 @@ void runModelStateTransitions(const std::filesystem::path& modelPath, std::size_
     assert(hasWorld(worlds, worldA));
     assert(hasWorld(worlds, worldARenamed));
     assert(hasWorld(worlds, worldB));
+    const auto* worldARenamedInfo = findWorld(worlds, worldARenamed);
+    assert(worldARenamedInfo != nullptr && worldARenamedInfo->hasProfile && worldARenamedInfo->hasCheckpoint);
+    assert(worldARenamedInfo != nullptr && !worldARenamedInfo->usesLegacyFallback());
 
     require(service.openWorld(worldARenamed, message), "open_world_renamed", message);
     require(service.pause(message), "pause", message);

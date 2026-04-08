@@ -310,8 +310,10 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
         info.worldName = record.worldName;
         info.profilePath = record.profilePath;
         info.checkpointPath = record.checkpointPath;
+        info.displayPrefsPath = record.displayPrefsPath;
         info.hasProfile = record.hasProfile;
         info.hasCheckpoint = record.hasCheckpoint;
+        info.hasDisplayPrefs = record.hasDisplayPrefs;
         info.gridWidth = record.gridWidth;
         info.gridHeight = record.gridHeight;
         info.seed = record.seed;
@@ -319,12 +321,18 @@ std::vector<StoredWorldInfo> RuntimeService::listStoredWorlds(std::string& messa
         info.initialConditionMode = record.initialConditionMode;
         info.profileBytes = record.profileBytes;
         info.checkpointBytes = record.checkpointBytes;
+        info.displayPrefsBytes = record.displayPrefsBytes;
         info.profileLastWrite = record.profileLastWrite;
         info.checkpointLastWrite = record.checkpointLastWrite;
+        info.displayPrefsLastWrite = record.displayPrefsLastWrite;
         info.hasProfileTimestamp = record.hasProfileTimestamp;
         info.hasCheckpointTimestamp = record.hasCheckpointTimestamp;
+        info.hasDisplayPrefsTimestamp = record.hasDisplayPrefsTimestamp;
         info.stepIndex = record.stepIndex;
         info.runIdentityHash = record.runIdentityHash;
+        info.profileUsesFallback = record.profileUsesFallback;
+        info.checkpointUsesFallback = record.checkpointUsesFallback;
+        info.displayPrefsUsesFallback = record.displayPrefsUsesFallback;
         worlds.push_back(std::move(info));
     }
 

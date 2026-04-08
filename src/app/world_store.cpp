@@ -250,10 +250,22 @@ std::vector<StoredWorldRecord> WorldStore::list(const std::string& modelKey, std
                 record.modelKey = "default";
             }
             record.worldName = worldName;
+            const auto scopedProfilePath = worldProfileStore_.writePathFor(worldName, modelKey);
+            const auto scopedCheckpointPath = writeCheckpointPathFor(worldName, modelKey);
+            const auto scopedDisplayPath = writeDisplayPrefsPathFor(worldName, modelKey);
             record.profilePath = profilePathFor(worldName, modelKey);
             record.checkpointPath = checkpointPathFor(worldName, modelKey);
+            record.displayPrefsPath = displayPrefsPathFor(worldName, modelKey);
             record.hasProfile = std::filesystem::exists(record.profilePath);
             record.hasCheckpoint = std::filesystem::exists(record.checkpointPath);
+            record.hasDisplayPrefs = std::filesystem::exists(record.displayPrefsPath);
+            const bool scopedModelStorage = !normalizeScopeKey(modelKey).empty();
+            record.profileUsesFallback =
+                scopedModelStorage && record.hasProfile && !scopedProfilePath.empty() && record.profilePath != scopedProfilePath;
+            record.checkpointUsesFallback =
+                scopedModelStorage && record.hasCheckpoint && !scopedCheckpointPath.empty() && record.checkpointPath != scopedCheckpointPath;
+            record.displayPrefsUsesFallback =
+                scopedModelStorage && record.hasDisplayPrefs && !scopedDisplayPath.empty() && record.displayPrefsPath != scopedDisplayPath;
 
             if (record.hasProfile) {
                 record.profileBytes = std::filesystem::file_size(record.profilePath);
@@ -291,6 +303,12 @@ std::vector<StoredWorldRecord> WorldStore::list(const std::string& modelKey, std
                 } catch (...) {
                     // keep list operation resilient
                 }
+            }
+
+            if (record.hasDisplayPrefs) {
+                record.displayPrefsBytes = std::filesystem::file_size(record.displayPrefsPath);
+                record.displayPrefsLastWrite = std::filesystem::last_write_time(record.displayPrefsPath);
+                record.hasDisplayPrefsTimestamp = true;
             }
 
             worlds.push_back(std::move(record));

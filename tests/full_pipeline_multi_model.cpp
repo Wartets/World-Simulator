@@ -167,6 +167,16 @@ bool hasWorld(const std::vector<ws::gui::StoredWorldInfo>& worlds, const std::st
         });
 }
 
+const ws::gui::StoredWorldInfo* findWorld(const std::vector<ws::gui::StoredWorldInfo>& worlds, const std::string& worldName) {
+    const auto it = std::find_if(
+        worlds.begin(),
+        worlds.end(),
+        [&](const ws::gui::StoredWorldInfo& world) {
+            return world.worldName == worldName;
+        });
+    return it == worlds.end() ? nullptr : &(*it);
+}
+
 bool snapshotsEvolved(
     const ws::StateStoreSnapshot& before,
     const ws::StateStoreSnapshot& after) {
@@ -609,6 +619,15 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
     assert(hasWorld(worlds, worldName));
     assert(hasWorld(worlds, worldRenamedName));
     assert(hasWorld(worlds, importedWorldName));
+    const auto* originalInfo = findWorld(worlds, worldName);
+    const auto* renamedInfo = findWorld(worlds, worldRenamedName);
+    const auto* importedInfo = findWorld(worlds, importedWorldName);
+    assert(originalInfo != nullptr && originalInfo->hasProfile && originalInfo->hasCheckpoint);
+    assert(renamedInfo != nullptr && renamedInfo->hasProfile && renamedInfo->hasCheckpoint);
+    assert(importedInfo != nullptr && importedInfo->hasProfile && importedInfo->hasCheckpoint);
+    assert(originalInfo != nullptr && !originalInfo->usesLegacyFallback());
+    assert(renamedInfo != nullptr && !renamedInfo->usesLegacyFallback());
+    assert(importedInfo != nullptr && !importedInfo->usesLegacyFallback());
 
     require(service.stop(message), "stop_before_reopen", message);
     require(service.openWorld(worldName, message), "open_world", message);
