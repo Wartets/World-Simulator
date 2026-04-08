@@ -446,6 +446,14 @@ public:
     [[nodiscard]] const std::vector<RuntimeEventRecord>& eventChronology() const noexcept { return eventChronology_; }
     // Returns the manually recorded events.
     [[nodiscard]] const std::vector<ManualEventRecord>& manualEventLog() const noexcept { return eventQueue_.manualEvents(); }
+    // Returns count of queued scalar input patches waiting for ingestion.
+    [[nodiscard]] std::size_t pendingInputPatchCount() const noexcept { return eventQueue_.pendingInputPatchCount(); }
+    // Returns count of queued runtime events waiting for event queue apply.
+    [[nodiscard]] std::size_t pendingEventCount() const noexcept { return eventQueue_.pendingEventCount(); }
+    // Returns count of scheduled perturbations that have not fully completed.
+    [[nodiscard]] std::size_t pendingPerturbationCount() const noexcept { return pendingPerturbations_.size(); }
+    // Returns count of recorded manual events in current runtime session/checkpoint state.
+    [[nodiscard]] std::size_t manualEventCount() const noexcept { return eventQueue_.manualEvents().size(); }
     // Returns the probe manager for data collection.
     [[nodiscard]] const ProbeManager& probes() const noexcept { return probeManager_; }
     // Returns the list of runtime-adjustable parameter controls.

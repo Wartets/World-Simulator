@@ -15,6 +15,14 @@ void EventQueue::enqueueEvent(RuntimeEvent event) {
     pendingEvents_.push_back(std::move(event));
 }
 
+std::size_t EventQueue::pendingInputPatchCount() const noexcept {
+    std::size_t count = 0;
+    for (const auto& frame : pendingInputs_) {
+        count += frame.scalarPatches.size();
+    }
+    return count;
+}
+
 // Removes and returns the next input frame from the queue.
 // Throws std::runtime_error if the queue is empty.
 RuntimeInputFrame EventQueue::popInput() {

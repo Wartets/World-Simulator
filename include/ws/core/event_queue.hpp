@@ -5,6 +5,7 @@
 
 // Standard library
 #include <cstdint>
+#include <cstddef>
 #include <deque>
 #include <limits>
 #include <optional>
@@ -99,6 +100,12 @@ public:
     [[nodiscard]] bool hasInput() const noexcept { return !pendingInputs_.empty(); }
     // Returns true if there are pending events to process.
     [[nodiscard]] bool hasEvent() const noexcept { return !pendingEvents_.empty(); }
+    // Returns count of pending input frames.
+    [[nodiscard]] std::size_t pendingInputFrameCount() const noexcept { return pendingInputs_.size(); }
+    // Returns count of pending scalar input patches across all queued input frames.
+    [[nodiscard]] std::size_t pendingInputPatchCount() const noexcept;
+    // Returns count of pending events.
+    [[nodiscard]] std::size_t pendingEventCount() const noexcept { return pendingEvents_.size(); }
 
     // Removes and returns the next input frame.
     RuntimeInputFrame popInput();

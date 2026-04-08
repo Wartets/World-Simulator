@@ -128,6 +128,12 @@ public:
     bool undoLastManualPatch(std::string& message);
     bool enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message);
     bool manualEventLog(std::vector<ManualEventRecord>& events, std::string& message) const;
+    bool effectLedgerCounts(
+        std::size_t& pendingImmediateWrites,
+        std::size_t& queuedDeferredEvents,
+        std::size_t& pendingScheduledPerturbations,
+        std::size_t& runtimeManualEventCount,
+        std::string& message) const;
     bool timelineCheckpointSteps(std::vector<std::uint64_t>& steps, std::string& message) const;
 
     // Checkpoint management

@@ -442,7 +442,7 @@ void drawStatusHeader() {
 
     // top action bar
     ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(14, 16, 28, 255));
-    ImGui::BeginChild("StatusHdr", ImVec2(0.0f, 82.0f), true);
+    ImGui::BeginChild("StatusHdr", ImVec2(0.0f, 188.0f), true);
 
     // Save & Return button
     {
@@ -532,46 +532,100 @@ void drawStatusHeader() {
     ImGui::TextDisabled("State: %s", appStateLabel(static_cast<int>(appState_)));
 
     bool pendingRestart = false;
+    int runtimeTierIndex = 0;
+    int runtimeTemporalIndex = 0;
     if (running) {
         const auto& cfg = runtime_.config();
-        const int runtimeTierIndex =
+        runtimeTierIndex =
             (cfg.tier == ModelTier::A) ? 0 :
             (cfg.tier == ModelTier::B) ? 1 : 2;
         const std::string runtimeTemporal = app::temporalPolicyToString(cfg.temporalPolicy);
-        const int runtimeTemporalIndex =
+        runtimeTemporalIndex =
             (runtimeTemporal == "uniform") ? 0 :
             (runtimeTemporal == "phased") ? 1 : 2;
 
         pendingRestart =
             runtimeTierIndex != panel_.tierIndex ||
             runtimeTemporalIndex != panel_.temporalIndex;
-
-        if (pendingRestart) {
-            ImGui::TextColored(
-                ImVec4(0.95f, 0.80f, 0.45f, 1.0f),
-                "Pending restart changes: execution profile or temporal behavior");
-        }
     }
 
-    std::vector<ManualEventRecord> pendingEvents;
-    std::string pendingEventsMsg;
-    const bool hasPendingEventLog = runtime_.manualEventLog(pendingEvents, pendingEventsMsg) && !pendingEvents.empty();
+    std::size_t pendingImmediateWrites = 0;
+    std::size_t queuedDeferredEvents = 0;
+    std::size_t pendingScheduledPerturbations = 0;
+    std::size_t runtimeManualEventCount = 0;
+    std::string effectLedgerMessage;
+    const bool hasLedgerCounts = running && runtime_.effectLedgerCounts(
+        pendingImmediateWrites,
+        queuedDeferredEvents,
+        pendingScheduledPerturbations,
+        runtimeManualEventCount,
+        effectLedgerMessage);
 
-    if (pendingRestart || hasPendingEventLog) {
-        ImGui::TextDisabled("Change scope summary");
-        if (pendingRestart) {
-            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Restart required");
-            ImGui::SameLine();
-            ImGui::TextDisabled("Execution profile / temporal behavior differs from running runtime.");
+    ImGui::TextDisabled("Global effect ledger");
+    int ledgerEntryCount = 0;
+
+    if (pendingImmediateWrites > 0) {
+        ++ledgerEntryCount;
+        ImGui::TextColored(
+            ImVec4(0.50f, 0.85f, 0.55f, 1.0f),
+            "- Pending immediate writes: %zu patch%s",
+            pendingImmediateWrites,
+            pendingImmediateWrites == 1u ? "" : "es");
+        ImGui::Indent();
+        ImGui::TextDisabled("Source: Interventions > Parameter Control & Live Patching");
+        ImGui::TextDisabled("Commit/Revert: Step or Play to ingest queued writes; revert with Undo Last Manual Edit or by applying a replacement value.");
+        ImGui::Unindent();
+    }
+
+    if (queuedDeferredEvents > 0 || pendingScheduledPerturbations > 0) {
+        ++ledgerEntryCount;
+        ImGui::TextColored(
+            ImVec4(0.98f, 0.78f, 0.45f, 1.0f),
+            "- Queued deferred events: %zu queue item%s, %zu scheduled perturbation%s",
+            queuedDeferredEvents,
+            queuedDeferredEvents == 1u ? "" : "s",
+            pendingScheduledPerturbations,
+            pendingScheduledPerturbations == 1u ? "" : "s");
+        ImGui::Indent();
+        ImGui::TextDisabled("Source: Interventions > Perturbation & Forcing Tools, Edit > Undo Last Manual Edit");
+        ImGui::TextDisabled("Commit/Revert: Continue stepping to apply deferred events; pause and use Undo Last Manual Edit to cancel the latest reversible cell edit.");
+        ImGui::Unindent();
+    }
+
+    if (pendingRestart) {
+        ++ledgerEntryCount;
+        ImGui::TextColored(
+            ImVec4(0.95f, 0.80f, 0.45f, 1.0f),
+            "- Restart-required changes: execution profile or temporal behavior differs from runtime");
+        ImGui::Indent();
+        ImGui::TextDisabled("Source: Simulation > Execution Profile & Temporal Behavior");
+        ImGui::TextDisabled("Commit/Revert: Apply settings (runtime restart) to commit, or restore profile/temporal controls to the active runtime values.");
+        if (SecondaryButton("Revert profile/temporal to runtime", ImVec2(260.0f, 22.0f))) {
+            panel_.tierIndex = runtimeTierIndex;
+            panel_.temporalIndex = runtimeTemporalIndex;
         }
-        if (hasPendingEventLog) {
-            ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Saved with world after explicit save");
-            ImGui::SameLine();
-            ImGui::TextDisabled(
-                "%zu runtime edit%s recorded in manual event log. Use Save Active World (Ctrl+S) to persist.",
-                pendingEvents.size(),
-                pendingEvents.size() == 1u ? "" : "s");
-        }
+        ImGui::Unindent();
+    }
+
+    if (runtimeManualEventCount > 0) {
+        ++ledgerEntryCount;
+        ImGui::TextColored(
+            ImVec4(0.62f, 0.82f, 0.95f, 1.0f),
+            "- Unsaved runtime changes: %zu manual event%s",
+            runtimeManualEventCount,
+            runtimeManualEventCount == 1u ? "" : "s");
+        ImGui::Indent();
+        ImGui::TextDisabled("Source: Interventions panels and runtime control edits");
+        ImGui::TextDisabled("Commit/Revert: Save Active World (Ctrl+S) to persist; use Undo Last Manual Edit or checkpoint restore to revert runtime state.");
+        ImGui::Unindent();
+    }
+
+    if (!running) {
+        ImGui::TextDisabled("No active runtime. Ledger entries appear after simulation starts.");
+    } else if (!hasLedgerCounts) {
+        ImGui::TextDisabled("Effect ledger unavailable: %s", effectLedgerMessage.c_str());
+    } else if (ledgerEntryCount == 0) {
+        ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "No pending runtime effects.");
     }
 
     ImGui::EndChild();

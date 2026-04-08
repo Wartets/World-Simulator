@@ -1068,6 +1068,34 @@ bool RuntimeService::manualEventLog(std::vector<ManualEventRecord>& events, std:
     }
 }
 
+bool RuntimeService::effectLedgerCounts(
+    std::size_t& pendingImmediateWrites,
+    std::size_t& queuedDeferredEvents,
+    std::size_t& pendingScheduledPerturbations,
+    std::size_t& runtimeManualEventCount,
+    std::string& message) const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    try {
+        if (!requireRuntime("effect_ledger_counts", message)) {
+            return false;
+        }
+
+        pendingImmediateWrites = runtime_->pendingInputPatchCount();
+        queuedDeferredEvents = runtime_->pendingEventCount();
+        pendingScheduledPerturbations = runtime_->pendingPerturbationCount();
+        runtimeManualEventCount = runtime_->manualEventCount();
+
+        message = "effect_ledger_counts_ready immediate_writes=" + std::to_string(pendingImmediateWrites) +
+            " queued_events=" + std::to_string(queuedDeferredEvents) +
+            " scheduled_perturbations=" + std::to_string(pendingScheduledPerturbations) +
+            " manual_events=" + std::to_string(runtimeManualEventCount);
+        return true;
+    } catch (const std::exception& exception) {
+        message = std::string("effect_ledger_counts_failed error=") + exception.what();
+        return false;
+    }
+}
+
 bool RuntimeService::timelineCheckpointSteps(std::vector<std::uint64_t>& steps, std::string& message) const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     try {
