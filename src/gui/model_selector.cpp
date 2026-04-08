@@ -1,5 +1,6 @@
 #include "ws/gui/model_selector.hpp"
 #include "ws/core/model_parser.hpp"
+#include "ws/gui/data_operation_contract.hpp"
 #include "ws/gui/ui_components.hpp"
 
 #include <imgui.h>
@@ -23,6 +24,21 @@ using json = nlohmann::json;
 namespace ws::gui {
 
 namespace {
+
+std::string gDataOperationReceipt{};
+std::string gDataOperationRecoveryHint{};
+std::string gDataOperationTechnicalDetail{};
+
+void recordDataOperationReceipt(
+    const std::string& operation,
+    const DataOperationMode mode,
+    const std::string& summary,
+    const std::string& recoveryHint,
+    const std::string& technicalDetail = {}) {
+    gDataOperationReceipt = dataOperationReceipt(operation, mode, summary, recoveryHint);
+    gDataOperationRecoveryHint = recoveryHint;
+    gDataOperationTechnicalDetail = technicalDetail;
+}
 
 // Current engine version for compatibility checking.
 constexpr const char* kCurrentEngineVersion = "1.0.0";
@@ -608,6 +624,37 @@ fs::path makeUniqueImportDestination(const fs::path& destination) {
     }
 }
 
+std::string makeMultilinePreview(
+    const std::string& text,
+    const int maxLines,
+    const float approxWidth,
+    bool* wasTruncated = nullptr) {
+    if (wasTruncated != nullptr) {
+        *wasTruncated = false;
+    }
+    if (text.empty() || maxLines <= 0) {
+        return text;
+    }
+
+    const int charsPerLine = std::max(20, static_cast<int>(approxWidth / 7.0f));
+    const int maxChars = std::max(charsPerLine, charsPerLine * maxLines);
+    if (static_cast<int>(text.size()) <= maxChars) {
+        return text;
+    }
+
+    if (wasTruncated != nullptr) {
+        *wasTruncated = true;
+    }
+
+    std::string preview = text.substr(0, static_cast<std::size_t>(maxChars));
+    const std::size_t naturalCut = preview.find_last_of(" \t\n");
+    if (naturalCut != std::string::npos && naturalCut > static_cast<std::size_t>(maxChars / 2)) {
+        preview.resize(naturalCut);
+    }
+    preview += "...";
+    return preview;
+}
+
 } // namespace
 
 // Constructs model selector and initializes UI state.
@@ -853,6 +900,24 @@ void ModelSelector::render(ImVec2 available_size) {
         ImGui::Separator();
         ImGui::TextDisabled("Data origins: model fields from metadata.json / version.json / model.json; last modified from filesystem metadata; identity hash computed from metadata.json + version.json + model.json + logic.ir.");
 
+        if (!gDataOperationReceipt.empty()) {
+            ImGui::BeginChild("ModelDataOperationReceipt", ImVec2(0.0f, 74.0f), true);
+            ImGui::TextWrapped("%s", gDataOperationReceipt.c_str());
+            if (!gDataOperationTechnicalDetail.empty()) {
+                ImGui::TextDisabled("Technical detail available. Hover for raw output.");
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip("%s", gDataOperationTechnicalDetail.c_str());
+                }
+            }
+            ImGui::SameLine();
+            if (SecondaryButton("Clear##model_data_receipt", ImVec2(92.0f, 24.0f))) {
+                gDataOperationReceipt.clear();
+                gDataOperationRecoveryHint.clear();
+                gDataOperationTechnicalDetail.clear();
+            }
+            ImGui::EndChild();
+        }
+
         if (!recent_model_paths.empty()) {
             ImGui::TextDisabled("Recent models:");
             int shownRecent = 0;
@@ -1066,26 +1131,26 @@ void ModelSelector::render(ImVec2 available_size) {
         };
 
         if (ImGui::BeginTable("ModelsTable", visible_column_count, tableFlags, ImVec2(0, ImGui::GetContentRegionAvail().y - 60.0f))) {
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColName);
-            ImGui::TableSetupColumn("Launch status", 0, 0.0f, ColLaunchStatus);
-            if (show_column_id) ImGui::TableSetupColumn("ID", 0, 0.0f, ColId);
-            if (show_column_version) ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_DefaultSort, 0.0f, ColVersion);
-            if (show_column_format_version) ImGui::TableSetupColumn("Format", 0, 0.0f, ColFormatVersion);
-            if (show_column_minimum_engine_version) ImGui::TableSetupColumn("Min Engine", 0, 0.0f, ColMinimumEngineVersion);
-            if (show_column_author) ImGui::TableSetupColumn("Author", 0, 0.0f, ColAuthor);
-            if (show_column_creation_date) ImGui::TableSetupColumn("Created", 0, 0.0f, ColCreationDate);
-            if (show_column_tags) ImGui::TableSetupColumn("Tags", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColTags);
-            if (show_column_description) ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch, 0.0f, ColDescription);
-            if (show_column_compatibility) ImGui::TableSetupColumn("Compatibility", 0, 0.0f, ColCompatibility);
-            if (show_column_identity_hash) ImGui::TableSetupColumn("Identity Hash", 0, 0.0f, ColIdentityHash);
-            if (show_column_last_modified) ImGui::TableSetupColumn("Last Modified", 0, 0.0f, ColLastModified);
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 220.0f, ColName);
+            ImGui::TableSetupColumn("Launch status", ImGuiTableColumnFlags_WidthFixed, 130.0f, ColLaunchStatus);
+            if (show_column_id) ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 180.0f, ColId);
+            if (show_column_version) ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 90.0f, ColVersion);
+            if (show_column_format_version) ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 90.0f, ColFormatVersion);
+            if (show_column_minimum_engine_version) ImGui::TableSetupColumn("Min Engine", ImGuiTableColumnFlags_WidthFixed, 120.0f, ColMinimumEngineVersion);
+            if (show_column_author) ImGui::TableSetupColumn("Author", ImGuiTableColumnFlags_WidthFixed, 150.0f, ColAuthor);
+            if (show_column_creation_date) ImGui::TableSetupColumn("Created", ImGuiTableColumnFlags_WidthFixed, 150.0f, ColCreationDate);
+            if (show_column_tags) ImGui::TableSetupColumn("Tags", ImGuiTableColumnFlags_WidthFixed, 220.0f, ColTags);
+            if (show_column_description) ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthFixed, 360.0f, ColDescription);
+            if (show_column_compatibility) ImGui::TableSetupColumn("Compatibility", ImGuiTableColumnFlags_WidthFixed, 120.0f, ColCompatibility);
+            if (show_column_identity_hash) ImGui::TableSetupColumn("Identity Hash", ImGuiTableColumnFlags_WidthFixed, 170.0f, ColIdentityHash);
+            if (show_column_last_modified) ImGui::TableSetupColumn("Last Modified", ImGuiTableColumnFlags_WidthFixed, 170.0f, ColLastModified);
 
             auto renderHeaderWithColumnMenu = [&](const char* label) {
                 ImGui::TableNextColumn();
                 ImGui::TableHeader(label);
-                if (ImGui::BeginPopupContextItem("ModelSelectorColumnsPopup", ImGuiPopupFlags_MouseButtonRight)) {
-                    renderColumnMenu();
-                    ImGui::EndPopup();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                    ImGui::OpenPopup("ModelSelectorColumnsPopup");
                 }
             };
 
@@ -1124,6 +1189,11 @@ void ModelSelector::render(ImVec2 available_size) {
             }
             if (show_column_last_modified) {
                 renderHeaderWithColumnMenu("Last Modified");
+            }
+
+            if (ImGui::BeginPopup("ModelSelectorColumnsPopup")) {
+                renderColumnMenu();
+                ImGui::EndPopup();
             }
 
             if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
@@ -1238,7 +1308,18 @@ void ModelSelector::render(ImVec2 available_size) {
                 if (show_column_tags) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", joinTags(model.tags).c_str()); }
 
                 // Description column
-                if (show_column_description) { ImGui::TableNextColumn(); ImGui::TextWrapped("%s", model.description.c_str()); }
+                if (show_column_description) {
+                    ImGui::TableNextColumn();
+                    const float colWidth = std::max(120.0f, ImGui::GetColumnWidth());
+                    bool descriptionTruncated = false;
+                    const std::string descriptionPreview = makeMultilinePreview(model.description, 3, colWidth, &descriptionTruncated);
+                    ImGui::PushTextWrapPos(ImGui::GetCursorScreenPos().x + colWidth - ImGui::GetStyle().CellPadding.x);
+                    ImGui::TextUnformatted(descriptionPreview.c_str());
+                    ImGui::PopTextWrapPos();
+                    if (descriptionTruncated && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                        ImGui::SetTooltip("%s", model.description.c_str());
+                    }
+                }
                 
                 // Compatibility column
                 if (show_column_compatibility) { ImGui::TableNextColumn(); ImGui::TextDisabled("%s", model.compatibility.c_str()); }
@@ -1280,6 +1361,7 @@ void ModelSelector::render(ImVec2 available_size) {
         
         ImGui::End();
     }
+
 }
 
 void ModelSelector::renderNewModelDialog() {
@@ -1315,48 +1397,88 @@ void ModelSelector::renderNewModelDialog() {
 void ws::gui::ModelSelector::renderImportDialog() {
     ImGui::SetNextWindowSize(ImVec2(760.0f, 220.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Import Model", &show_import_dialog)) {
+        static int operationModeIndex = static_cast<int>(DataOperationMode::Copy);
         ImGui::TextWrapped("Import a .simmodel directory or archive into this workspace.");
         ImGui::InputText("Source path", import_source_path, IM_ARRAYSIZE(import_source_path));
         ImGui::InputText("Model name (optional)", import_target_name, IM_ARRAYSIZE(import_target_name));
-        ImGui::TextDisabled("Conflict policy: existing targets require explicit Replace confirmation or can be imported as a copy.");
+        static constexpr const char* kModes[] = {"Copy", "Replace", "Merge"};
+        operationModeIndex = std::clamp(operationModeIndex, 0, 2);
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::Combo("Operation mode", &operationModeIndex, kModes, static_cast<int>(std::size(kModes)));
+        const DataOperationMode selectedMode = static_cast<DataOperationMode>(operationModeIndex);
+        const bool mergeSupported = false;
 
-        if (ImGui::Button("Import")) {
-            const fs::path source = import_source_path;
-            if (!source.empty() && fs::exists(source)) {
-                std::string targetName = sanitizeModelName(import_target_name);
-                fs::path destination;
-                if (!targetName.empty()) {
-                    destination = modelsRoot() / (targetName + ".simmodel");
-                } else {
-                    destination = modelsRoot() / source.filename();
-                    if (destination.extension() != ".simmodel") {
-                        destination += ".simmodel";
-                    }
-                }
-
-                std::error_code ec;
-                if (fs::exists(destination, ec)) {
-                    std::snprintf(pending_import_destination, sizeof(pending_import_destination), "%s", destination.string().c_str());
-                    import_replace_existing = false;
-                    show_import_conflict_dialog = true;
-                    ImGui::OpenPopup("Import Conflict");
-                } else {
-                    std::string importedPath;
-                    std::string error;
-                    if (runImportWithConflictHandling(source, destination, false, importedPath, error)) {
-                        refreshModelList();
-                        std::memset(import_source_path, 0, sizeof(import_source_path));
-                        std::memset(import_target_name, 0, sizeof(import_target_name));
-                        std::memset(pending_import_destination, 0, sizeof(pending_import_destination));
-                        show_import_conflict_dialog = false;
-                        show_import_dialog = false;
-                        ImGui::CloseCurrentPopup();
-                        if (on_model_created) {
-                            on_model_created(importedPath);
-                        }
-                    }
-                }
+        const fs::path sourcePath = import_source_path;
+        const bool sourceProvided = !sourcePath.empty();
+        const bool sourceExists = sourceProvided && fs::exists(sourcePath);
+        std::string targetName = sanitizeModelName(import_target_name);
+        fs::path destinationPath;
+        if (!targetName.empty()) {
+            destinationPath = modelsRoot() / (targetName + ".simmodel");
+        } else if (sourceProvided) {
+            destinationPath = modelsRoot() / sourcePath.filename();
+            if (destinationPath.extension() != ".simmodel") {
+                destinationPath += ".simmodel";
             }
+        }
+
+        const bool destinationExists = !destinationPath.empty() && fs::exists(destinationPath);
+        const bool dryRunValid = sourceExists && !destinationPath.empty() && (selectedMode != DataOperationMode::Merge || mergeSupported);
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Preflight summary");
+        ImGui::TextWrapped("Source: %s", sourceProvided ? sourcePath.string().c_str() : "<missing>");
+        ImGui::TextWrapped("Target: %s", destinationPath.empty() ? "<not resolved>" : destinationPath.string().c_str());
+        ImGui::TextWrapped("Impact: %s", dataOperationOverwriteImpact(selectedMode, destinationExists).c_str());
+        ImGui::TextWrapped("Mode behavior: %s", dataOperationModeBehavior(selectedMode));
+
+        if (!dryRunValid) {
+            if (!sourceExists) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Dry-run validation: failed (source is missing or inaccessible).");
+            } else if (destinationPath.empty()) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Dry-run validation: failed (target path could not be resolved).");
+            } else {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Dry-run validation: failed (merge mode is not supported for model import).");
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Dry-run validation: passed");
+        }
+
+        if (!dryRunValid) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Import")) {
+            std::string importedPath;
+            std::string error;
+            const bool replaceExisting = selectedMode == DataOperationMode::Replace;
+            if (runImportWithConflictHandling(sourcePath, destinationPath, replaceExisting, importedPath, error)) {
+                refreshModelList();
+                std::memset(import_source_path, 0, sizeof(import_source_path));
+                std::memset(import_target_name, 0, sizeof(import_target_name));
+                std::memset(pending_import_destination, 0, sizeof(pending_import_destination));
+                show_import_conflict_dialog = false;
+                show_import_dialog = false;
+                recordDataOperationReceipt(
+                    "Model import",
+                    selectedMode,
+                    "Import committed successfully.",
+                    "If this is not the expected package, delete the imported model from the Model Selector.",
+                    "destination=" + importedPath);
+                ImGui::CloseCurrentPopup();
+                if (on_model_created) {
+                    on_model_created(importedPath);
+                }
+            } else {
+                recordDataOperationReceipt(
+                    "Model import",
+                    selectedMode,
+                    "Import failed during commit.",
+                    "Re-run preflight and verify source and destination paths.",
+                    error);
+            }
+        }
+        if (!dryRunValid) {
+            ImGui::EndDisabled();
         }
 
         if (show_import_conflict_dialog) {
@@ -1491,15 +1613,71 @@ void ws::gui::ModelSelector::renderRenameDialog() {
 void ws::gui::ModelSelector::renderExportDialog() {
     ImGui::SetNextWindowSize(ImVec2(840.0f, 220.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Export Model", &show_export_dialog)) {
+        static int operationModeIndex = static_cast<int>(DataOperationMode::Copy);
         ImGui::TextWrapped("Export the selected model to another .simmodel path. The destination will be overwritten if it already exists.");
         ImGui::InputText("Destination", pending_export_path, IM_ARRAYSIZE(pending_export_path));
 
+        static constexpr const char* kModes[] = {"Copy", "Replace", "Merge"};
+        operationModeIndex = std::clamp(operationModeIndex, 0, 2);
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::Combo("Operation mode", &operationModeIndex, kModes, static_cast<int>(std::size(kModes)));
+        const DataOperationMode selectedMode = static_cast<DataOperationMode>(operationModeIndex);
+        const bool mergeSupported = false;
+
+        fs::path destinationPath = pending_export_path;
+        if (!destinationPath.empty() && destinationPath.extension() != ".simmodel") {
+            destinationPath += ".simmodel";
+        }
+        const bool destinationProvided = !destinationPath.empty();
+        const bool destinationExists = destinationProvided && fs::exists(destinationPath);
+        const bool dryRunValid = destinationProvided && (selectedMode != DataOperationMode::Merge || mergeSupported);
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Preflight summary");
+        ImGui::TextWrapped("Source: %s",
+            (pending_action_model_index >= 0 && pending_action_model_index < static_cast<int>(models.size()))
+                ? models[static_cast<std::size_t>(pending_action_model_index)].path.c_str()
+                : "<none selected>");
+        ImGui::TextWrapped("Target: %s", destinationProvided ? destinationPath.string().c_str() : "<missing>");
+        ImGui::TextWrapped("Impact: %s", dataOperationOverwriteImpact(selectedMode, destinationExists).c_str());
+        ImGui::TextWrapped("Mode behavior: %s", dataOperationModeBehavior(selectedMode));
+        if (!dryRunValid) {
+            if (!destinationProvided) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Dry-run validation: failed (destination is required).");
+            } else {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Dry-run validation: failed (merge mode is not supported for model export).");
+            }
+        } else {
+            ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Dry-run validation: passed");
+        }
+
+        if (!dryRunValid) {
+            ImGui::BeginDisabled();
+        }
         if (ImGui::Button("Export")) {
             if (pending_action_model_index >= 0 && pending_action_model_index < static_cast<int>(models.size())) {
-                exportModel(models[pending_action_model_index], pending_export_path);
+                fs::path effectiveDestination = destinationPath;
+                if (selectedMode == DataOperationMode::Copy && destinationExists) {
+                    effectiveDestination = makeUniqueImportDestination(destinationPath);
+                }
+
+                exportModel(models[pending_action_model_index], effectiveDestination);
+                std::string technical = "destination=" + effectiveDestination.string();
+                if (selectedMode == DataOperationMode::Copy && destinationExists) {
+                    technical += " | copy_suffix_applied=true";
+                }
+                recordDataOperationReceipt(
+                    "Model export",
+                    selectedMode,
+                    "Export committed successfully.",
+                    "If output is incorrect, re-export to a new path using Copy mode.",
+                    technical);
                 show_export_dialog = false;
                 ImGui::CloseCurrentPopup();
             }
+        }
+        if (!dryRunValid) {
+            ImGui::EndDisabled();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {

@@ -14,6 +14,7 @@
 #include "ws/gui/render_rules.hpp"
 #include "ws/gui/model_editor_window.hpp"
 #include "ws/gui/model_selector.hpp"
+#include "ws/gui/data_operation_contract.hpp"
 #include "ws/core/model_parser.hpp"
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/session_manager/session_manager.hpp"
@@ -1034,7 +1035,7 @@ public:
                 drawNewWorldWizard();
             }
 
-            drawTaskRailOverlay();
+            // drawTaskRailOverlay();
 
             recordAppStateHistory();
             drawShortcutHelpModal();

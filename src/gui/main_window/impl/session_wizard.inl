@@ -119,6 +119,25 @@
         return "Stored under the active model scope.";
     }
 
+    [[nodiscard]] static std::filesystem::path uniquePathWithCopySuffix(const std::filesystem::path& destination) {
+        if (destination.empty() || !std::filesystem::exists(destination)) {
+            return destination;
+        }
+
+        const std::filesystem::path parent = destination.parent_path();
+        const std::string stem = destination.stem().string();
+        const std::filesystem::path extension = destination.extension();
+        int copyIndex = 1;
+        for (;;) {
+            const std::string suffix = copyIndex == 1 ? "_copy" : ("_copy_" + std::to_string(copyIndex));
+            const std::filesystem::path candidate = parent / (stem + suffix + extension.string());
+            if (!std::filesystem::exists(candidate)) {
+                return candidate;
+            }
+            ++copyIndex;
+        }
+    }
+
     [[nodiscard]] static std::string translateSessionStatusMessage(const std::string& rawMessage) {
         if (rawMessage.empty()) {
             return {};
@@ -190,6 +209,17 @@
                 "%s",
                 rawMessage.c_str());
         }
+    }
+
+    void setSessionDataOperationReceipt(
+        const std::string& operation,
+        const DataOperationMode mode,
+        const std::string& summary,
+        const std::string& recoveryHint,
+        const std::string& technicalDetail = {}) {
+        const std::string receipt = dataOperationReceipt(operation, mode, summary, recoveryHint);
+        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", receipt.c_str());
+        std::snprintf(sessionUi_.statusTechnicalDetail, sizeof(sessionUi_.statusTechnicalDetail), "%s", technicalDetail.c_str());
     }
 
     void tickDeferredWizardInitialization() {
@@ -318,12 +348,14 @@
         }
 
         if (sessionUi_.operationLabel[0] != '\0' || sessionUi_.operationDetail[0] != '\0') {
-            ImGui::BeginChild("SessionOperationStatus", ImVec2(-1.0f, 58.0f), true);
+            ImGui::BeginChild("SessionOperationStatus", ImVec2(-1.0f, 86.0f), true);
             ImGui::Text("Operation: %s", sessionUi_.operationLabel[0] != '\0' ? sessionUi_.operationLabel : "idle");
             if (sessionUi_.operationProgress >= 0.0f) {
                 ImGui::ProgressBar(std::clamp(sessionUi_.operationProgress, 0.0f, 1.0f), ImVec2(-1.0f, 0.0f));
             }
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
             ImGui::TextDisabled("%s", sessionUi_.operationDetail[0] != '\0' ? sessionUi_.operationDetail : "No recent operation details.");
+            ImGui::PopTextWrapPos();
             ImGui::EndChild();
         }
 
@@ -331,7 +363,7 @@
         ImGui::Separator();
         ImGui::Spacing();
 
-        const float actionBarH = 138.0f;
+        const float actionBarH = 224.0f;
         const float contentH = std::max(220.0f, ImGui::GetContentRegionAvail().y - actionBarH - kS3);
         const bool narrowLayout = rootW < 1100.0f;
 
@@ -420,6 +452,10 @@
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         openSelectedWorld();
                     }
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                    sessionUi_.selectedWorldIndex = worldIndex;
+                    ImGui::OpenPopup("World Actions Menu");
                 }
                 ImGui::SameLine();
                 const std::string rowDetail =
@@ -565,12 +601,14 @@
         const bool canOpen = sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size());
         ImGui::BeginChild("SessionActions", ImVec2(-1.0f, actionBarH), false);
         const float w = ImGui::GetContentRegionAvail().x;
-        const float btnW = std::max(170.0f, (w - (2.0f * kS2)) / 3.0f);
+        const float primaryBtnW = std::max(170.0f, (w - kS2) * 0.5f);
+        const float secondaryBtnW = std::max(112.0f, (w - (4.0f * kS2)) / 5.0f);
+        constexpr float kActionButtonH = 42.0f;
 
         if (!canOpen) {
             ImGui::BeginDisabled();
         }
-        if (PrimaryButton("Open world", ImVec2(btnW, 42.0f))) {
+        if (PrimaryButton("Open world", ImVec2(primaryBtnW, kActionButtonH))) {
             openSelectedWorld();
         }
         DelayedTooltip("Restores the saved checkpoint when available; otherwise rebuilds the world from saved profile settings.");
@@ -578,8 +616,8 @@
             ImGui::EndDisabled();
         }
 
-        ImGui::SameLine();
-        if (SecondaryButton("Create world", ImVec2(btnW, 42.0f))) {
+        ImGui::SameLine(0.0f, kS2);
+        if (SecondaryButton("Create world", ImVec2(primaryBtnW, kActionButtonH))) {
             const std::string baseHint = sessionUi_.selectedModelName[0] != '\0'
                 ? std::string(sessionUi_.selectedModelName)
                 : std::string("world");
@@ -608,17 +646,53 @@
         }
         DelayedTooltip("Open world creation with smart default naming based on the selected model.");
 
-        ImGui::SameLine();
+        ImGui::Spacing();
+
         if (!canOpen) {
             ImGui::BeginDisabled();
         }
-        if (SecondaryButton("World actions", ImVec2(btnW, 42.0f))) {
-            ImGui::OpenPopup("World Actions Menu");
+        if (SecondaryButton("Duplicate", ImVec2(secondaryBtnW, kActionButtonH))) {
+            sessionUi_.pendingDuplicateWorldIndex = sessionUi_.selectedWorldIndex;
+            const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+            const std::string suggested = runtime_.suggestWorldNameFromHint(selected.worldName + "_copy");
+            std::snprintf(sessionUi_.pendingDuplicateName, sizeof(sessionUi_.pendingDuplicateName), "%s", suggested.c_str());
+            ImGui::OpenPopup("Duplicate World");
         }
-        DelayedTooltip("Secondary actions for the selected world: duplicate, rename, export, and delete.");
+        DelayedTooltip("Create a copied world with a new name.");
+
+        ImGui::SameLine(0.0f, kS2);
+        if (SecondaryButton("Rename", ImVec2(secondaryBtnW, kActionButtonH))) {
+            sessionUi_.pendingRenameWorldIndex = sessionUi_.selectedWorldIndex;
+            const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+            std::snprintf(sessionUi_.pendingRenameName, sizeof(sessionUi_.pendingRenameName), "%s", selected.worldName.c_str());
+            ImGui::OpenPopup("Rename World");
+        }
+        DelayedTooltip("Rename the selected world.");
+
+        ImGui::SameLine(0.0f, kS2);
+        if (SecondaryButton("Export", ImVec2(secondaryBtnW, kActionButtonH))) {
+            sessionUi_.pendingExportWorldIndex = sessionUi_.selectedWorldIndex;
+            const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+            std::snprintf(sessionUi_.pendingExportPath, sizeof(sessionUi_.pendingExportPath), "exports/%s.wsexp", selected.worldName.c_str());
+            ImGui::OpenPopup("Export World");
+        }
+        DelayedTooltip("Export selected world to a .wsexp file.");
+
+        ImGui::SameLine(0.0f, kS2);
+        if (SecondaryButton("Delete", ImVec2(secondaryBtnW, kActionButtonH))) {
+            sessionUi_.pendingDeleteWorldIndex = sessionUi_.selectedWorldIndex;
+            ImGui::OpenPopup("Delete World Confirm");
+        }
+        DelayedTooltip("Delete the selected world and its stored data.");
         if (!canOpen) {
             ImGui::EndDisabled();
         }
+
+        ImGui::SameLine(0.0f, kS2);
+        if (SecondaryButton("Import", ImVec2(secondaryBtnW, kActionButtonH))) {
+            ImGui::OpenPopup("Import World");
+        }
+        DelayedTooltip("Import a world from a .wsexp file.");
 
         if (ImGui::BeginPopup("World Actions Menu")) {
             if (ImGui::MenuItem("Duplicate world")) {
@@ -752,6 +826,7 @@
         }
 
         if (ImGui::BeginPopupModal("Export World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            static int exportOperationModeIndex = static_cast<int>(DataOperationMode::Copy);
             ImGui::InputText("Export path", sessionUi_.pendingExportPath, IM_ARRAYSIZE(sessionUi_.pendingExportPath));
             ImGui::SameLine();
             if (SecondaryButton("Browse...", ImVec2(110.0f, 0.0f))) {
@@ -764,14 +839,38 @@
                     std::snprintf(sessionUi_.pendingExportPath, sizeof(sessionUi_.pendingExportPath), "%s", exportPath->string().c_str());
                 }
             }
+
+            static constexpr const char* kModes[] = {"Copy", "Replace", "Merge"};
+            exportOperationModeIndex = std::clamp(exportOperationModeIndex, 0, 2);
+            ImGui::SetNextItemWidth(180.0f);
+            ImGui::Combo("Operation mode", &exportOperationModeIndex, kModes, static_cast<int>(std::size(kModes)));
+            const DataOperationMode exportMode = static_cast<DataOperationMode>(exportOperationModeIndex);
+            const bool mergeSupported = false;
+
             const std::string exportPath = sessionUi_.pendingExportPath;
             const bool exportPathValid = !exportPath.empty();
+            std::filesystem::path exportTarget = std::filesystem::path(exportPath);
+            if (exportTarget.extension() != ".wsexp") {
+                exportTarget += ".wsexp";
+            }
+            const bool exportTargetExists = exportPathValid && std::filesystem::exists(exportTarget);
+            const bool dryRunValid = exportPathValid && (exportMode != DataOperationMode::Merge || mergeSupported);
+
             if (sessionUi_.pendingExportWorldIndex >= 0 && sessionUi_.pendingExportWorldIndex < static_cast<int>(sessionUi_.worlds.size())) {
                 const auto& world = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingExportWorldIndex)];
                 ImGui::TextDisabled(
                     "Export copies the saved profile%s into a portable world file.",
                     world.hasCheckpoint ? " and checkpoint" : "");
             }
+            ImGui::TextDisabled("Preflight summary");
+            ImGui::TextWrapped("Source world: %s",
+                (sessionUi_.pendingExportWorldIndex >= 0 && sessionUi_.pendingExportWorldIndex < static_cast<int>(sessionUi_.worlds.size()))
+                    ? sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.pendingExportWorldIndex)].worldName.c_str()
+                    : "<none selected>");
+            ImGui::TextWrapped("Target: %s", exportPathValid ? exportTarget.string().c_str() : "<missing>");
+            ImGui::TextWrapped("Impact: %s", dataOperationOverwriteImpact(exportMode, exportTargetExists).c_str());
+            ImGui::TextWrapped("Mode behavior: %s", dataOperationModeBehavior(exportMode));
+
             if (!exportPathValid) {
                 ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Export path is required.");
             } else {
@@ -783,7 +882,14 @@
                 }
             }
 
-            if (!exportPathValid) {
+            if (!dryRunValid) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                    "Dry-run validation: failed (merge mode is not supported for world export).");
+            } else {
+                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Dry-run validation: passed");
+            }
+
+            if (!dryRunValid) {
                 ImGui::BeginDisabled();
             }
             if (PrimaryButton("Export", ImVec2(140.0f, 28.0f))) {
@@ -792,10 +898,19 @@
                     std::string message;
                     beginOperationStatus("export world", 0.4f, world.worldName.c_str());
                     const auto startedAt = std::chrono::steady_clock::now();
-                    const bool exported = runtime_.exportWorld(world.worldName, std::filesystem::path(sessionUi_.pendingExportPath), message);
+                    std::filesystem::path effectiveExportPath = exportTarget;
+                    if (exportMode == DataOperationMode::Copy && exportTargetExists) {
+                        effectiveExportPath = uniquePathWithCopySuffix(exportTarget);
+                    }
+                    const bool exported = runtime_.exportWorld(world.worldName, effectiveExportPath, message);
                     completeOperationStatus(startedAt, "export world finished");
                     if (exported) {
-                        setSessionStatusText(std::string("Exported '") + world.worldName + "' to '" + std::string(sessionUi_.pendingExportPath) + "'.");
+                        setSessionDataOperationReceipt(
+                            "World export",
+                            exportMode,
+                            std::string("Committed to '") + effectiveExportPath.string() + "'.",
+                            "If this export target is wrong, rerun export with Copy mode to preserve existing files.",
+                            message);
                     } else {
                         setSessionStatusFromRaw(message);
                     }
@@ -803,7 +918,7 @@
                 }
                 ImGui::CloseCurrentPopup();
             }
-            if (!exportPathValid) {
+            if (!dryRunValid) {
                 ImGui::EndDisabled();
             }
             ImGui::SameLine();
@@ -814,7 +929,8 @@
         }
 
         if (ImGui::BeginPopupModal("Import World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::InputText("Import file", sessionUi_.pendingImportPath, IM_ARRAYSIZE(sessionUi_.pendingImportPath));
+            static int importOperationModeIndex = static_cast<int>(DataOperationMode::Copy);
+            ImGui::InputText("Import path", sessionUi_.pendingImportPath, IM_ARRAYSIZE(sessionUi_.pendingImportPath));
             ImGui::SameLine();
             if (SecondaryButton("Browse...", ImVec2(110.0f, 0.0f))) {
                 const std::filesystem::path defaultImportPath = std::filesystem::path(sessionUi_.pendingImportPath);
@@ -826,10 +942,24 @@
                     std::snprintf(sessionUi_.pendingImportPath, sizeof(sessionUi_.pendingImportPath), "%s", importPath->string().c_str());
                 }
             }
+
+            static constexpr const char* kModes[] = {"Copy", "Replace", "Merge"};
+            importOperationModeIndex = std::clamp(importOperationModeIndex, 0, 2);
+            ImGui::SetNextItemWidth(180.0f);
+            ImGui::Combo("Operation mode", &importOperationModeIndex, kModes, static_cast<int>(std::size(kModes)));
+            const DataOperationMode importMode = static_cast<DataOperationMode>(importOperationModeIndex);
+            const bool modeSupported = importMode == DataOperationMode::Copy;
+
             const std::filesystem::path importPath = std::filesystem::path(sessionUi_.pendingImportPath);
             const bool importPathProvided = !importPath.empty();
             const bool importPathExists = importPathProvided && std::filesystem::exists(importPath);
+            const bool dryRunValid = importPathExists && modeSupported;
             ImGui::TextDisabled("Imports always create a stored copy. If the incoming world name already exists, a numbered copy is created instead.");
+            ImGui::TextDisabled("Preflight summary");
+            ImGui::TextWrapped("Source: %s", importPathProvided ? importPath.string().c_str() : "<missing>");
+            ImGui::TextWrapped("Target scope: active world store (%s)", runtime_.activeModelKey().c_str());
+            ImGui::TextWrapped("Impact: %s", dataOperationOverwriteImpact(importMode, true).c_str());
+            ImGui::TextWrapped("Mode behavior: %s", dataOperationModeBehavior(importMode));
             if (!importPathProvided) {
                 ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "Import file path is required.");
             } else if (!importPathExists) {
@@ -838,7 +968,14 @@
                 ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Import source detected.");
             }
 
-            if (!importPathExists) {
+            if (!modeSupported) {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f),
+                    "Dry-run validation: failed (world import currently supports Copy mode only).");
+            } else if (importPathExists) {
+                ImGui::TextColored(ImVec4(0.58f, 0.88f, 0.62f, 1.0f), "Dry-run validation: passed");
+            }
+
+            if (!dryRunValid) {
                 ImGui::BeginDisabled();
             }
             if (PrimaryButton("Import", ImVec2(140.0f, 28.0f))) {
@@ -849,9 +986,12 @@
                 const bool imported = runtime_.importWorld(std::filesystem::path(sessionUi_.pendingImportPath), importedName, message);
                 completeOperationStatus(startedAt, "import world finished");
                 if (imported) {
-                    setSessionStatusText(
-                        std::string("Imported world as '") + importedName +
-                        "'. Review its storage summary before opening it.");
+                    setSessionDataOperationReceipt(
+                        "World import",
+                        importMode,
+                        std::string("Imported as '") + importedName + "'.",
+                        "Review storage integrity, then open the imported world from the list.",
+                        message);
                 } else {
                     setSessionStatusFromRaw(message);
                 }
@@ -859,7 +999,7 @@
                 sessionUi_.needsRefresh = true;
                 ImGui::CloseCurrentPopup();
             }
-            if (!importPathExists) {
+            if (!dryRunValid) {
                 ImGui::EndDisabled();
             }
             ImGui::SameLine();
