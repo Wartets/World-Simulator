@@ -180,9 +180,10 @@ Resume behavior depends on available artifacts (checkpoint-backed resume vs prof
 
 The model editor currently provides strong structural inspection and basic graph editing, but some authoring workflows are still maturing.
 
-- `Export as ZIP` currently writes JSON export content, not a full packaged ZIP pipeline.
-- Undo/redo signaling exists, but full model-state restoration semantics are still under active development.
-- Validation includes useful checks, but advanced dependency/cycle analysis is not yet complete.
+- JSON snapshot export is available from the editor; full packaged `.simmodel` ZIP-style export is not available in this build.
+- Save/export actions now report a package-integrity summary (for example, missing `metadata.json`, `version.json`, `ir.logic`, or `model.fb`) so JSON-only writes are explicit.
+- Undo/redo restores serialized graph snapshots captured in the editor history.
+- Validation includes useful checks, while deeper package-level validation remains in progress.
 
 Use it as an experimental authoring surface and structure viewer unless your workflow is validated end-to-end for your model package.
 
@@ -267,7 +268,7 @@ func diffuse_temperature() {
 | Action | Control |
 |-------:|:--------|
 | Play/Pause | Space bar or button |
-| Step Forward | Ctrl + Right |
+| Step Forward (paused) | Right Arrow |
 | Step Backward | Ctrl + Left |
 | State History | Alt + Left / Alt + Right |
 | Shortcut Help | F1 |
@@ -301,6 +302,8 @@ During runtime, you can:
 - **Create checkpoints**: Save state at any timestep for later replay
 - **Manage checkpoints**: Browse in-memory checkpoints, restore, rename, or delete them from the checkpoint panel
 - **Use native file pickers**: Browse parameter presets and event logs through the OS file chooser when available
+- **Run guided analysis recipes**: Use the Analysis tab to quickly set up global trend probes and checkpoint comparisons
+- **Use replay preflight**: Review replayable vs skipped events, capture a baseline checkpoint, then replay compatible entries while paused
 
 ---
 

@@ -123,6 +123,62 @@
         std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
     }
 
+    [[nodiscard]] static std::string translateSessionStatusMessage(const std::string& rawMessage) {
+        if (rawMessage.empty()) {
+            return {};
+        }
+
+        const std::string lower = app::toLower(rawMessage);
+
+        if (lower.find("wizard_step_blocked reason=unresolved_bindings") != std::string::npos) {
+            return "Cannot continue yet: resolve initialization binding issues first, or enable expert override.";
+        }
+        if (lower.find("wizard_step_blocked reason=preflight_blocking") != std::string::npos) {
+            return "Cannot continue yet: preflight checks have blocking issues.";
+        }
+        if (lower.find("world_create_blocked reason=verification_failed") != std::string::npos) {
+            return "World creation blocked by preflight verification failures.";
+        }
+        if (lower.find("world_create_blocked reason=model_catalog_unavailable") != std::string::npos) {
+            return "World creation blocked: model variable catalog is unavailable.";
+        }
+        if (lower.find("world_create_blocked reason=missing_conway_target_variable") != std::string::npos) {
+            return "World creation blocked: Conway mode requires a target variable.";
+        }
+        if (lower.find("world_create_blocked reason=missing_gray_scott_target_variable") != std::string::npos) {
+            return "World creation blocked: Gray-Scott mode requires both target variables.";
+        }
+        if (lower.find("world_create_blocked reason=missing_waves_target_variable") != std::string::npos) {
+            return "World creation blocked: Waves mode requires a target variable.";
+        }
+        if (lower.find("world_create_blocked reason=unsupported_generation_mode") != std::string::npos) {
+            return "World creation blocked: selected generation mode is not supported by the runtime.";
+        }
+        if (lower.find("world_create_blocked unresolved_bindings=") != std::string::npos) {
+            return "World creation blocked: unresolved initialization bindings remain.";
+        }
+        if (lower.find("world_open_failed") != std::string::npos) {
+            return "Failed to open the selected world. Check compatibility and file availability.";
+        }
+        if (lower.find("world_delete_failed") != std::string::npos) {
+            return "Failed to delete the selected world.";
+        }
+        if (lower.find("world_rename_failed") != std::string::npos) {
+            return "Failed to rename the selected world.";
+        }
+        if (lower.find("world_duplicate_failed") != std::string::npos) {
+            return "Failed to duplicate the selected world.";
+        }
+        if (lower.find("world_export_failed") != std::string::npos) {
+            return "Failed to export the selected world.";
+        }
+        if (lower.find("world_import_failed") != std::string::npos) {
+            return "Failed to import world data from the selected file.";
+        }
+
+        return rawMessage;
+    }
+
     void tickDeferredWizardInitialization() {
         if (!deferredWizardInitialization_.active) {
             return;
@@ -496,7 +552,7 @@
         const bool canOpen = sessionUi_.selectedWorldIndex >= 0 && sessionUi_.selectedWorldIndex < static_cast<int>(sessionUi_.worlds.size());
         ImGui::BeginChild("SessionActions", ImVec2(-1.0f, actionBarH), false);
         const float w = ImGui::GetContentRegionAvail().x;
-        const float btnW = std::max(132.0f, (w - (5.0f * kS2)) / 6.0f);
+        const float btnW = std::max(150.0f, (w - (3.0f * kS2)) / 4.0f);
 
         if (!canOpen) {
             ImGui::BeginDisabled();
@@ -543,62 +599,46 @@
         if (!canOpen) {
             ImGui::BeginDisabled();
         }
-        if (SecondaryButton("Duplicate", ImVec2(btnW, 42.0f))) {
-            sessionUi_.pendingDuplicateWorldIndex = sessionUi_.selectedWorldIndex;
-            if (canOpen) {
-                const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
-                const std::string suggested = runtime_.suggestWorldNameFromHint(selected.worldName + "_copy");
-                std::snprintf(sessionUi_.pendingDuplicateName, sizeof(sessionUi_.pendingDuplicateName), "%s", suggested.c_str());
-            }
-            ImGui::OpenPopup("Duplicate World");
+        if (SecondaryButton("World actions", ImVec2(btnW, 42.0f))) {
+            ImGui::OpenPopup("World Actions Menu");
         }
+        DelayedTooltip("Secondary actions for the selected world: duplicate, rename, export, and delete.");
         if (!canOpen) {
             ImGui::EndDisabled();
         }
 
-        ImGui::SameLine();
-        if (!canOpen) {
-            ImGui::BeginDisabled();
-        }
-        if (SecondaryButton("Rename", ImVec2(btnW, 42.0f))) {
-            sessionUi_.pendingRenameWorldIndex = sessionUi_.selectedWorldIndex;
-            if (canOpen) {
-                const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
-                std::snprintf(sessionUi_.pendingRenameName, sizeof(sessionUi_.pendingRenameName), "%s", selected.worldName.c_str());
+        if (ImGui::BeginPopup("World Actions Menu")) {
+            if (ImGui::MenuItem("Duplicate world")) {
+                sessionUi_.pendingDuplicateWorldIndex = sessionUi_.selectedWorldIndex;
+                if (canOpen) {
+                    const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+                    const std::string suggested = runtime_.suggestWorldNameFromHint(selected.worldName + "_copy");
+                    std::snprintf(sessionUi_.pendingDuplicateName, sizeof(sessionUi_.pendingDuplicateName), "%s", suggested.c_str());
+                }
+                ImGui::OpenPopup("Duplicate World");
             }
-            ImGui::OpenPopup("Rename World");
-        }
-        if (!canOpen) {
-            ImGui::EndDisabled();
-        }
-
-        ImGui::SameLine();
-        if (!canOpen) {
-            ImGui::BeginDisabled();
-        }
-        if (SecondaryButton("Export", ImVec2(btnW, 42.0f))) {
-            sessionUi_.pendingExportWorldIndex = sessionUi_.selectedWorldIndex;
-            if (canOpen) {
-                const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
-                std::snprintf(sessionUi_.pendingExportPath, sizeof(sessionUi_.pendingExportPath), "exports/%s.wsexp", selected.worldName.c_str());
+            if (ImGui::MenuItem("Rename world")) {
+                sessionUi_.pendingRenameWorldIndex = sessionUi_.selectedWorldIndex;
+                if (canOpen) {
+                    const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+                    std::snprintf(sessionUi_.pendingRenameName, sizeof(sessionUi_.pendingRenameName), "%s", selected.worldName.c_str());
+                }
+                ImGui::OpenPopup("Rename World");
             }
-            ImGui::OpenPopup("Export World");
-        }
-        if (!canOpen) {
-            ImGui::EndDisabled();
-        }
-
-        ImGui::SameLine();
-        if (!canOpen) {
-            ImGui::BeginDisabled();
-        }
-        if (SecondaryButton("Delete world", ImVec2(btnW, 42.0f))) {
-            sessionUi_.pendingDeleteWorldIndex = sessionUi_.selectedWorldIndex;
-            ImGui::OpenPopup("Delete World Confirm");
-        }
-        DelayedTooltip("Deletes profile/checkpoint/display settings for the selected world.");
-        if (!canOpen) {
-            ImGui::EndDisabled();
+            if (ImGui::MenuItem("Export world")) {
+                sessionUi_.pendingExportWorldIndex = sessionUi_.selectedWorldIndex;
+                if (canOpen) {
+                    const auto& selected = sessionUi_.worlds[static_cast<std::size_t>(sessionUi_.selectedWorldIndex)];
+                    std::snprintf(sessionUi_.pendingExportPath, sizeof(sessionUi_.pendingExportPath), "exports/%s.wsexp", selected.worldName.c_str());
+                }
+                ImGui::OpenPopup("Export World");
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete world")) {
+                sessionUi_.pendingDeleteWorldIndex = sessionUi_.selectedWorldIndex;
+                ImGui::OpenPopup("Delete World Confirm");
+            }
+            ImGui::EndPopup();
         }
 
         if (ImGui::BeginPopupModal("Duplicate World", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -631,7 +671,7 @@
                     if (duplicated) {
                         setSessionStatusText(std::string("Duplicated '") + world.worldName + "' as '" + normalizedName + "'.");
                     } else {
-                        setSessionStatusText(message);
+                        setSessionStatusText(translateSessionStatusMessage(message));
                     }
                     appendLog(message);
                     sessionUi_.needsRefresh = true;
@@ -678,7 +718,7 @@
                     if (renamed) {
                         setSessionStatusText(std::string("Renamed world to '") + normalizedName + "'.");
                     } else {
-                        setSessionStatusText(message);
+                        setSessionStatusText(translateSessionStatusMessage(message));
                     }
                     appendLog(message);
                     sessionUi_.needsRefresh = true;
@@ -741,7 +781,7 @@
                     if (exported) {
                         setSessionStatusText(std::string("Exported '") + world.worldName + "' to '" + std::string(sessionUi_.pendingExportPath) + "'.");
                     } else {
-                        setSessionStatusText(message);
+                        setSessionStatusText(translateSessionStatusMessage(message));
                     }
                     appendLog(message);
                 }
@@ -757,7 +797,7 @@
             ImGui::EndPopup();
         }
 
-        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::SameLine();
         if (SecondaryButton("Import", ImVec2(btnW, 42.0f))) {
             ImGui::OpenPopup("Import World");
         }
@@ -801,7 +841,7 @@
                         std::string("Imported world as '") + importedName +
                         "'. Review its storage summary before opening it.");
                 } else {
-                    setSessionStatusText(message);
+                    setSessionStatusText(translateSessionStatusMessage(message));
                 }
                 appendLog(message);
                 sessionUi_.needsRefresh = true;
@@ -836,7 +876,7 @@
                     if (deleted) {
                         setSessionStatusText(std::string("Deleted world '") + world.worldName + "'.");
                     } else {
-                        setSessionStatusText(message);
+                        setSessionStatusText(translateSessionStatusMessage(message));
                     }
                     sessionUi_.needsRefresh = true;
                 }
@@ -1678,9 +1718,9 @@
                     sessionUi_.wizardStepIndex = std::min(3, sessionUi_.wizardStepIndex + 1);
                 } else {
                     if (sessionUi_.wizardStepIndex == 1 && hasBindingBlocking) {
-                        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", "wizard_step_blocked reason=unresolved_bindings");
+                        setSessionStatusText(translateSessionStatusMessage("wizard_step_blocked reason=unresolved_bindings"));
                     } else if (sessionUi_.wizardStepIndex == 2 && hasBlockingPreflight) {
-                        std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", "wizard_step_blocked reason=preflight_blocking");
+                        setSessionStatusText(translateSessionStatusMessage("wizard_step_blocked reason=preflight_blocking"));
                     }
                 }
             } else {
@@ -1727,7 +1767,7 @@
             }
 
             if (preflightBlocked) {
-                std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", preflightReason.c_str());
+                setSessionStatusText(translateSessionStatusMessage(preflightReason));
                 appendLog(preflightReason);
             }
 
@@ -1749,7 +1789,7 @@
                         }
                         status << sessionUi_.generationBindingPlan.issues[i].code;
                     }
-                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", status.str().c_str());
+                    setSessionStatusText(translateSessionStatusMessage(status.str()));
                     appendLog(status.str());
                     preflightBlocked = true;
                 }
@@ -1818,7 +1858,7 @@
                 } else {
                     appendLog(message);
                     completeOperationStatus(createStartedAt, "world creation failed");
-                    std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "%s", message.c_str());
+                    setSessionStatusText(translateSessionStatusMessage(message));
                 }
             }
             }

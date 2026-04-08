@@ -50,6 +50,35 @@ void navigateAppStateHistory(const int direction) {
 
 // Handles global keyboard shortcuts (F1 for help, etc.).
 // Processes key presses that work regardless of current panel focus.
+[[nodiscard]] const std::array<std::pair<const char*, const char*>, 10>& shortcutReferenceRows() const {
+    static constexpr std::array<std::pair<const char*, const char*>, 10> kRows = {{
+        {"F1", "Open keyboard shortcut reference"},
+        {"Alt+Left", "Navigate to previous application state"},
+        {"Alt+Right", "Navigate to next application state"},
+        {"Space", "Toggle play / pause"},
+        {"Ctrl+S", "Save active world"},
+        {"Right Arrow", "Step forward (when paused)"},
+        {"R", "Reset active viewport camera"},
+        {"+ / -", "Zoom active viewport"},
+        {"F2 - F12", "Select viewport editor tab (Simulation state)"},
+        {"Escape", "Clear focused ImGui widget"},
+    }};
+    return kRows;
+}
+
+void drawShortcutReferenceTable(const char* tableId) const {
+    const auto& rows = shortcutReferenceRows();
+    ImGui::Columns(2, tableId, false);
+    ImGui::TextDisabled("Shortcut"); ImGui::NextColumn();
+    ImGui::TextDisabled("Action"); ImGui::NextColumn();
+    ImGui::Separator();
+    for (const auto& row : rows) {
+        ImGui::TextColored(ImVec4(0.8f, 0.9f, 0.5f, 1.0f), "%s", row.first); ImGui::NextColumn();
+        ImGui::TextUnformatted(row.second); ImGui::NextColumn();
+    }
+    ImGui::Columns(1);
+}
+
 void handleGlobalKeyboardShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
@@ -80,19 +109,6 @@ void drawShortcutHelpModal() {
         return;
     }
 
-    static constexpr struct { const char* key; const char* action; } kShortcuts[] = {
-        {"F1",          "Open this shortcuts reference"},
-        {"Alt+Left",    "Navigate to previous application state"},
-        {"Alt+Right",   "Navigate to next application state"},
-        {"Space",       "Toggle play / pause"},
-        {"Ctrl+S",      "Save active world"},
-        {"Right Arrow", "Step forward (when paused)"},
-        {"R",           "Reset active viewport camera"},
-        {"+ / -",       "Zoom active viewport"},
-        {"F2 - F12",    "Select viewport editor tab (Simulation state)"},
-        {"Escape",      "Clear focused ImGui widget"},
-    };
-
     ImGui::TextDisabled("State history");
     ImGui::Text("Current state: %s", appStateLabel(static_cast<int>(appState_)));
     ImGui::Text("History position: %d / %d",
@@ -100,15 +116,7 @@ void drawShortcutHelpModal() {
         static_cast<int>(appStateHistory_.size()));
     ImGui::Separator();
 
-    ImGui::Columns(2, "shortcuthelpcols", false);
-    ImGui::TextDisabled("Shortcut"); ImGui::NextColumn();
-    ImGui::TextDisabled("Action"); ImGui::NextColumn();
-    ImGui::Separator();
-    for (const auto& shortcut : kShortcuts) {
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 0.5f, 1.0f), "%s", shortcut.key); ImGui::NextColumn();
-        ImGui::TextUnformatted(shortcut.action); ImGui::NextColumn();
-    }
-    ImGui::Columns(1);
+    drawShortcutReferenceTable("shortcuthelpcols");
     ImGui::Spacing();
 
     if (PrimaryButton("Close", ImVec2(120.0f, 0.0f))) {
@@ -523,6 +531,27 @@ void drawStatusHeader() {
     ImGui::SameLine();
     ImGui::TextDisabled("State: %s", appStateLabel(static_cast<int>(appState_)));
 
+    if (running) {
+        const auto& cfg = runtime_.config();
+        const int runtimeTierIndex =
+            (cfg.tier == ModelTier::A) ? 0 :
+            (cfg.tier == ModelTier::B) ? 1 : 2;
+        const std::string runtimeTemporal = app::temporalPolicyToString(cfg.temporalPolicy);
+        const int runtimeTemporalIndex =
+            (runtimeTemporal == "uniform") ? 0 :
+            (runtimeTemporal == "phased") ? 1 : 2;
+
+        const bool pendingRestart =
+            runtimeTierIndex != panel_.tierIndex ||
+            runtimeTemporalIndex != panel_.temporalIndex;
+
+        if (pendingRestart) {
+            ImGui::TextColored(
+                ImVec4(0.95f, 0.80f, 0.45f, 1.0f),
+                "Pending restart changes: execution profile or temporal behavior");
+        }
+    }
+
     ImGui::EndChild();
     ImGui::PopStyleColor();
     ImGui::Spacing();
@@ -589,6 +618,25 @@ void drawSimulationTab() {
 void drawInterventionsTab() {
     ImGui::BeginChild("InterventionsTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
+    PushSectionTint(8);
+    if (ImGui::CollapsingHeader("Runtime interaction mode", ImGuiTreeNodeFlags_DefaultOpen)) {
+        static int interactionModeIndex = 0;
+        static constexpr const char* kInteractionModes[] = {
+            "Inspect", "Paint / Patch", "Experiment Replay"
+        };
+        ImGui::Combo("Mode", &interactionModeIndex, kInteractionModes, static_cast<int>(std::size(kInteractionModes)));
+
+        if (interactionModeIndex == 0) {
+            ImGui::TextDisabled("Inspect mode: use runtime view hover readouts and Analysis tab summaries.");
+        } else if (interactionModeIndex == 1) {
+            ImGui::TextDisabled("Paint / Patch mode: use Manual cell/global edit controls below while paused.");
+        } else {
+            ImGui::TextDisabled("Experiment Replay mode: load an event log, run preflight, capture baseline, then replay compatible entries.");
+        }
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
     PushSectionTint(9);
     if (ImGui::CollapsingHeader("Parameter Control & Live Patching", ImGuiTreeNodeFlags_DefaultOpen)) {
         drawParameterControlSection();
@@ -615,6 +663,14 @@ void drawParameterControlSection() {
         ImGui::TextDisabled("Start the simulation to edit runtime parameters.");
         return;
     }
+
+    ImGui::TextDisabled("Change scope");
+    ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Applies now");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Paused only");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Saved with world (after explicit save)");
+    ImGui::TextDisabled("Parameter sliders can apply live. Manual cell/global edits require pause. Save Active World to persist runtime edits.");
 
     checkboxWithHint("Live apply while running", &liveApplyWhileRunning,
         "When enabled, parameter slider edits are applied immediately, including while simulation is running.");
@@ -863,6 +919,75 @@ void drawParameterControlSection() {
             }
         }
         appendLog(eventMsg);
+    }
+
+    std::vector<ParameterControl> replayParameterControls;
+    std::string replayControlsMsg;
+    runtime_.parameterControls(replayParameterControls, replayControlsMsg);
+
+    std::size_t replaySupportedCount = 0;
+    std::size_t replaySkippedKindCount = 0;
+    std::size_t replayUnresolvedParameterCount = 0;
+    for (const auto& event : loadedReplayEvents) {
+        if (event.kind == ManualEventKind::CellEdit) {
+            ++replaySupportedCount;
+            continue;
+        }
+        if (event.kind != ManualEventKind::ParameterUpdate) {
+            ++replaySkippedKindCount;
+            continue;
+        }
+
+        bool parameterResolved = false;
+        if (event.description.rfind("parameter=", 0) == 0) {
+            const std::string candidate = event.description.substr(std::string("parameter=").size());
+            parameterResolved = !candidate.empty();
+        }
+        if (!parameterResolved) {
+            for (const auto& control : replayParameterControls) {
+                if (control.targetVariable == event.variable) {
+                    parameterResolved = true;
+                    break;
+                }
+            }
+        }
+
+        if (parameterResolved) {
+            ++replaySupportedCount;
+        } else {
+            ++replayUnresolvedParameterCount;
+        }
+    }
+
+    if (!loadedReplayEvents.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Replay preflight");
+        ImGui::TextWrapped(
+            "Loaded %zu event(s): %zu replayable, %zu skipped by kind, %zu unresolved parameters.",
+            loadedReplayEvents.size(),
+            replaySupportedCount,
+            replaySkippedKindCount,
+            replayUnresolvedParameterCount);
+        if (!runtime_.isRunning()) {
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Start a simulation to run this replay experiment.");
+        } else if (!runtime_.isPaused()) {
+            ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Pause the simulation to apply replay events deterministically.");
+        } else {
+            ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Runtime is paused and ready for replay.");
+        }
+
+        if (SecondaryButton("Capture baseline checkpoint for replay", ImVec2(-1.0f, 24.0f))) {
+            const std::uint64_t step = viz_.hasCachedCheckpoint
+                ? viz_.cachedCheckpoint.stateSnapshot.header.stepIndex
+                : 0u;
+            const std::string label = "replay_baseline_step_" + std::to_string(step);
+            std::string checkpointMsg;
+            runtime_.createCheckpoint(label, checkpointMsg);
+            appendLog(checkpointMsg);
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip("Creates an in-memory baseline before replay so you can compare or restore quickly.");
+        }
     }
 
     const bool canReplayLoadedEvents =
@@ -1209,6 +1334,11 @@ void drawPerturbationSection() {
 void drawTierSelector() {
     const bool isRunning = runtime_.isRunning();
 
+    ImGui::TextDisabled("Change scope");
+    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Restart required");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.62f, 0.82f, 0.95f, 1.0f), "Saved with world when you save");
+
     // Current profile badges + description
     static constexpr const char* kTierDesc[3] = {
         "Local deterministic updates with no neighborhood exchange.\n"
@@ -1229,7 +1359,6 @@ void drawTierSelector() {
         kTierOptions[currentTier]);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip("%s", kTierDesc[currentTier]);
-    ImGui::Spacing();
 
     if (isRunning) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 0.3f, 1.0f));
@@ -1360,7 +1489,7 @@ void drawPlaybackSection() {
             ImGui::PopStyleColor(3);
         }
 
-        ImGui::SameLine(0.0f, 6.0f);
+        ImGui::SameLine();
 
         // Stop
         ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(120, 40, 40, 220));
@@ -2372,6 +2501,64 @@ void drawOpticsSection() {
 void drawAnalysisTab() {
     ImGui::BeginChild("AnalysisTabScroll", ImVec2(0,0), false, ImGuiWindowFlags_HorizontalScrollbar);
 
+    PushSectionTint(7);
+    if (ImGui::CollapsingHeader("Guided analysis recipes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("Start with a question, then run one recipe to configure probes and comparisons quickly.");
+
+        if (PrimaryButton("Recipe: Track global trend", ImVec2(-1.0f, 24.0f))) {
+            if (!viz_.fieldNames.empty()) {
+                const std::string trackedField = panel_.summaryVariable[0] != '\0'
+                    ? std::string(panel_.summaryVariable)
+                    : viz_.fieldNames.front();
+                std::snprintf(panel_.summaryVariable, sizeof(panel_.summaryVariable), "%s", trackedField.c_str());
+
+                ProbeDefinition definition;
+                definition.id = trackedField + "_global_trend";
+                definition.kind = ProbeKind::GlobalScalar;
+                definition.variableName = trackedField;
+
+                std::string addMsg;
+                runtime_.addProbe(definition, addMsg);
+                appendLog(addMsg);
+                appendLog("analysis_recipe_applied type=global_trend variable=" + trackedField);
+            } else {
+                appendLog("analysis_recipe_blocked reason=no_fields_available");
+            }
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip("Creates a global probe for the selected summary variable (or first available field).\nThen use Time-Series Probes to inspect trend and export CSV.");
+        }
+
+        if (SecondaryButton("Recipe: Compare with latest checkpoint", ImVec2(-1.0f, 24.0f))) {
+            std::vector<CheckpointInfo> checkpointRecords;
+            std::string checkpointMsg;
+            if (runtime_.checkpointRecords(checkpointRecords, checkpointMsg) && !checkpointRecords.empty()) {
+                RuntimeCheckpoint currentCheckpoint{};
+                std::string currentMsg;
+                if (runtime_.captureCheckpoint(currentCheckpoint, currentMsg, false /* computeHash */)) {
+                    const auto& latest = checkpointRecords.back();
+                    const auto& currentSnapshot = currentCheckpoint.stateSnapshot;
+                    std::ostringstream compare;
+                    compare << "analysis_checkpoint_compare"
+                            << " selected=" << latest.label
+                            << " step_delta=" << static_cast<long long>(currentSnapshot.header.stepIndex) - static_cast<long long>(latest.stepIndex)
+                            << " hash_match=" << (currentSnapshot.stateHash == latest.stateHash ? "yes" : "no")
+                            << " profile_match=" << (currentCheckpoint.profileFingerprint == latest.profileFingerprint ? "yes" : "no");
+                    appendLog(compare.str());
+                } else {
+                    appendLog(currentMsg);
+                }
+            } else {
+                appendLog(checkpointMsg.empty() ? "analysis_checkpoint_compare_blocked reason=no_checkpoints" : checkpointMsg);
+            }
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip("Logs a compact current-vs-latest checkpoint comparison (step delta, hash/profile match).\nUse In-Memory Checkpoints for detailed inspection and restore actions.");
+        }
+    }
+    PopSectionTint();
+    ImGui::Spacing();
+
     PushSectionTint(0);
     if (ImGui::CollapsingHeader("Time-Series Probes", ImGuiTreeNodeFlags_DefaultOpen)) {
         drawTimeSeriesSection();
@@ -3083,27 +3270,7 @@ void drawGridAndGenerationSection() {
 
 // Draws shortcuts section.
 void drawShortcutsSection() {
-    static constexpr struct { const char* key; const char* action; } kShortcuts[] = {
-        {"F1",         "Open keyboard shortcut help modal"},
-        {"Alt+Left",   "Navigate to previous application state"},
-        {"Alt+Right",  "Navigate to next application state"},
-        {"Space",      "Toggle play / pause"},
-        {"Ctrl+S",     "Save active world"},
-        {"Right Arrow", "Step forward (when paused)"},
-        {"R",          "Reset camera zoom and pan"},
-        {"+  /  -",    "Zoom in / out"},
-        {"F2 - F12",   "Select viewport for editing (first 11 views)"},
-        {"Escape",     "Return keyboard focus to viewport"},
-    };
-    ImGui::Columns(2, "shortcols", false);
-    ImGui::TextDisabled("Shortcut"); ImGui::NextColumn();
-    ImGui::TextDisabled("Action"); ImGui::NextColumn();
-    ImGui::Separator();
-    for (const auto& s : kShortcuts) {
-        ImGui::TextColored(ImVec4(0.8f,0.9f,0.5f,1.0f), "%s", s.key); ImGui::NextColumn();
-        ImGui::TextUnformatted(s.action); ImGui::NextColumn();
-    }
-    ImGui::Columns(1);
+    drawShortcutReferenceTable("shortcols");
 }
 
 // Grid setup section (used by System tab)
@@ -3851,6 +4018,75 @@ void appendLog(const std::string& line) {
         logs_.erase(logs_.begin(), logs_.begin() + static_cast<std::ptrdiff_t>(logs_.size() - 2000));
 
     const std::string lower = app::toLower(line);
+    std::string title;
+    std::string message;
+    ToastLevel level = ToastLevel::Info;
+    bool handled = false;
+
+    if (lower.find("world_opened") != std::string::npos) {
+        title = "World opened";
+        message = (lower.find("source=checkpoint") != std::string::npos)
+            ? "Opened from saved checkpoint."
+            : "Opened from profile settings (no checkpoint found).";
+        level = ToastLevel::Success;
+        handled = true;
+    } else if (lower.find("world_saved") != std::string::npos) {
+        title = "World saved";
+        message = "Profile and checkpoint were saved.";
+        level = ToastLevel::Success;
+        handled = true;
+    } else if (lower.find("parameter_preset_saved") != std::string::npos) {
+        title = "Preset saved";
+        message = "Parameter preset saved successfully.";
+        level = ToastLevel::Success;
+        handled = true;
+    } else if (lower.find("parameter_preset_save_failed") != std::string::npos) {
+        title = "Preset save failed";
+        message = "Could not save parameter preset. Check destination path and write permissions.";
+        level = ToastLevel::Error;
+        handled = true;
+    } else if (lower.find("event_log_replay_failed reason=runtime_not_paused") != std::string::npos) {
+        title = "Replay requires pause";
+        message = "Pause the simulation before replaying event log entries.";
+        level = ToastLevel::Warning;
+        handled = true;
+    } else if (lower.find("event_log_replay_failed reason=runtime_not_running") != std::string::npos) {
+        title = "Replay unavailable";
+        message = "Start a simulation first, then replay event log entries.";
+        level = ToastLevel::Warning;
+        handled = true;
+    } else if (lower.find("event_log_replay_complete") != std::string::npos) {
+        title = "Replay complete";
+        message = "Event log replay finished. Review applied vs skipped counts in Diagnostics log.";
+        level = ToastLevel::Success;
+        handled = true;
+    } else if (lower.find("world_open_failed") != std::string::npos) {
+        title = "Open world failed";
+        message = "Could not open the selected world. Check compatibility and storage files.";
+        level = ToastLevel::Error;
+        handled = true;
+    } else if (lower.find("world_create_blocked") != std::string::npos) {
+        title = "World creation blocked";
+        message = "Preflight checks found blocking issues. Resolve required items before creating the world.";
+        level = ToastLevel::Warning;
+        handled = true;
+    } else if (lower.find("wizard_step_blocked") != std::string::npos) {
+        title = "Wizard step blocked";
+        message = "Resolve required binding or preflight issues to continue.";
+        level = ToastLevel::Warning;
+        handled = true;
+    } else if (lower.find("timeline_capture_skip reason=not_due") != std::string::npos ||
+               lower.find("timeline_capture_skip reason=runtime_inactive") != std::string::npos) {
+        handled = true;
+    }
+
+    if (handled) {
+        if (!title.empty() && !message.empty()) {
+            pushToast(level, title, message, 4.5f);
+        }
+        return;
+    }
+
     if (lower.find("failed") != std::string::npos || lower.find("error") != std::string::npos) {
         pushToast(ToastLevel::Error, "Runtime error", line, 5.0f);
     } else if (lower.find("warning") != std::string::npos || lower.find("slow") != std::string::npos) {
@@ -3899,7 +4135,7 @@ void openSelectedWorld() {
     } else {
         appendLog(msg);
         completeOperationStatus(startedAt, "world open failed");
-        setSessionStatusText(msg);
+        setSessionStatusText(translateSessionStatusMessage(msg));
     }
 }
 

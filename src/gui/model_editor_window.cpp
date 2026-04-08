@@ -59,6 +59,66 @@ bool writeTextFile(const std::string& path, const std::string& contents) {
         return out.good();
 }
 
+struct PackageIntegritySummary {
+    bool hasMetadataPayload = false;
+    bool hasVersionPayload = false;
+    bool hasIrPayload = false;
+    bool hasFlatbufferPayload = false;
+    bool metadataFileExists = false;
+    bool versionFileExists = false;
+
+    [[nodiscard]] bool packageLooksComplete() const {
+        return (hasMetadataPayload || metadataFileExists)
+            && (hasVersionPayload || versionFileExists)
+            && hasIrPayload
+            && hasFlatbufferPayload;
+    }
+
+    [[nodiscard]] std::string missingSummary() const {
+        std::vector<std::string> missing;
+        if (!(hasMetadataPayload || metadataFileExists)) {
+            missing.emplace_back("metadata.json");
+        }
+        if (!(hasVersionPayload || versionFileExists)) {
+            missing.emplace_back("version.json");
+        }
+        if (!hasIrPayload) {
+            missing.emplace_back("ir.logic");
+        }
+        if (!hasFlatbufferPayload) {
+            missing.emplace_back("model.fb");
+        }
+
+        if (missing.empty()) {
+            return "none";
+        }
+
+        std::ostringstream out;
+        for (std::size_t i = 0; i < missing.size(); ++i) {
+            if (i > 0u) {
+                out << ", ";
+            }
+            out << missing[i];
+        }
+        return out.str();
+    }
+};
+
+PackageIntegritySummary summarizePackageIntegrity(const ModelContext& model, const std::filesystem::path& modelJsonPath) {
+    PackageIntegritySummary summary;
+    summary.hasMetadataPayload = !model.metadata_json.empty();
+    summary.hasVersionPayload = !model.version_json.empty();
+    summary.hasIrPayload = !model.ir_logic_string.empty();
+    summary.hasFlatbufferPayload = !model.flatbuffers_bin.empty();
+
+    const std::filesystem::path folder = modelJsonPath.parent_path();
+    std::error_code ec;
+    summary.metadataFileExists = std::filesystem::exists(folder / "metadata.json", ec);
+    ec.clear();
+    summary.versionFileExists = std::filesystem::exists(folder / "version.json", ec);
+    return summary;
+}
+
 std::filesystem::path resolveWorkspaceRoot() {
     std::error_code ec;
     std::filesystem::path current = std::filesystem::current_path(ec);
@@ -235,6 +295,7 @@ ModelEditorWindow::ModelEditorWindow(const std::string& window_title)
         std::snprintf(open_model_path_buffer, sizeof(open_model_path_buffer), "%s", openDefault.string().c_str());
         std::snprintf(save_model_path_buffer, sizeof(save_model_path_buffer), "%s", saveDefault.string().c_str());
         status_details.push_back("ready=true");
+        status_details.push_back("scope=experimental_editor");
 }
 
 ModelEditorWindow::~ModelEditorWindow() = default;
@@ -264,7 +325,7 @@ void ModelEditorWindow::setActiveModelPath(const std::filesystem::path& modelPat
 void ModelEditorWindow::loadModel(const ModelContext& context) {
     window_open = true;
     error_message.clear();
-    status_message = "Model loaded";
+    status_message = "Model loaded (experimental editor)";
 
     // Copy model data (avoid copying unique_ptr)
     current_model.metadata_json = context.metadata_json;
@@ -961,9 +1022,12 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                     ImGui::OpenPopup("SaveModelDialog");
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Export model JSON")) {
+                if (ImGui::MenuItem("Export model JSON snapshot")) {
                     exportModel();
                 }
+                ImGui::BeginDisabled();
+                ImGui::MenuItem("Export model package (.zip) unavailable in this build", nullptr, false, false);
+                ImGui::EndDisabled();
                 ImGui::Separator();
                 if (ImGui::MenuItem("Close", "Alt+F4")) {
                     window_open = false;
@@ -1094,6 +1158,8 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                                   ImGuiWindowFlags_NoScrollbar)) {
                 ImGui::TextDisabled("Status");
                 ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f),
+                    "Experimental: JSON graph editing is supported. Full package export is not available in this build.");
                 if (!error_message.empty()) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
                     ImGui::TextUnformatted(error_message.c_str());
@@ -1596,11 +1662,17 @@ void ModelEditorWindow::saveModel() {
     }
 
     if (writeTextFile(save_model_path_buffer, current_model.model_json)) {
-        status_message = "Model saved successfully";
+        const std::filesystem::path savedPath(save_model_path_buffer);
+        const PackageIntegritySummary integrity = summarizePackageIntegrity(current_model, savedPath);
+        status_message = integrity.packageLooksComplete()
+            ? "Model JSON saved (package signals complete)"
+            : "Model JSON saved (JSON-only snapshot; package still incomplete)";
         error_message.clear();
         is_modified = false;
         recordHistorySnapshot("Save model");
         appendStatusDetail("save=ok");
+        appendStatusDetail("files_written=model.json");
+        appendStatusDetail("package_missing=" + integrity.missingSummary());
     } else {
         error_message = std::string("Failed to save model to '") + save_model_path_buffer + "'";
         appendStatusDetail("save=error");
@@ -1618,9 +1690,14 @@ void ModelEditorWindow::exportModel() {
     std::error_code ec;
     std::filesystem::create_directories(exportPath.parent_path(), ec);
     if (writeTextFile(exportPath.string(), current_model.model_json)) {
-        status_message = "Model JSON exported successfully";
+        const PackageIntegritySummary integrity = summarizePackageIntegrity(current_model, exportPath);
+        status_message = integrity.packageLooksComplete()
+            ? "Model JSON exported (package signals complete)"
+            : "Model JSON exported (JSON-only snapshot; package export unavailable in this build)";
         error_message.clear();
         appendStatusDetail("export_path=" + exportPath.string());
+        appendStatusDetail("files_written=model_editor_export.json");
+        appendStatusDetail("package_missing=" + integrity.missingSummary());
     } else {
         error_message = "Export failed";
         appendStatusDetail("export=error");
