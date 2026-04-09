@@ -1001,9 +1001,32 @@ void drawParameterControlSection() {
     std::string replayControlsMsg;
     runtime_.parameterControls(replayParameterControls, replayControlsMsg);
 
+    static int replayExecutionModeIndex = 0;
+    static constexpr std::array<const char*, 2> kReplayExecutionModes = {
+        "Replay only safe subset",
+        "Stop on first unresolved critical event"
+    };
+
+    const auto parameterResolutionForEvent = [&replayParameterControls](const ManualEventRecord& event)
+        -> std::pair<std::optional<std::string>, std::string> {
+        if (event.description.rfind("parameter=", 0) == 0) {
+            const std::string candidate = event.description.substr(std::string("parameter=").size());
+            if (!candidate.empty()) {
+                return {candidate, "direct"};
+            }
+        }
+        for (const auto& control : replayParameterControls) {
+            if (control.targetVariable == event.variable) {
+                return {control.name, "mapped"};
+            }
+        }
+        return {std::nullopt, "unresolved"};
+    };
+
     std::size_t replaySupportedCount = 0;
     std::size_t replaySkippedKindCount = 0;
     std::size_t replayUnresolvedParameterCount = 0;
+    std::size_t replayCriticalUnresolvedCount = 0;
     for (const auto& event : loadedReplayEvents) {
         if (event.kind == ManualEventKind::CellEdit) {
             ++replaySupportedCount;
@@ -1014,26 +1037,25 @@ void drawParameterControlSection() {
             continue;
         }
 
-        bool parameterResolved = false;
-        if (event.description.rfind("parameter=", 0) == 0) {
-            const std::string candidate = event.description.substr(std::string("parameter=").size());
-            parameterResolved = !candidate.empty();
-        }
-        if (!parameterResolved) {
-            for (const auto& control : replayParameterControls) {
-                if (control.targetVariable == event.variable) {
-                    parameterResolved = true;
-                    break;
-                }
-            }
-        }
+        const auto [resolvedParameter, resolutionSource] = parameterResolutionForEvent(event);
+        const bool parameterResolved = resolvedParameter.has_value() && resolutionSource != "unresolved";
 
         if (parameterResolved) {
             ++replaySupportedCount;
         } else {
             ++replayUnresolvedParameterCount;
+            ++replayCriticalUnresolvedCount;
         }
     }
+
+    const std::size_t replayPlanTotal = loadedReplayEvents.size();
+    const std::size_t replayPlanCompatible = replaySupportedCount;
+    const std::size_t replayPlanUnsafe = replayPlanTotal >= replayPlanCompatible
+        ? (replayPlanTotal - replayPlanCompatible)
+        : 0u;
+    const float replayCompatibilityScore = replayPlanTotal > 0u
+        ? (100.0f * static_cast<float>(replayPlanCompatible) / static_cast<float>(replayPlanTotal))
+        : 0.0f;
 
     if (!loadedReplayEvents.empty()) {
         ImGui::Spacing();
@@ -1044,6 +1066,100 @@ void drawParameterControlSection() {
             replaySupportedCount,
             replaySkippedKindCount,
             replayUnresolvedParameterCount);
+        ImGui::TextDisabled(
+            "Deterministic compatibility score: %.1f%% (%zu/%zu replayable)",
+            replayCompatibilityScore,
+            replayPlanCompatible,
+            replayPlanTotal);
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::Combo(
+            "Replay execution mode",
+            &replayExecutionModeIndex,
+            kReplayExecutionModes.data(),
+            static_cast<int>(kReplayExecutionModes.size()));
+        ImGui::TextDisabled(
+            "Current mode: %s",
+            kReplayExecutionModes[static_cast<std::size_t>(std::clamp(replayExecutionModeIndex, 0, static_cast<int>(kReplayExecutionModes.size()) - 1))]);
+
+        if (ImGui::BeginTable(
+            "ReplayExecutionPlan",
+            6,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
+            ImVec2(0.0f, 170.0f))) {
+            ImGui::TableSetupColumn("Step", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableSetupColumn("Kind", ImGuiTableColumnFlags_WidthFixed, 95.0f);
+            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 95.0f);
+            ImGui::TableSetupColumn("Resolution", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("Expected side effect");
+            ImGui::TableSetupColumn("Critical", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+            ImGui::TableHeadersRow();
+
+            const auto planKindLabel = [](const ManualEventKind kind) {
+                switch (kind) {
+                    case ManualEventKind::ParameterUpdate: return "Parameter";
+                    case ManualEventKind::CellEdit: return "Cell edit";
+                    case ManualEventKind::Perturbation: return "Perturbation";
+                }
+                return "Manual";
+            };
+
+            const std::size_t planPreviewCount = std::min<std::size_t>(loadedReplayEvents.size(), 24u);
+            for (std::size_t index = 0; index < planPreviewCount; ++index) {
+                const auto& event = loadedReplayEvents[index];
+                const auto [resolvedParameter, resolutionSource] = parameterResolutionForEvent(event);
+
+                std::string status = "replayable";
+                std::string expectedEffect;
+                bool criticalUnresolved = false;
+                if (event.kind == ManualEventKind::CellEdit) {
+                    expectedEffect = (event.cellIndex == std::numeric_limits<std::uint64_t>::max())
+                        ? "global cell patch"
+                        : "single-cell patch";
+                } else if (event.kind == ManualEventKind::ParameterUpdate) {
+                    if (resolvedParameter.has_value() && resolutionSource != "unresolved") {
+                        expectedEffect = "parameter write " + *resolvedParameter + " -> " + event.variable;
+                    } else {
+                        status = "blocked";
+                        expectedEffect = "parameter mapping unresolved";
+                        criticalUnresolved = true;
+                    }
+                } else {
+                    status = "skipped";
+                    expectedEffect = "unsupported event kind";
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%llu", static_cast<unsigned long long>(event.step));
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(planKindLabel(event.kind));
+                ImGui::TableSetColumnIndex(2);
+                if (status == "replayable") {
+                    ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "%s", status.c_str());
+                } else if (status == "skipped") {
+                    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "%s", status.c_str());
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s", status.c_str());
+                }
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextUnformatted(resolutionSource.c_str());
+                ImGui::TableSetColumnIndex(4);
+                ImGui::TextUnformatted(expectedEffect.c_str());
+                ImGui::TableSetColumnIndex(5);
+                ImGui::TextUnformatted(criticalUnresolved ? "yes" : "no");
+            }
+            ImGui::EndTable();
+        }
+
+        if (replayPlanUnsafe > 0u) {
+            ImGui::TextDisabled(
+                "Plan summary: %zu safe event%s, %zu unsafe/skipped event%s, %zu critical unresolved.",
+                replayPlanCompatible,
+                replayPlanCompatible == 1u ? "" : "s",
+                replayPlanUnsafe,
+                replayPlanUnsafe == 1u ? "" : "s",
+                replayCriticalUnresolvedCount);
+        }
         if (!runtime_.isRunning()) {
             ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "Start a simulation to run this replay experiment.");
         } else if (!runtime_.isPaused()) {
@@ -1105,27 +1221,30 @@ void drawParameterControlSection() {
                     ? static_cast<std::uint64_t>(std::max(1u, viz_.cachedCheckpoint.stateSnapshot.grid.width))
                     : static_cast<std::uint64_t>(std::max(1, panel_.gridWidth));
 
-                const auto parameterNameForEvent = [&controls](const ManualEventRecord& event) -> std::optional<std::string> {
+                const auto parameterNameForEvent = [&controls](const ManualEventRecord& event)
+                    -> std::pair<std::optional<std::string>, std::string> {
                     if (event.description.rfind("parameter=", 0) == 0) {
                         const std::string candidate = event.description.substr(std::string("parameter=").size());
                         if (!candidate.empty()) {
-                            return candidate;
+                            return {candidate, "direct"};
                         }
                     }
                     for (const auto& control : controls) {
                         if (control.targetVariable == event.variable) {
-                            return control.name;
+                            return {control.name, "mapped"};
                         }
                     }
-                    return std::nullopt;
+                    return {std::nullopt, "unresolved"};
                 };
 
                 std::size_t appliedCount = 0;
                 std::size_t skippedCount = 0;
                 std::size_t jumpCount = 0;
+                std::size_t criticalAbortCount = 0;
                 std::uint64_t replayStep = viz_.hasCachedCheckpoint
                     ? viz_.cachedCheckpoint.stateSnapshot.header.stepIndex
                     : 0u;
+                const bool stopOnCriticalUnresolved = replayExecutionModeIndex == 1;
 
                 for (const auto& event : replayEvents) {
                     if (event.step != replayStep) {
@@ -1140,7 +1259,8 @@ void drawParameterControlSection() {
                     std::string replayMsg;
                     bool applied = false;
                     if (event.kind == ManualEventKind::ParameterUpdate) {
-                        if (const auto parameterName = parameterNameForEvent(event); parameterName.has_value()) {
+                        const auto [parameterName, resolutionSource] = parameterNameForEvent(event);
+                        if (parameterName.has_value()) {
                             applied = runtime_.setParameterValue(
                                 *parameterName,
                                 event.newValue,
@@ -1148,6 +1268,12 @@ void drawParameterControlSection() {
                                 replayMsg);
                         } else {
                             replayMsg = "event_log_replay_skipped reason=parameter_unresolved variable=" + event.variable;
+                            if (stopOnCriticalUnresolved) {
+                                ++criticalAbortCount;
+                                appendLog(replayMsg);
+                                appendLog("event_log_replay_aborted reason=critical_unresolved_parameter mode=stop_on_first");
+                                break;
+                            }
                         }
                     } else if (event.kind == ManualEventKind::CellEdit) {
                         std::optional<Cell> replayCell;
@@ -1181,12 +1307,14 @@ void drawParameterControlSection() {
                     " applied=" + std::to_string(appliedCount) +
                     " skipped=" + std::to_string(skippedCount) +
                     " seeks=" + std::to_string(jumpCount) +
+                    " critical_abort=" + std::to_string(criticalAbortCount) +
+                    " mode=" + std::string(stopOnCriticalUnresolved ? "stop_on_first_unresolved" : "safe_subset") +
                     " loaded=" + std::to_string(replayEvents.size()));
             }
         }
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !canReplayLoadedEvents) {
-        ImGui::SetTooltip("Requires a loaded event log and a paused simulation. Cell edits and parameter updates are replayed; perturbations are currently skipped.");
+        ImGui::SetTooltip("Requires a loaded event log and a paused simulation.\nModes: replay safe subset, or stop on first unresolved critical event.");
     }
 
     if (!loadedReplayEvents.empty()) {
