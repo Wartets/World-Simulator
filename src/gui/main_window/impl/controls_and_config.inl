@@ -1535,6 +1535,8 @@ void drawPlaybackSection() {
     const bool running = runtime_.isRunning();
     const bool paused  = runtime_.isPaused();
 
+    drawRuntimeIntentControls("playback");
+
     std::size_t pendingImmediateWrites = 0;
     std::size_t queuedDeferredEvents = 0;
     std::size_t pendingScheduledPerturbations = 0;
@@ -1676,6 +1678,147 @@ void drawPlaybackSection() {
             ImGui::TextDisabled("Use Step Controls below, or press Space to resume.");
         }
     }
+}
+
+[[nodiscard]] int detectRuntimeIntentFromVisualization() const {
+    const bool unlimited = viz_.unlimitedSimSpeed;
+    const int refreshHz = viz_.displayTargetRefreshHz;
+    const bool refreshOnStateChange = viz_.displayRefreshOnStateChange;
+    const int refreshEvery = viz_.displayRefreshEveryNSteps;
+    const bool adaptive = viz_.adaptiveSampling;
+    const int manualStride = viz_.manualSamplingStride;
+    const int maxCells = viz_.maxRenderedCells;
+
+    const bool interactiveExploration =
+        !unlimited &&
+        refreshHz == 120 &&
+        refreshOnStateChange &&
+        refreshEvery == 1 &&
+        adaptive &&
+        maxCells == 350000;
+
+    const bool balanced =
+        unlimited &&
+        refreshHz == 90 &&
+        refreshOnStateChange &&
+        refreshEvery == 2 &&
+        adaptive &&
+        maxCells == 300000;
+
+    const bool throughputBenchmark =
+        unlimited &&
+        refreshHz == 30 &&
+        !refreshOnStateChange &&
+        refreshEvery == 24 &&
+        adaptive &&
+        maxCells == 120000;
+
+    const bool stabilityDiagnostics =
+        !unlimited &&
+        refreshHz == 120 &&
+        refreshOnStateChange &&
+        refreshEvery == 1 &&
+        !adaptive &&
+        manualStride == 1 &&
+        maxCells == 600000;
+
+    if (interactiveExploration) return 0;
+    if (balanced) return 1;
+    if (throughputBenchmark) return 2;
+    if (stabilityDiagnostics) return 3;
+    return 4;
+}
+
+void applyRuntimeIntentPreset(const int intentIndex) {
+    switch (intentIndex) {
+        case 0: // Interactive exploration
+            viz_.unlimitedSimSpeed = false;
+            viz_.displayTargetRefreshHz = 120;
+            viz_.displayRefreshOnStateChange = true;
+            viz_.displayRefreshEveryNSteps = 1;
+            viz_.adaptiveSampling = true;
+            viz_.maxRenderedCells = 350000;
+            break;
+        case 1: // Balanced
+            viz_.unlimitedSimSpeed = true;
+            viz_.displayTargetRefreshHz = 90;
+            viz_.displayRefreshOnStateChange = true;
+            viz_.displayRefreshEveryNSteps = 2;
+            viz_.adaptiveSampling = true;
+            viz_.maxRenderedCells = 300000;
+            break;
+        case 2: // Throughput benchmark
+            viz_.unlimitedSimSpeed = true;
+            viz_.displayTargetRefreshHz = 30;
+            viz_.displayRefreshOnStateChange = false;
+            viz_.displayRefreshEveryNSteps = 24;
+            viz_.adaptiveSampling = true;
+            viz_.maxRenderedCells = 120000;
+            break;
+        case 3: // Stability diagnostics
+            viz_.unlimitedSimSpeed = false;
+            viz_.displayTargetRefreshHz = 120;
+            viz_.displayRefreshOnStateChange = true;
+            viz_.displayRefreshEveryNSteps = 1;
+            viz_.adaptiveSampling = false;
+            viz_.manualSamplingStride = 1;
+            viz_.maxRenderedCells = 600000;
+            break;
+        default:
+            break;
+    }
+}
+
+void drawRuntimeIntentControls(const char* comboIdSuffix) {
+    static constexpr std::array<const char*, 5> kRuntimeIntentLabels = {
+        "Interactive exploration",
+        "Balanced",
+        "Throughput benchmark",
+        "Stability diagnostics",
+        "Custom"
+    };
+
+    const int detectedIntent = detectRuntimeIntentFromVisualization();
+    const std::string comboId = std::string("Runtime intent##") + comboIdSuffix;
+
+    ImGui::TextDisabled("Performance intent");
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::BeginCombo(comboId.c_str(), kRuntimeIntentLabels[static_cast<std::size_t>(detectedIntent)])) {
+        for (int i = 0; i < static_cast<int>(kRuntimeIntentLabels.size()); ++i) {
+            const bool isSelected = (i == detectedIntent);
+            if (ImGui::Selectable(kRuntimeIntentLabels[static_cast<std::size_t>(i)], isSelected)) {
+                if (i < 4) {
+                    applyRuntimeIntentPreset(i);
+                    appendLog(std::string("runtime_intent_applied intent=") + kRuntimeIntentLabels[static_cast<std::size_t>(i)]);
+                }
+            }
+            if (isSelected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    switch (detectedIntent) {
+        case 0:
+            ImGui::TextDisabled("Preset focus: responsive visual exploration with frequent refresh and controlled simulation speed.");
+            break;
+        case 1:
+            ImGui::TextDisabled("Preset focus: balanced simulation throughput and viewport responsiveness for day-to-day runs.");
+            break;
+        case 2:
+            ImGui::TextDisabled("Preset focus: maximize simulation throughput by minimizing display overhead.");
+            break;
+        case 3:
+            ImGui::TextDisabled("Preset focus: high-observability diagnostics with dense display updates and conservative pacing.");
+            break;
+        default:
+            ImGui::TextColored(ImVec4(0.98f, 0.80f, 0.45f, 1.0f), "Custom mode active: manual knob overrides are in effect.");
+            ImGui::TextDisabled("Select one of the named intents to restore a known performance bundle.");
+            break;
+    }
+
+    ImGui::Spacing();
 }
 
 // Draws step control buttons.
@@ -2734,6 +2877,187 @@ void drawAnalysisTab() {
     if (ImGui::CollapsingHeader("Guided analysis recipes", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextWrapped("Start with a question, then run one recipe to configure probes and comparisons quickly.");
 
+        static int questionLauncherIndex = 0;
+        static constexpr std::array<const char*, 4> kQuestionLauncherItems = {
+            "Where did instability begin?",
+            "What changed after perturbation X?",
+            "Is this run still conserving target quantity?",
+            "How different is this from checkpoint Y?"
+        };
+
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::Combo(
+            "Question launcher",
+            &questionLauncherIndex,
+            kQuestionLauncherItems.data(),
+            static_cast<int>(kQuestionLauncherItems.size()));
+
+        const auto ensureSummaryField = [&]() -> std::string {
+            if (panel_.summaryVariable[0] != '\0') {
+                return std::string(panel_.summaryVariable);
+            }
+            if (viz_.fieldNames.empty()) {
+                return {};
+            }
+            std::snprintf(panel_.summaryVariable, sizeof(panel_.summaryVariable), "%s", viz_.fieldNames.front().c_str());
+            return viz_.fieldNames.front();
+        };
+
+        const auto focusActiveViewportOnField = [&](const std::string& fieldName) {
+            if (fieldName.empty()) {
+                return;
+            }
+            const auto fieldIt = std::find(viz_.fieldNames.begin(), viz_.fieldNames.end(), fieldName);
+            if (fieldIt == viz_.fieldNames.end() || viz_.viewports.empty()) {
+                return;
+            }
+            const int fieldIndex = static_cast<int>(std::distance(viz_.fieldNames.begin(), fieldIt));
+            const int activeViewportIndex = std::clamp(viz_.activeViewportEditor, 0, static_cast<int>(viz_.viewports.size()) - 1);
+            viz_.viewports[static_cast<std::size_t>(activeViewportIndex)].primaryFieldIndex = fieldIndex;
+        };
+
+        if (PrimaryButton("Launch selected question workflow", ImVec2(-1.0f, 24.0f))) {
+            switch (questionLauncherIndex) {
+                case 0: {
+                    StepDiagnostics diagnostics;
+                    std::string diagnosticsMsg;
+                    if (runtime_.lastStepDiagnostics(diagnostics, diagnosticsMsg)) {
+                        const std::string primaryField = ensureSummaryField();
+                        if (!primaryField.empty()) {
+                            ProbeDefinition definition;
+                            definition.id = primaryField + "_instability_watch";
+                            definition.kind = ProbeKind::GlobalScalar;
+                            definition.variableName = primaryField;
+                            std::string addMsg;
+                            runtime_.addProbe(definition, addMsg);
+                            appendLog(addMsg);
+                            focusActiveViewportOnField(primaryField);
+                        }
+
+                        const std::string firstViolation = diagnostics.constraintViolations.empty()
+                            ? std::string("none_detected")
+                            : diagnostics.constraintViolations.front();
+                        appendLog(
+                            "question_launcher_result question=instability_begin "
+                            "constraint_violations=" + std::to_string(diagnostics.constraintViolations.size()) +
+                            " stability_alerts=" + std::to_string(diagnostics.stabilityAlerts.size()) +
+                            " first_violation=" + firstViolation);
+                    } else {
+                        appendLog(diagnosticsMsg);
+                    }
+                    break;
+                }
+                case 1: {
+                    std::vector<ManualEventRecord> events;
+                    std::string eventsMsg;
+                    if (runtime_.manualEventLog(events, eventsMsg)) {
+                        auto it = std::find_if(events.rbegin(), events.rend(), [](const ManualEventRecord& event) {
+                            return event.kind == ManualEventKind::Perturbation;
+                        });
+
+                        if (it != events.rend()) {
+                            const auto& event = *it;
+                            panel_.seekTargetStep = event.step;
+                            focusActiveViewportOnField(event.variable);
+                            if (!event.variable.empty()) {
+                                ProbeDefinition definition;
+                                definition.id = event.variable + "_post_perturb_trend";
+                                definition.kind = ProbeKind::GlobalScalar;
+                                definition.variableName = event.variable;
+                                std::string addMsg;
+                                runtime_.addProbe(definition, addMsg);
+                                appendLog(addMsg);
+                            }
+
+                            appendLog(
+                                "question_launcher_result question=post_perturbation "
+                                "variable=" + event.variable +
+                                " perturb_step=" + std::to_string(event.step) +
+                                " action=seek_target_prepared");
+                        } else {
+                            appendLog("question_launcher_blocked question=post_perturbation reason=no_perturbation_events");
+                        }
+                    } else {
+                        appendLog(eventsMsg);
+                    }
+                    break;
+                }
+                case 2: {
+                    const std::string targetField = ensureSummaryField();
+                    if (targetField.empty()) {
+                        appendLog("question_launcher_blocked question=conservation reason=no_fields_available");
+                        break;
+                    }
+
+                    ProbeDefinition definition;
+                    definition.id = targetField + "_conservation_probe";
+                    definition.kind = ProbeKind::GlobalScalar;
+                    definition.variableName = targetField;
+                    std::string addMsg;
+                    runtime_.addProbe(definition, addMsg);
+                    appendLog(addMsg);
+                    focusActiveViewportOnField(targetField);
+
+                    std::string summarizeMsg;
+                    runtime_.summarizeField(targetField, summarizeMsg);
+                    appendLog("question_launcher_result question=conservation target=" + targetField);
+                    appendLog(summarizeMsg);
+                    break;
+                }
+                case 3: {
+                    std::vector<CheckpointInfo> checkpointRecords;
+                    std::string checkpointMsg;
+                    if (runtime_.checkpointRecords(checkpointRecords, checkpointMsg) && !checkpointRecords.empty()) {
+                        const CheckpointInfo* selected = nullptr;
+                        if (panel_.checkpointSelectedLabel[0] != '\0') {
+                            const std::string selectedLabel = panel_.checkpointSelectedLabel;
+                            const auto selectedIt = std::find_if(
+                                checkpointRecords.begin(),
+                                checkpointRecords.end(),
+                                [&](const CheckpointInfo& checkpoint) { return checkpoint.label == selectedLabel; });
+                            if (selectedIt != checkpointRecords.end()) {
+                                selected = &(*selectedIt);
+                            }
+                        }
+                        if (selected == nullptr) {
+                            selected = &checkpointRecords.front();
+                        }
+
+                        std::snprintf(panel_.checkpointSelectedLabel, sizeof(panel_.checkpointSelectedLabel), "%s", selected->label.c_str());
+                        RuntimeCheckpoint currentCheckpoint{};
+                        std::string currentMsg;
+                        if (runtime_.captureCheckpoint(currentCheckpoint, currentMsg, false /* computeHash */)) {
+                            const auto& currentSnapshot = currentCheckpoint.stateSnapshot;
+                            std::ostringstream compare;
+                            compare << "question_launcher_result question=checkpoint_difference"
+                                    << " checkpoint=" << selected->label
+                                    << " step_delta=" << static_cast<long long>(currentSnapshot.header.stepIndex) - static_cast<long long>(selected->stepIndex)
+                                    << " hash_match=" << (currentSnapshot.stateHash == selected->stateHash ? "yes" : "no")
+                                    << " profile_match=" << (currentCheckpoint.profileFingerprint == selected->profileFingerprint ? "yes" : "no")
+                                    << " run_match=" << (currentCheckpoint.runSignature.identityHash() == selected->runIdentityHash ? "yes" : "no");
+                            appendLog(compare.str());
+                        } else {
+                            appendLog(currentMsg);
+                        }
+                    } else {
+                        appendLog(checkpointMsg.empty() ? "question_launcher_blocked question=checkpoint_difference reason=no_checkpoints" : checkpointMsg);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip(
+                "Builds an analysis workflow from a question and logs a concise result summary.\n"
+                "The launcher auto-configures probes, view focus, and checkpoint comparison context when available.");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
         if (PrimaryButton("Recipe: Track global trend", ImVec2(-1.0f, 24.0f))) {
             if (!viz_.fieldNames.empty()) {
                 const std::string trackedField = panel_.summaryVariable[0] != '\0'
@@ -2919,6 +3243,9 @@ void drawMetricsSection() {
         ImGui::TextDisabled("Run the simulation to see metrics.");
         return;
     }
+
+    drawRuntimeIntentControls("metrics");
+
     std::string msg;
     runtime_.metrics(msg);
     ImGui::TextWrapped("%s", msg.c_str());
