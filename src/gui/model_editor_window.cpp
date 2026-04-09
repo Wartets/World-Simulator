@@ -325,7 +325,7 @@ void ModelEditorWindow::setActiveModelPath(const std::filesystem::path& modelPat
 void ModelEditorWindow::loadModel(const ModelContext& context) {
     window_open = true;
     error_message.clear();
-    status_message = "Model loaded (experimental JSON editor)";
+    status_message = "JSON snapshot loaded (Structure Editing Mode)";
 
     // Copy model data (avoid copying unique_ptr)
     current_model.metadata_json = context.metadata_json;
@@ -437,7 +437,7 @@ void ModelEditorWindow::showFileActionPopups() {
                     populateNodeGraphFromModel(payload);
                     history->clear();
                     is_modified = false;
-                    status_message = "Model opened";
+                        status_message = "JSON snapshot opened";
                     error_message.clear();
                     recordHistorySnapshot("Opened model from file");
                     appendStatusDetail("open_path=" + std::string(open_model_path_buffer));
@@ -1012,7 +1012,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                 if (ImGui::MenuItem("New Model", "Ctrl+N")) {
                     createNewModel();
                 }
-                if (ImGui::MenuItem("Open Model", "Ctrl+O")) {
+                if (ImGui::MenuItem("Open JSON snapshot", "Ctrl+O")) {
                     ImGui::OpenPopup("OpenModelDialog");
                 }
                 if (ImGui::MenuItem("Save JSON snapshot", "Ctrl+S")) {
@@ -1026,7 +1026,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                     exportModel();
                 }
                 ImGui::BeginDisabled();
-                ImGui::MenuItem("Export model package (.zip) unavailable in this build", nullptr, false, false);
+                ImGui::MenuItem("Export package (.zip) unavailable (Package Authoring Mode)", nullptr, false, false);
                 ImGui::EndDisabled();
                 ImGui::Separator();
                 if (ImGui::MenuItem("Close", "Alt+F4")) {
@@ -1086,6 +1086,24 @@ void ModelEditorWindow::render(ImVec2 available_size) {
         }
 
         showFileActionPopups();
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 24, 34, 220));
+        if (ImGui::BeginChild("EditorCapabilityModeStrip", ImVec2(0.0f, 48.0f), true,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+            ImGui::TextDisabled("Editor capability mode");
+            ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Structure Editing Mode");
+            ImGui::SameLine();
+            ImGui::TextDisabled("active: create/edit graph structure and JSON snapshot artifacts");
+
+            ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Package Authoring Mode");
+            ImGui::SameLine();
+            ImGui::TextDisabled("disabled in this build: package regeneration/export guarantees are unavailable");
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        ImGui::Spacing();
 
         // Compute explicit layout heights to prevent micro-scrolling
         ImVec2 content_avail = ImGui::GetContentRegionAvail();
