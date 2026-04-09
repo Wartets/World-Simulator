@@ -1535,6 +1535,58 @@ void drawPlaybackSection() {
     const bool running = runtime_.isRunning();
     const bool paused  = runtime_.isPaused();
 
+    std::size_t pendingImmediateWrites = 0;
+    std::size_t queuedDeferredEvents = 0;
+    std::size_t pendingScheduledPerturbations = 0;
+    std::size_t runtimeManualEventCount = 0;
+    std::string effectLedgerMessage;
+    bool pendingRestart = false;
+
+    if (running) {
+        runtime_.effectLedgerCounts(
+            pendingImmediateWrites,
+            queuedDeferredEvents,
+            pendingScheduledPerturbations,
+            runtimeManualEventCount,
+            effectLedgerMessage);
+
+        const auto& cfg = runtime_.config();
+        const int runtimeTierIndex =
+            (cfg.tier == ModelTier::A) ? 0 :
+            (cfg.tier == ModelTier::B) ? 1 : 2;
+        const std::string runtimeTemporal = app::temporalPolicyToString(cfg.temporalPolicy);
+        const int runtimeTemporalIndex =
+            (runtimeTemporal == "uniform") ? 0 :
+            (runtimeTemporal == "phased") ? 1 : 2;
+        pendingRestart =
+            runtimeTierIndex != panel_.tierIndex ||
+            runtimeTemporalIndex != panel_.temporalIndex;
+    }
+
+    const bool hasUnsavedRuntimeChanges = running && (
+        pendingImmediateWrites > 0 ||
+        queuedDeferredEvents > 0 ||
+        pendingScheduledPerturbations > 0 ||
+        runtimeManualEventCount > 0 ||
+        pendingRestart);
+
+    ImGui::TextDisabled("Action hierarchy");
+    ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Safe read-only");
+    ImGui::SameLine();
+    ImGui::TextDisabled("status, metrics, field summaries");
+    ImGui::TextColored(ImVec4(0.70f, 0.82f, 0.95f, 1.0f), "Reversible");
+    ImGui::SameLine();
+    ImGui::TextDisabled("pause/resume, step, undo manual edit");
+    ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Destructive / irreversible");
+    ImGui::SameLine();
+    ImGui::TextDisabled("stop-reset, checkpoint delete, replay commits");
+    if (hasUnsavedRuntimeChanges) {
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.65f, 0.35f, 1.0f),
+            "Guard active: destructive actions require explicit save-or-discard choice while unsaved runtime changes exist.");
+    }
+    ImGui::Spacing();
+
     if (!running) {
         if (PrimaryButton("Start Simulation", ImVec2(-1.0f, 34.0f))) {
             applyConfigFromPanel();
@@ -1585,7 +1637,7 @@ void drawPlaybackSection() {
         }
         ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-            ImGui::SetTooltip("Stop and terminate the runtime.\nThe world state is NOT automatically saved here - use Save & Exit or Ctrl+S.");
+            ImGui::SetTooltip("Stop and terminate the runtime.\nIf unsaved runtime changes exist, a save-or-discard guard is required before stopping.");
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -1999,9 +2051,70 @@ void drawCheckpointSection() {
 void drawConfirmationModals() {
     if (showStopResetConfirm_) {
         if (ImGui::BeginPopupModal("Confirm Stop and Reset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("Stop the runtime and reset the active simulation state? Unsaved progress after the latest checkpoint will be lost.");
-            ImGui::Spacing();
-            if (PrimaryButton("Stop and Reset", ImVec2(160.0f, 28.0f))) {
+            const bool running = runtime_.isRunning();
+            const bool hasWorld = !runtime_.activeWorldName().empty();
+
+            std::size_t pendingImmediateWrites = 0;
+            std::size_t queuedDeferredEvents = 0;
+            std::size_t pendingScheduledPerturbations = 0;
+            std::size_t runtimeManualEventCount = 0;
+            std::string effectLedgerMessage;
+            bool pendingRestart = false;
+            if (running) {
+                runtime_.effectLedgerCounts(
+                    pendingImmediateWrites,
+                    queuedDeferredEvents,
+                    pendingScheduledPerturbations,
+                    runtimeManualEventCount,
+                    effectLedgerMessage);
+
+                const auto& cfg = runtime_.config();
+                const int runtimeTierIndex =
+                    (cfg.tier == ModelTier::A) ? 0 :
+                    (cfg.tier == ModelTier::B) ? 1 : 2;
+                const std::string runtimeTemporal = app::temporalPolicyToString(cfg.temporalPolicy);
+                const int runtimeTemporalIndex =
+                    (runtimeTemporal == "uniform") ? 0 :
+                    (runtimeTemporal == "phased") ? 1 : 2;
+                pendingRestart =
+                    runtimeTierIndex != panel_.tierIndex ||
+                    runtimeTemporalIndex != panel_.temporalIndex;
+            }
+
+            const bool hasUnsavedRuntimeChanges = running && (
+                pendingImmediateWrites > 0 ||
+                queuedDeferredEvents > 0 ||
+                pendingScheduledPerturbations > 0 ||
+                runtimeManualEventCount > 0 ||
+                pendingRestart);
+
+            ImGui::TextWrapped("Stop the runtime and reset the active simulation state?");
+            if (hasUnsavedRuntimeChanges) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.35f, 1.0f), "Unsaved runtime effects detected:");
+                if (pendingImmediateWrites > 0) {
+                    ImGui::BulletText("pending immediate writes: %zu patch%s", pendingImmediateWrites, pendingImmediateWrites == 1u ? "" : "es");
+                }
+                if (queuedDeferredEvents > 0 || pendingScheduledPerturbations > 0) {
+                    ImGui::BulletText(
+                        "queued deferred events: %zu queue item%s, %zu scheduled perturbation%s",
+                        queuedDeferredEvents,
+                        queuedDeferredEvents == 1u ? "" : "s",
+                        pendingScheduledPerturbations,
+                        pendingScheduledPerturbations == 1u ? "" : "s");
+                }
+                if (runtimeManualEventCount > 0) {
+                    ImGui::BulletText("unsaved runtime edits in event log: %zu", runtimeManualEventCount);
+                }
+                if (pendingRestart) {
+                    ImGui::BulletText("restart-required profile/temporal changes are staged");
+                }
+                ImGui::TextDisabled("Choose an explicit commit/revert action before destructive stop.");
+            } else {
+                ImGui::TextDisabled("No unsaved runtime effects detected.");
+            }
+
+            const auto performStopReset = [&]() {
                 viz_.autoRun = false;
                 cancelPendingSimulationSteps();
                 if (!runtime_.activeWorldName().empty()) {
@@ -2014,11 +2127,37 @@ void drawConfirmationModals() {
                 triggerOverlay(OverlayIcon::Pause);
                 showStopResetConfirm_ = false;
                 ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
-                showStopResetConfirm_ = false;
-                ImGui::CloseCurrentPopup();
+            };
+
+            ImGui::Spacing();
+            if (hasUnsavedRuntimeChanges && hasWorld) {
+                if (PrimaryButton("Save world, then stop", ImVec2(180.0f, 28.0f))) {
+                    saveDisplayPrefs();
+                    std::string saveMsg;
+                    const bool saved = runtime_.saveActiveWorld(saveMsg);
+                    appendLog(saveMsg);
+                    if (saved) {
+                        performStopReset();
+                    }
+                }
+                ImGui::SameLine();
+                if (SecondaryButton("Stop without saving", ImVec2(170.0f, 28.0f))) {
+                    performStopReset();
+                }
+                ImGui::SameLine();
+                if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                    showStopResetConfirm_ = false;
+                    ImGui::CloseCurrentPopup();
+                }
+            } else {
+                if (PrimaryButton("Stop and Reset", ImVec2(160.0f, 28.0f))) {
+                    performStopReset();
+                }
+                ImGui::SameLine();
+                if (SecondaryButton("Cancel", ImVec2(100.0f, 28.0f))) {
+                    showStopResetConfirm_ = false;
+                    ImGui::CloseCurrentPopup();
+                }
             }
             ImGui::EndPopup();
         }
