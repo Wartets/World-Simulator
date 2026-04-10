@@ -141,11 +141,19 @@ void handleKeyboardShortcuts() {
         if (runtime_.isRunning()) {
             if (runtime_.isPaused()) {
                 std::string msg;
-                if (runtime_.resume(msg)) { viz_.autoRun = true; appendLog(msg); triggerOverlay(OverlayIcon::Play); }
+                if (runtime_.resume(msg)) {
+                    viz_.autoRun = true;
+                    appendUserFacingOperationMessage(msg, "Simulation resumed", "Use Pause or Step controls to manage runtime progression.");
+                    triggerOverlay(OverlayIcon::Play);
+                }
             } else {
                 cancelPendingSimulationSteps();
                 std::string msg;
-                if (runtime_.pause(msg)) { viz_.autoRun = false; appendLog(msg); triggerOverlay(OverlayIcon::Pause); }
+                if (runtime_.pause(msg)) {
+                    viz_.autoRun = false;
+                    appendUserFacingOperationMessage(msg, "Simulation paused", "Apply interventions, replay, or step manually before resuming.");
+                    triggerOverlay(OverlayIcon::Pause);
+                }
             }
         }
     }
@@ -155,8 +163,8 @@ void handleKeyboardShortcuts() {
         if (!runtime_.activeWorldName().empty()) {
             saveDisplayPrefs();
             std::string msg;
-            if (runtime_.saveActiveWorld(msg)) appendLog(msg);
-            else appendLog(msg);
+            runtime_.saveActiveWorld(msg);
+            appendUserFacingOperationMessage(msg, "Active world save requested", "If save fails, verify storage paths and retry.");
         }
     }
 
@@ -165,7 +173,7 @@ void handleKeyboardShortcuts() {
         cancelPendingSimulationSteps();
         std::string msg;
         runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), msg);
-        appendLog(msg);
+        appendUserFacingOperationMessage(msg, "Manual step requested", "Inspect updated state or continue stepping.");
         requestSnapshotRefresh();
     }
 
@@ -214,13 +222,13 @@ void returnToModelSelector(const bool saveActiveWorld) {
         saveDisplayPrefs();
         std::string saveMsg;
         runtime_.saveActiveWorld(saveMsg);
-        appendLog(saveMsg);
+        appendUserFacingOperationMessage(saveMsg, "Save active world before returning", "Return to model selector after save confirmation.");
     }
 
     std::string stopMsg;
     runtime_.stop(stopMsg);
     if (!stopMsg.empty()) {
-        appendLog(stopMsg);
+        appendUserFacingOperationMessage(stopMsg, "Runtime stop requested", "Choose a model or world to continue.");
     }
 
     appState_ = AppState::ModelSelector;
@@ -231,7 +239,10 @@ bool seekToStepAndRefresh(const std::uint64_t targetStep) {
     cancelPendingSimulationSteps();
     std::string msg;
     const bool ok = runtime_.seekStep(targetStep, msg);
-    appendLog(msg);
+    appendUserFacingOperationMessage(
+        msg,
+        "Seek to target step requested",
+        ok ? "Inspect synced state at target step." : "Verify target step and runtime state, then retry seek.");
     if (ok) {
         panel_.seekTargetStep = targetStep;
         requestSnapshotRefresh();
@@ -287,6 +298,70 @@ struct SimulationClockInfo {
     return info;
 }
 
+[[nodiscard]] static std::string extractReasonToken(const std::string& rawMessage) {
+    const std::string key = "reason=";
+    const std::size_t reasonPos = rawMessage.find(key);
+    if (reasonPos == std::string::npos) {
+        return "not specified";
+    }
+
+    const std::size_t valueStart = reasonPos + key.size();
+    std::size_t valueEnd = rawMessage.find_first_of(" \t\n\r", valueStart);
+    if (valueEnd == std::string::npos) {
+        valueEnd = rawMessage.size();
+    }
+    if (valueEnd <= valueStart) {
+        return "not specified";
+    }
+    return rawMessage.substr(valueStart, valueEnd - valueStart);
+}
+
+[[nodiscard]] static std::string formatUserFacingOperationMessage(
+    const std::string& rawMessage,
+    const std::string& fallbackWhat,
+    const std::string& fallbackNext) {
+    const std::string lower = app::toLower(rawMessage);
+    const bool failed = lower.find("failed") != std::string::npos || lower.find("blocked") != std::string::npos;
+    const bool success = !failed && (
+        lower.find("ready") != std::string::npos ||
+        lower.find("complete") != std::string::npos ||
+        lower.find("saved") != std::string::npos ||
+        lower.find("started") != std::string::npos ||
+        lower.find("resumed") != std::string::npos ||
+        lower.find("paused") != std::string::npos ||
+        lower.find("stopped") != std::string::npos ||
+        lower.find("applied") != std::string::npos);
+
+    std::string what = fallbackWhat;
+    std::string why = success ? "operation completed" : "operation returned an error state";
+    std::string next = fallbackNext;
+
+    if (failed) {
+        why = "runtime reported reason=" + extractReasonToken(rawMessage);
+        if (next.empty()) {
+            next = "Review controls and retry after resolving the reported reason.";
+        }
+    } else if (success && next.empty()) {
+        next = "Continue with the next workflow step.";
+    }
+
+    std::ostringstream out;
+    out << "What happened: " << what
+        << " | Why: " << why
+        << " | Next: " << next;
+    if (!rawMessage.empty()) {
+        out << " | Technical: " << rawMessage;
+    }
+    return out.str();
+}
+
+void appendUserFacingOperationMessage(
+    const std::string& rawMessage,
+    const std::string& fallbackWhat,
+    const std::string& fallbackNext) {
+    appendLog(formatUserFacingOperationMessage(rawMessage, fallbackWhat, fallbackNext));
+}
+
 // Draws main menu bar with application menus.
 void drawMainMenuBar() {
     if (!ImGui::BeginMainMenuBar()) {
@@ -302,7 +377,7 @@ void drawMainMenuBar() {
             saveDisplayPrefs();
             std::string msg;
             runtime_.saveActiveWorld(msg);
-            appendLog(msg);
+            appendUserFacingOperationMessage(msg, "Active world save requested", "Continue simulation or return to models.");
         }
         if (ImGui::MenuItem(hasWorld ? "Save & Return to Models" : "Return to Models")) {
             returnToModelSelector(hasWorld);
@@ -314,7 +389,10 @@ void drawMainMenuBar() {
         if (ImGui::MenuItem("Undo Last Manual Edit", nullptr, false, running)) {
             std::string undoMsg;
             const bool undone = runtime_.undoLastManualPatch(undoMsg);
-            appendLog(undoMsg);
+            appendUserFacingOperationMessage(
+                undoMsg,
+                "Undo last manual edit requested",
+                undone ? "Review reverted state and continue editing." : "No reversible edit found; apply a new edit if needed.");
             if (undone) {
                 requestSnapshotRefresh();
             }
@@ -328,12 +406,18 @@ void drawMainMenuBar() {
         }
         if (ImGui::MenuItem("Save Display Preferences", nullptr, false, hasWorld)) {
             saveDisplayPrefs();
-            appendLog("display_prefs_saved world=" + runtime_.activeWorldName());
+            appendUserFacingOperationMessage(
+                "display_prefs_saved world=" + runtime_.activeWorldName(),
+                "Display preferences saved",
+                "Continue with current layout or adjust viewport configuration.");
         }
         if (ImGui::MenuItem("Reload Display Preferences", nullptr, false, hasWorld)) {
             resetDisplayConfigToDefaults();
             loadDisplayPrefs();
-            appendLog("display_prefs_reloaded world=" + runtime_.activeWorldName());
+            appendUserFacingOperationMessage(
+                "display_prefs_reloaded world=" + runtime_.activeWorldName(),
+                "Display preferences reloaded",
+                "Confirm viewport layout and continue simulation analysis.");
         }
         if (ImGui::MenuItem("Add Viewport", nullptr, false, viz_.viewports.size() < kMaxDynamicViewportCount)) {
             addViewportConfig();
@@ -360,7 +444,7 @@ void drawMainMenuBar() {
                 std::string msg;
                 runtime_.resume(msg);
                 viz_.autoRun = true;
-                appendLog(msg);
+                appendUserFacingOperationMessage(msg, "Simulation resumed", "Pause to intervene or keep running for continuous updates.");
                 requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Play);
             } else {
@@ -368,7 +452,7 @@ void drawMainMenuBar() {
                 std::string msg;
                 runtime_.pause(msg);
                 viz_.autoRun = false;
-                appendLog(msg);
+                appendUserFacingOperationMessage(msg, "Simulation paused", "Apply edits/replay or step manually before resuming.");
                 triggerOverlay(OverlayIcon::Pause);
             }
         }
@@ -376,7 +460,7 @@ void drawMainMenuBar() {
             cancelPendingSimulationSteps();
             std::string msg;
             runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), msg);
-            appendLog(msg);
+            appendUserFacingOperationMessage(msg, "Manual step requested", "Inspect new state, then continue stepping or resume.");
             requestSnapshotRefresh();
         }
         if (ImGui::MenuItem("Seek To Target Step", nullptr, false, running)) {
@@ -385,7 +469,7 @@ void drawMainMenuBar() {
         if (ImGui::MenuItem("Store Quick Checkpoint", nullptr, false, running)) {
             std::string msg;
             runtime_.createCheckpoint(panel_.checkpointLabel[0] != '\0' ? panel_.checkpointLabel : "quick", msg);
-            appendLog(msg);
+            appendUserFacingOperationMessage(msg, "Quick checkpoint requested", "Use checkpoint restore to compare or roll back state.");
         }
         ImGui::EndMenu();
     }
@@ -497,11 +581,13 @@ void drawStatusHeader() {
         if (ImGui::Button(playLabel, ImVec2(84.0f, 30.0f))) {
             if (paused || !viz_.autoRun) {
                 std::string msg; runtime_.resume(msg); viz_.autoRun = true;
-                appendLog(msg); requestSnapshotRefresh(); triggerOverlay(OverlayIcon::Play);
+                appendUserFacingOperationMessage(msg, "Simulation resumed", "Pause when ready to apply deterministic edits or replay.");
+                requestSnapshotRefresh(); triggerOverlay(OverlayIcon::Play);
             } else {
                 cancelPendingSimulationSteps();
                 std::string msg; runtime_.pause(msg); viz_.autoRun = false;
-                appendLog(msg); triggerOverlay(OverlayIcon::Pause);
+                appendUserFacingOperationMessage(msg, "Simulation paused", "Use step, replay, or manual edit controls before resuming.");
+                triggerOverlay(OverlayIcon::Pause);
             }
         }
         ImGui::PopStyleColor(3);
@@ -798,14 +884,14 @@ void drawParameterControlSection() {
             std::string liveMsg;
             if (runtime_.setParameterValue(active.name, panel_.parameterValue, "ui_parameter_live", liveMsg)) {
                 panel_.parameterValueDirty = false;
-                appendLog(liveMsg);
+                appendUserFacingOperationMessage(liveMsg, "Live parameter update applied", "Observe state response or adjust parameter further.");
             }
         }
 
         if (PrimaryButton("Apply parameter", ImVec2(-1.0f, 26.0f))) {
             std::string setMsg;
             runtime_.setParameterValue(active.name, panel_.parameterValue, "ui_parameter_update", setMsg);
-            appendLog(setMsg);
+            appendUserFacingOperationMessage(setMsg, "Parameter update requested", "Confirm expected field response and continue tuning.");
             panel_.parameterValueDirty = false;
         }
     } else {
@@ -854,7 +940,10 @@ void drawParameterControlSection() {
             panel_.manualPatchValue,
             panel_.manualPatchNote,
             patchMsg);
-        appendLog(patchMsg);
+        appendUserFacingOperationMessage(
+            patchMsg,
+            "Manual field edit requested",
+            patched ? "Inspect state diff or continue with additional edits." : "Verify variable/target bounds and retry edit.");
         if (patched) {
             requestSnapshotRefresh();
         }
@@ -863,7 +952,10 @@ void drawParameterControlSection() {
     if (SecondaryButton("Undo last manual edit", ImVec2(-1.0f, 24.0f))) {
         std::string undoMsg;
         const bool undone = runtime_.undoLastManualPatch(undoMsg);
-        appendLog(undoMsg);
+        appendUserFacingOperationMessage(
+            undoMsg,
+            "Undo last manual edit requested",
+            undone ? "Validate rollback and proceed." : "No undo entry found; apply edits first.");
         if (undone) {
             requestSnapshotRefresh();
         }
@@ -886,21 +978,24 @@ void drawParameterControlSection() {
         if (!saved && presetMsg.empty()) {
             presetMsg = "parameter_preset_save_failed reason=unknown";
         }
-        appendLog(presetMsg);
+        appendUserFacingOperationMessage(
+            presetMsg,
+            "Parameter preset save requested",
+            saved ? "Load this preset later to restore parameter values." : "Check preset path/name and retry save.");
     }
     ImGui::SameLine();
     if (SecondaryButton("Load preset", ImVec2(140.0f, 24.0f))) {
         ParameterPreset preset;
         std::string presetMsg;
         if (loadParameterPreset(presetPath, preset, presetMsg)) {
-            appendLog(presetMsg);
+            appendUserFacingOperationMessage(presetMsg, "Parameter preset loaded", "Apply loaded values and inspect runtime response.");
             for (const auto& parameter : preset.parameters) {
                 std::string setMsg;
                 runtime_.setParameterValue(parameter.name, parameter.value, "preset_load", setMsg);
-                appendLog(setMsg);
+                appendUserFacingOperationMessage(setMsg, "Preset parameter applied", "Continue through preset sequence or tune manually.");
             }
         } else {
-            appendLog(presetMsg);
+            appendUserFacingOperationMessage(presetMsg, "Parameter preset load failed", "Validate preset file schema and retry.");
         }
     }
     ImGui::SameLine();
@@ -914,14 +1009,14 @@ void drawParameterControlSection() {
             ParameterPreset preset;
             std::string presetMsg;
             if (loadParameterPreset(*presetFile, preset, presetMsg)) {
-                appendLog(presetMsg);
+                appendUserFacingOperationMessage(presetMsg, "Parameter preset loaded", "Apply loaded values and inspect runtime response.");
                 for (const auto& parameter : preset.parameters) {
                     std::string setMsg;
                     runtime_.setParameterValue(parameter.name, parameter.value, "preset_load", setMsg);
-                    appendLog(setMsg);
+                    appendUserFacingOperationMessage(setMsg, "Preset parameter applied", "Continue through preset sequence or tune manually.");
                 }
             } else {
-                appendLog(presetMsg);
+                appendUserFacingOperationMessage(presetMsg, "Parameter preset load failed", "Validate selected file and retry.");
             }
         }
     }
@@ -942,7 +1037,10 @@ void drawParameterControlSection() {
                 eventMsg = "event_log_save_failed reason=unknown";
             }
         }
-        appendLog(eventMsg);
+        appendUserFacingOperationMessage(
+            eventMsg,
+            "Manual event log export requested",
+            "Use exported log for replay preflight or audit trace review.");
     }
     ImGui::SameLine();
     if (SecondaryButton("Load event log", ImVec2(140.0f, 24.0f))) {
@@ -954,7 +1052,10 @@ void drawParameterControlSection() {
             loadedReplayEvents.clear();
             loadedReplaySource.clear();
         }
-        appendLog(eventMsg);
+        appendUserFacingOperationMessage(
+            eventMsg,
+            "Manual event log load requested",
+            "Run replay preflight to inspect compatibility before execution.");
     }
     ImGui::SameLine();
     if (SecondaryButton("Browse event log...", ImVec2(160.0f, 24.0f))) {
@@ -972,7 +1073,10 @@ void drawParameterControlSection() {
                 loadedReplayEvents.clear();
                 loadedReplaySource.clear();
             }
-            appendLog(eventMsg);
+            appendUserFacingOperationMessage(
+                eventMsg,
+                "Manual event log load requested",
+                "Run replay preflight to inspect compatibility before execution.");
         }
     }
 
@@ -994,7 +1098,10 @@ void drawParameterControlSection() {
                 }
             }
         }
-        appendLog(eventMsg);
+        appendUserFacingOperationMessage(
+            eventMsg,
+            "Manual event log export requested",
+            "Use exported log for replay preflight or archive workflows.");
     }
 
     std::vector<ParameterControl> replayParameterControls;
@@ -1175,7 +1282,10 @@ void drawParameterControlSection() {
             const std::string label = "replay_baseline_step_" + std::to_string(step);
             std::string checkpointMsg;
             runtime_.createCheckpoint(label, checkpointMsg);
-            appendLog(checkpointMsg);
+            appendUserFacingOperationMessage(
+                checkpointMsg,
+                "Replay baseline checkpoint requested",
+                "Use restore/compare workflows after replay execution.");
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
             ImGui::SetTooltip("Creates an in-memory baseline before replay so you can compare or restore quickly.");
@@ -1188,9 +1298,15 @@ void drawParameterControlSection() {
         !loadedReplayEvents.empty();
     if (SecondaryButton("Replay compatible entries", ImVec2(-1.0f, 24.0f))) {
         if (!runtime_.isRunning()) {
-            appendLog("event_log_replay_failed reason=runtime_not_running");
+            appendUserFacingOperationMessage(
+                "event_log_replay_failed reason=runtime_not_running",
+                "Replay request rejected",
+                "Start a runtime, pause it, then rerun replay.");
         } else if (!runtime_.isPaused()) {
-            appendLog("event_log_replay_failed reason=runtime_not_paused");
+            appendUserFacingOperationMessage(
+                "event_log_replay_failed reason=runtime_not_paused",
+                "Replay request rejected",
+                "Pause runtime to preserve deterministic replay ordering.");
         } else {
             if (loadedReplayEvents.empty()) {
                 std::string eventMsg;
@@ -1198,7 +1314,10 @@ void drawParameterControlSection() {
                 if (loadManualEventLog(inputPath, loadedReplayEvents, eventMsg)) {
                     loadedReplaySource = inputPath.string();
                 }
-                appendLog(eventMsg);
+                appendUserFacingOperationMessage(
+                    eventMsg,
+                    "Manual event log load requested",
+                    "Run replay preflight and execute compatible entries.");
             }
 
             if (!loadedReplayEvents.empty()) {
@@ -1270,8 +1389,14 @@ void drawParameterControlSection() {
                             replayMsg = "event_log_replay_skipped reason=parameter_unresolved variable=" + event.variable;
                             if (stopOnCriticalUnresolved) {
                                 ++criticalAbortCount;
-                                appendLog(replayMsg);
-                                appendLog("event_log_replay_aborted reason=critical_unresolved_parameter mode=stop_on_first");
+                                appendUserFacingOperationMessage(
+                                    replayMsg,
+                                    "Replay entry unresolved",
+                                    "Resolve parameter mapping and rerun replay plan.");
+                                appendUserFacingOperationMessage(
+                                    "event_log_replay_aborted reason=critical_unresolved_parameter mode=stop_on_first",
+                                    "Replay aborted on first unresolved critical event",
+                                    "Inspect execution plan and map unresolved parameter sources before retry.");
                                 break;
                             }
                         }
@@ -1292,7 +1417,10 @@ void drawParameterControlSection() {
                         replayMsg = "event_log_replay_skipped reason=unsupported_kind kind=perturbation variable=" + event.variable;
                     }
 
-                    appendLog(replayMsg);
+                    appendUserFacingOperationMessage(
+                        replayMsg,
+                        "Replay event applied",
+                        "Continue replay or inspect updated state and traces.");
                     if (applied) {
                         ++appliedCount;
                     } else {
@@ -1301,7 +1429,7 @@ void drawParameterControlSection() {
                 }
 
                 requestSnapshotRefresh();
-                appendLog(
+                appendUserFacingOperationMessage(
                     "event_log_replay_complete source=" +
                     (loadedReplaySource.empty() ? std::string("<memory>") : loadedReplaySource) +
                     " applied=" + std::to_string(appliedCount) +
@@ -1309,7 +1437,11 @@ void drawParameterControlSection() {
                     " seeks=" + std::to_string(jumpCount) +
                     " critical_abort=" + std::to_string(criticalAbortCount) +
                     " mode=" + std::string(stopOnCriticalUnresolved ? "stop_on_first_unresolved" : "safe_subset") +
-                    " loaded=" + std::to_string(replayEvents.size()));
+                    " loaded=" + std::to_string(replayEvents.size()),
+                    "Replay execution finished",
+                    stopOnCriticalUnresolved
+                        ? "Review unresolved critical event and fix mapping before rerun."
+                        : "Compare replay result to baseline checkpoint and continue analysis.");
             }
         }
     }
@@ -1538,7 +1670,10 @@ void drawPerturbationSection() {
         } else {
             applyMsg = validateMsg;
         }
-        appendLog(applyMsg);
+        appendUserFacingOperationMessage(
+            applyMsg,
+            "Perturbation enqueue requested",
+            valid ? "Step simulation to observe perturbation effects." : "Correct perturbation bounds/settings and retry.");
     }
 }
 
@@ -1638,12 +1773,12 @@ void drawTierSelector() {
             std::string msg;
             if (runtime_.restart(msg)) {
                 viz_.autoRun = false;
-                appendLog(msg);
+                appendUserFacingOperationMessage(msg, "Runtime restart requested", "Validate updated profile/temporal behavior before resuming.");
                 syncPanelFromConfig();
                 requestSnapshotRefresh();
                 enterSimulationPaused();
             } else {
-                appendLog(msg);
+                appendUserFacingOperationMessage(msg, "Runtime restart failed", "Correct profile/temporal mismatch and retry restart.");
             }
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -1651,7 +1786,10 @@ void drawTierSelector() {
     } else {
         if (PrimaryButton("Apply these settings", ImVec2(-1.0f, 30.0f))) {
             applyConfigFromPanel();
-            appendLog("Execution profile and temporal behavior settings applied. Use 'Start Simulation' to begin.");
+            appendUserFacingOperationMessage(
+                "settings_applied profile_temporal",
+                "Execution profile and temporal behavior settings applied",
+                "Start simulation to run with the selected settings.");
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             ImGui::SetTooltip("Applies profile/temporal settings without starting the simulation.\nUse 'Start Simulation' button to begin.");
@@ -1722,11 +1860,14 @@ void drawPlaybackSection() {
             applyConfigFromPanel();
             std::string msg;
             if (runtime_.start(msg)) {
-                viz_.autoRun = true; appendLog(msg);
+                viz_.autoRun = true;
+                appendUserFacingOperationMessage(msg, "Simulation start requested", "Observe runtime status and proceed with controls/interventions.");
                 syncPanelFromConfig();
                 refreshFieldNames(); requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Play);
-            } else appendLog(msg);
+            } else {
+                appendUserFacingOperationMessage(msg, "Simulation start failed", "Review runtime readiness and retry start.");
+            }
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
             ImGui::SetTooltip("Initialize and start the simulation from step 0.\nApplies the current execution profile and temporal behavior settings.");
@@ -1740,7 +1881,8 @@ void drawPlaybackSection() {
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(20, 95, 45, 255));
             if (ImGui::Button("Play / Resume [Space]", ImVec2(halfW, 34.0f))) {
                 std::string msg; runtime_.resume(msg); viz_.autoRun = true;
-                appendLog(msg); requestSnapshotRefresh(); triggerOverlay(OverlayIcon::Play);
+                appendUserFacingOperationMessage(msg, "Simulation resumed", "Pause when ready to apply deterministic edits or replay.");
+                requestSnapshotRefresh(); triggerOverlay(OverlayIcon::Play);
             }
             ImGui::PopStyleColor(3);
         } else {
@@ -1750,7 +1892,8 @@ void drawPlaybackSection() {
             if (ImGui::Button("Pause [Space]", ImVec2(halfW, 34.0f))) {
                 cancelPendingSimulationSteps();
                 std::string msg; runtime_.pause(msg); viz_.autoRun = false;
-                appendLog(msg); triggerOverlay(OverlayIcon::Pause);
+                appendUserFacingOperationMessage(msg, "Simulation paused", "Use step, replay, or manual edit controls before resuming.");
+                triggerOverlay(OverlayIcon::Pause);
             }
             ImGui::PopStyleColor(3);
         }
@@ -1917,7 +2060,10 @@ void drawRuntimeIntentControls(const char* comboIdSuffix) {
             if (ImGui::Selectable(kRuntimeIntentLabels[static_cast<std::size_t>(i)], isSelected)) {
                 if (i < 4) {
                     applyRuntimeIntentPreset(i);
-                    appendLog(std::string("runtime_intent_applied intent=") + kRuntimeIntentLabels[static_cast<std::size_t>(i)]);
+                    appendUserFacingOperationMessage(
+                        std::string("runtime_intent_applied intent=") + kRuntimeIntentLabels[static_cast<std::size_t>(i)],
+                        "Runtime performance intent applied",
+                        "Run simulation and confirm throughput/visual responsiveness tradeoff.");
                 }
             }
             if (isSelected) {
@@ -1963,7 +2109,8 @@ void drawStepControlsSection() {
         cancelPendingSimulationSteps();
         std::string msg;
         runtime_.step(static_cast<std::uint32_t>(panel_.stepCount), msg);
-        appendLog(msg); requestSnapshotRefresh();
+        appendUserFacingOperationMessage(msg, "Step forward requested", "Inspect new state and continue stepping or resume playback.");
+        requestSnapshotRefresh();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip("Advance exactly %d step(s).\nShortcut: right arrow when paused.", panel_.stepCount);
@@ -1990,7 +2137,8 @@ void drawStepControlsSection() {
             cancelPendingSimulationSteps();
             std::string msg;
             runtime_.runUntil(panel_.runUntilTarget, msg);
-            appendLog(msg); requestSnapshotRefresh();
+            appendUserFacingOperationMessage(msg, "Fast-forward requested", "Validate target step arrival and inspect state summary.");
+            requestSnapshotRefresh();
         }
     }
 }
@@ -2017,7 +2165,10 @@ void drawTimeControlSection() {
             panel_.playbackSpeed = runtime_.playbackSpeed();
             panel_.playbackSpeedDirty = false;
         }
-        appendLog(msg);
+        appendUserFacingOperationMessage(
+            msg,
+            "Playback speed update requested",
+            "Use time controls to verify desired pacing behavior.");
     }
 
     const std::uint64_t currentStep = viz_.hasCachedCheckpoint
@@ -2039,7 +2190,7 @@ void drawTimeControlSection() {
         cancelPendingSimulationSteps();
         std::string msg;
         runtime_.stepBackward(static_cast<std::uint32_t>(std::max(1, panel_.backwardStepCount)), msg);
-        appendLog(msg);
+        appendUserFacingOperationMessage(msg, "Backward step requested", "Inspect rollback result and continue timeline navigation.");
         requestSnapshotRefresh();
     }
 
@@ -2051,7 +2202,7 @@ void drawTimeControlSection() {
             static_cast<std::uint32_t>(std::max(1, panel_.checkpointIntervalSteps)),
             static_cast<std::size_t>(std::max(1, panel_.checkpointRetentionCount)),
             msg);
-        appendLog(msg);
+        appendUserFacingOperationMessage(msg, "Timeline checkpoint policy update requested", "Run simulation to populate checkpoints under new policy.");
     }
 
     const SimulationClockInfo clock = currentSimulationClock();
@@ -2144,7 +2295,7 @@ void drawCheckpointSection() {
     if (PrimaryButton("Store##cp", ImVec2(btnW, 26.0f))) {
         std::string msg;
         runtime_.createCheckpoint(panel_.checkpointLabel, msg);
-        appendLog(msg);
+        appendUserFacingOperationMessage(msg, "Checkpoint store requested", "Use restore/list controls to manage saved state anchors.");
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip("Save the current state under this label (in-memory only).");
@@ -2153,7 +2304,8 @@ void drawCheckpointSection() {
         cancelPendingSimulationSteps();
         std::string msg;
         runtime_.restoreCheckpoint(panel_.checkpointLabel, msg);
-        appendLog(msg); requestSnapshotRefresh();
+        appendUserFacingOperationMessage(msg, "Checkpoint restore requested", "Review restored state before applying new interventions.");
+        requestSnapshotRefresh();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip("Roll back to the saved checkpoint with this label.\nAll unsaved progress after that point is discarded.");
@@ -2161,7 +2313,7 @@ void drawCheckpointSection() {
     if (SecondaryButton("List##cp", ImVec2(-1.0f, 26.0f))) {
         std::string msg;
         runtime_.listCheckpoints(msg);
-        appendLog(msg);
+        appendUserFacingOperationMessage(msg, "Checkpoint list requested", "Select a checkpoint to inspect, restore, rename, or delete.");
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip("List all stored in-memory checkpoint labels.");
@@ -2393,7 +2545,7 @@ void drawConfirmationModals() {
                 }
                 std::string msg;
                 runtime_.stop(msg);
-                appendLog(msg);
+                appendUserFacingOperationMessage(msg, "Runtime stop and reset executed", "Restart simulation or return to model/world selection.");
                 requestSnapshotRefresh();
                 triggerOverlay(OverlayIcon::Pause);
                 showStopResetConfirm_ = false;
@@ -2406,7 +2558,7 @@ void drawConfirmationModals() {
                     saveDisplayPrefs();
                     std::string saveMsg;
                     const bool saved = runtime_.saveActiveWorld(saveMsg);
-                    appendLog(saveMsg);
+                    appendUserFacingOperationMessage(saveMsg, "Save world before destructive stop", "After save completes, runtime will stop/reset.");
                     if (saved) {
                         performStopReset();
                     }

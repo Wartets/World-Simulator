@@ -173,51 +173,101 @@
         }
 
         const std::string lower = app::toLower(rawMessage);
+        const auto actionable = [](const std::string& what, const std::string& why, const std::string& next) {
+            return std::string("What happened: ") + what +
+                " | Why: " + why +
+                " | Next: " + next;
+        };
 
         if (lower.find("wizard_step_blocked reason=unresolved_bindings") != std::string::npos) {
-            return "Cannot continue: the selected setup cannot write required model variables. Fix bindings or switch to Advanced mode to use expert override.";
+            return actionable(
+                "Wizard progression is blocked",
+                "required model variable bindings are unresolved",
+                "Open binding controls, resolve missing mappings, then continue.");
         }
         if (lower.find("wizard_step_blocked reason=preflight_blocking") != std::string::npos) {
-            return "Cannot continue: preflight found blocking issues that would produce an invalid or unsafe world.";
+            return actionable(
+                "Wizard progression is blocked",
+                "preflight detected blocking validation issues",
+                "Fix blocking preflight items in Step 3, then retry.");
         }
         if (lower.find("world_create_blocked reason=verification_failed") != std::string::npos) {
-            return "World creation blocked by preflight verification failures.";
+            return actionable(
+                "World creation was blocked",
+                "verification found blocking errors",
+                "Resolve verification blockers and rerun world creation.");
         }
         if (lower.find("world_create_blocked reason=model_catalog_unavailable") != std::string::npos) {
-            return "World creation blocked: model variable catalog is unavailable.";
+            return actionable(
+                "World creation was blocked",
+                "model variable catalog is unavailable",
+                "Reload/select model catalog, then retry world creation.");
         }
         if (lower.find("world_create_blocked reason=missing_conway_target_variable") != std::string::npos) {
-            return "World creation blocked: Conway mode requires a target variable.";
+            return actionable(
+                "World creation was blocked",
+                "Conway mode target variable is missing",
+                "Select a Conway target variable and retry.");
         }
         if (lower.find("world_create_blocked reason=missing_gray_scott_target_variable") != std::string::npos) {
-            return "World creation blocked: Gray-Scott mode requires both target variables.";
+            return actionable(
+                "World creation was blocked",
+                "Gray-Scott mode requires both target variables",
+                "Choose valid target variables A and B, then retry.");
         }
         if (lower.find("world_create_blocked reason=missing_waves_target_variable") != std::string::npos) {
-            return "World creation blocked: Waves mode requires a target variable.";
+            return actionable(
+                "World creation was blocked",
+                "Waves mode target variable is missing",
+                "Select a Waves target variable and retry.");
         }
         if (lower.find("world_create_blocked reason=unsupported_generation_mode") != std::string::npos) {
-            return "World creation blocked: selected generation mode is not supported by the runtime.";
+            return actionable(
+                "World creation was blocked",
+                "selected generation mode is unsupported by current runtime",
+                "Switch to a supported generation mode and retry.");
         }
         if (lower.find("world_create_blocked unresolved_bindings=") != std::string::npos) {
-            return "World creation blocked: unresolved initialization bindings remain.";
+            return actionable(
+                "World creation was blocked",
+                "initialization bindings remain unresolved",
+                "Resolve remaining bindings in the wizard and retry.");
         }
         if (lower.find("world_open_failed") != std::string::npos) {
-            return "Failed to open the selected world. Check compatibility and file availability.";
+            return actionable(
+                "Open world failed",
+                "selected world data could not be loaded",
+                "Verify file availability/compatibility and retry open.");
         }
         if (lower.find("world_delete_failed") != std::string::npos) {
-            return "Failed to delete the selected world.";
+            return actionable(
+                "Delete world failed",
+                "storage delete operation returned failure",
+                "Check file permissions/locks and retry delete.");
         }
         if (lower.find("world_rename_failed") != std::string::npos) {
-            return "Failed to rename the selected world.";
+            return actionable(
+                "Rename world failed",
+                "target name or storage operation was rejected",
+                "Use a valid unique name and retry rename.");
         }
         if (lower.find("world_duplicate_failed") != std::string::npos) {
-            return "Failed to duplicate the selected world.";
+            return actionable(
+                "Duplicate world failed",
+                "copy operation could not complete",
+                "Check destination access and retry duplication.");
         }
         if (lower.find("world_export_failed") != std::string::npos) {
-            return "Failed to export the selected world.";
+            return actionable(
+                "Export world failed",
+                "export write operation returned failure",
+                "Verify destination path and retry export.");
         }
         if (lower.find("world_import_failed") != std::string::npos) {
-            return "Failed to import world data from the selected file.";
+            return actionable(
+                "Import world failed",
+                "selected file could not be parsed or validated",
+                "Check file format/contents and retry import.");
         }
 
         return rawMessage;
@@ -2148,7 +2198,7 @@
 
             if (preflightBlocked) {
                 setSessionStatusFromRaw(preflightReason);
-                appendLog(preflightReason);
+                appendLog("What happened: World creation blocked | Why: " + preflightReason + " | Next: Resolve blocking preflight requirements in wizard Step 3.");
             }
 
             if (!preflightBlocked) {
