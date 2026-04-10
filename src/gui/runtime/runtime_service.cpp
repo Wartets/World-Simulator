@@ -1,4 +1,5 @@
 #include "ws/gui/runtime_service.hpp"
+#include "ws/gui/error_context.hpp"
 
 #include "ws/app/checkpoint_io.hpp"
 #include "ws/core/initialization_binding.hpp"
@@ -172,25 +173,31 @@ bool RuntimeService::isPaused() const {
 bool RuntimeService::start(std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     checkpoints_.clear();
+    ErrorContext context{"runtime_start"};
 
     try {
         auto runtimeConfig = app::makeRuntimeConfig(config_);
         if (!modelScope_.modelPath.empty()) {
-            ModelExecutionSpec modelExecutionSpec;
-            std::string executionSpecMessage;
-            if (initialization::loadModelExecutionSpec(
-                    std::filesystem::path(modelScope_.modelPath),
-                    modelExecutionSpec,
-                    executionSpecMessage)) {
-                if (!modelExecutionSpec.conservedVariables.empty()) {
-                    runtimeConfig.profileInput.conservedVariables = modelExecutionSpec.conservedVariables;
+            {
+                auto scope = context.push("load_model_execution_spec");
+                ModelExecutionSpec modelExecutionSpec;
+                std::string executionSpecMessage;
+                if (initialization::loadModelExecutionSpec(
+                        std::filesystem::path(modelScope_.modelPath),
+                        modelExecutionSpec,
+                        executionSpecMessage)) {
+                    if (!modelExecutionSpec.conservedVariables.empty()) {
+                        runtimeConfig.profileInput.conservedVariables = modelExecutionSpec.conservedVariables;
+                    }
+                    if (modelExecutionSpec.preferredBoundaryMode.has_value()) {
+                        runtimeConfig.boundaryMode = *modelExecutionSpec.preferredBoundaryMode;
+                    }
+                    runtimeConfig.modelExecutionSpec = std::move(modelExecutionSpec);
                 }
-                if (modelExecutionSpec.preferredBoundaryMode.has_value()) {
-                    runtimeConfig.boundaryMode = *modelExecutionSpec.preferredBoundaryMode;
-                }
-                runtimeConfig.modelExecutionSpec = std::move(modelExecutionSpec);
             }
 
+            {
+                auto scope = context.push("load_model_display_spec");
                 ModelDisplaySpec modelDisplaySpec;
                 std::string displaySpecMessage;
                 if (initialization::loadModelDisplaySpec(
@@ -202,25 +209,33 @@ bool RuntimeService::start(std::string& message) {
                 } else {
                     activeFieldDisplayTags_.clear();
                 }
+            }
 
-            std::vector<ParameterControl> modelParameterControls;
-            std::string parameterControlMessage;
-            if (initialization::loadModelParameterControls(
-                    std::filesystem::path(modelScope_.modelPath),
-                    modelParameterControls,
-                    parameterControlMessage)) {
-                runtimeConfig.modelParameterControls = std::move(modelParameterControls);
+            {
+                auto scope = context.push("load_model_parameter_controls");
+                std::vector<ParameterControl> modelParameterControls;
+                std::string parameterControlMessage;
+                if (initialization::loadModelParameterControls(
+                        std::filesystem::path(modelScope_.modelPath),
+                        modelParameterControls,
+                        parameterControlMessage)) {
+                    runtimeConfig.modelParameterControls = std::move(modelParameterControls);
+                }
             }
         }
 
         const auto compatibleSubsystems = selectCompatibleSubsystems(runtimeConfig.modelExecutionSpec);
 
-        auto runtime = std::make_unique<Runtime>(std::move(runtimeConfig));
-        for (const auto& subsystem : compatibleSubsystems) {
-            runtime->registerSubsystem(subsystem);
+        {
+            auto scope = context.push("runtime_bootstrap");
+            auto runtime = std::make_unique<Runtime>(std::move(runtimeConfig));
+            for (const auto& subsystem : compatibleSubsystems) {
+                runtime->registerSubsystem(subsystem);
+            }
+            runtime->start();
+            runtime_ = std::move(runtime);
         }
-        runtime->start();
-        runtime_ = std::move(runtime);
+
         checkpointManager_.clear();
         checkpointStorage_.clearIndex();
 
@@ -239,7 +254,7 @@ bool RuntimeService::start(std::string& message) {
     } catch (const std::exception& exception) {
         runtime_.reset();
         refreshCachedStateNoLock();
-        message = std::string("start_failed error=") + exception.what();
+        message = context.formatFailure("start_failed", exception.what());
         return false;
     }
 }
@@ -390,6 +405,7 @@ bool RuntimeService::createWorld(const std::string& worldName, const app::Launch
 
 bool RuntimeService::openWorld(const std::string& worldName, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    ErrorContext context{"world_open"};
 
     const std::string normalized = app::trim(worldName);
     if (normalized.empty()) {
@@ -398,19 +414,30 @@ bool RuntimeService::openWorld(const std::string& worldName, std::string& messag
     }
 
     try {
+        auto scope = context.push("load_profile");
         config_ = worldProfileStore_.load(normalized, currentModelKey());
     } catch (const std::exception& exception) {
-        message = std::string("world_open_failed error=") + exception.what();
+        message = context.formatFailure("world_open_failed", exception.what());
         return false;
     }
 
-    if (!start(message)) {
+    {
+        auto scope = context.push("start_runtime");
+        if (!start(message)) {
+            message = context.formatFailure("world_open_failed", message);
+            return false;
+        }
+    }
+
+    if (!runtime_) {
+        message = context.formatFailure("world_open_failed", "runtime_not_initialized");
         return false;
     }
 
     const auto checkpointPath = worldStore_.checkpointPathFor(normalized, currentModelKey());
     if (std::filesystem::exists(checkpointPath)) {
         try {
+            auto scope = context.push("restore_checkpoint");
             const auto checkpoint = app::readCheckpointFile(checkpointPath);
             runtime_->resetToCheckpoint(checkpoint);
             checkpointManager_.clear();
@@ -418,7 +445,7 @@ bool RuntimeService::openWorld(const std::string& worldName, std::string& messag
             checkpointManager_.captureNow(*runtime_, "timeline_world_open", message);
             checkpointStorage_.store(checkpoint, message);
         } catch (const std::exception& exception) {
-            message = std::string("world_open_failed checkpoint_restore_error=") + exception.what();
+            message = context.formatFailure("world_open_failed", exception.what());
             return false;
         }
     } else {
@@ -1174,17 +1201,24 @@ bool RuntimeService::createCheckpoint(const std::string& label, std::string& mes
 
 bool RuntimeService::restoreCheckpoint(const std::string& label, std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    ErrorContext context{"checkpoint_restore"};
     try {
-        if (!requireRuntime("restore", message)) {
-            return false;
+        {
+            auto scope = context.push("require_runtime");
+            if (!requireRuntime("restore", message)) {
+                return false;
+            }
         }
 
+        auto lookupScope = context.push("lookup_checkpoint");
         const auto it = checkpoints_.find(label);
         if (it == checkpoints_.end()) {
             message = "unknown checkpoint label: " + label;
             return false;
         }
 
+        lookupScope = ErrorContext::Scope(context, false);
+        auto restoreScope = context.push("apply_checkpoint");
         runtime_->resetToCheckpoint(it->second);
         std::ostringstream output;
         output << "checkpoint_restored=" << label
@@ -1192,7 +1226,7 @@ bool RuntimeService::restoreCheckpoint(const std::string& label, std::string& me
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("checkpoint_restore_failed error=") + exception.what();
+        message = context.formatFailure("checkpoint_restore_failed", exception.what());
         return false;
     }
 }

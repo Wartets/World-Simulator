@@ -231,6 +231,7 @@ ws_add_test(ui_error_paths_multi_model_test tests/ui_error_paths_multi_model.cpp
 ws_add_test(ui_state_transitions_multi_model_test tests/ui_state_transitions_multi_model.cpp)
 ws_add_test(shell_support_test tests/shell_support.cpp)
 ws_add_test(live_patching_test tests/live_patching.cpp)
+ws_add_test(error_context_test tests/error_context_test.cpp)
 ws_add_test(profile_store_test tests/profile_store.cpp)
 ws_add_test(model_history_test tests/model_history.cpp)
 ws_add_test(performance_optimization_test tests/performance_optimization.cpp)
