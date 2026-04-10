@@ -1,5 +1,8 @@
 ﻿#include "ws/gui/main_window.hpp"
 
+#include "ws/gui/main_window/platform_dialogs.hpp"
+#include "ws/gui/main_window/overlay_rendering.hpp"
+#include "ws/gui/main_window/session_wizard_helpers.hpp"
 #include "ws/gui/display_manager.hpp"
 #include "ws/gui/main_window/color_utils.hpp"
 #include "ws/gui/main_window/detail_utils.hpp"
@@ -32,10 +35,6 @@
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
 
-#ifndef GL_CLAMP_TO_EDGE
-#define GL_CLAMP_TO_EDGE 0x812F
-#endif
-
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -65,79 +64,14 @@
 #include <fstream>
 #include <random>
 
-#ifdef _WIN32
-#include <Windows.h>
-#include <commdlg.h>
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
 #endif
 
 namespace ws::gui {
 namespace {
 
 namespace fs = std::filesystem;
-
-#ifdef _WIN32
-std::wstring utf8ToWide(const std::string& value) {
-    if (value.empty()) {
-        return {};
-    }
-
-    const int size = MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, nullptr, 0);
-    if (size <= 0) {
-        return {};
-    }
-
-    std::wstring output(static_cast<std::size_t>(size - 1), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, output.data(), size);
-    return output;
-}
-
-std::optional<fs::path> pickNativeFilePath(
-    const wchar_t* dialogTitle,
-    const wchar_t* filter,
-    const fs::path& defaultPath,
-    const bool saveDialog) {
-    wchar_t fileBuffer[MAX_PATH] = {};
-    std::wstring initialFile = utf8ToWide(defaultPath.filename().string());
-    if (!initialFile.empty()) {
-        const auto copyCount = std::min<std::size_t>(initialFile.size(), static_cast<std::size_t>(MAX_PATH - 1));
-        std::wmemcpy(fileBuffer, initialFile.c_str(), copyCount);
-        fileBuffer[copyCount] = L'\0';
-    }
-
-    const std::wstring initialDir = utf8ToWide(defaultPath.parent_path().string());
-
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrTitle = dialogTitle;
-    ofn.lpstrFilter = filter;
-    ofn.lpstrFile = fileBuffer;
-    ofn.nMaxFile = static_cast<DWORD>(std::size(fileBuffer));
-    ofn.lpstrInitialDir = initialDir.empty() ? nullptr : initialDir.c_str();
-    ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
-    if (saveDialog) {
-        ofn.Flags |= OFN_OVERWRITEPROMPT;
-        if (!GetSaveFileNameW(&ofn)) {
-            return std::nullopt;
-        }
-    } else {
-        ofn.Flags |= OFN_FILEMUSTEXIST;
-        if (!GetOpenFileNameW(&ofn)) {
-            return std::nullopt;
-        }
-    }
-
-    return fs::path(fileBuffer);
-}
-#else
-std::optional<fs::path> pickNativeFilePath(
-    const wchar_t*,
-    const wchar_t*,
-    const fs::path&,
-    const bool) {
-    return std::nullopt;
-}
-#endif
 
 const char* appStateLabel(const int stateIndex) {
     switch (stateIndex) {
@@ -650,26 +584,6 @@ GLFWwindow* createGlfwWindowWithFallback() {
     return nullptr;
 }
 
-// Playback overlay
-void drawPlaybackOverlay(OverlayState& overlay, bool reduceMotion, float dt) {
-    if (reduceMotion) { overlay.alpha = 0.0f; return; }
-    overlay.alpha = std::max(0.0f, overlay.alpha - 1.2f * dt);
-    if (overlay.alpha <= 0.0f || overlay.icon == OverlayIcon::None) return;
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    const ImVec2 center(ImGui::GetIO().DisplaySize.x - 44.0f, 44.0f);
-    const float r = 22.0f;
-    const int   a = static_cast<int>(overlay.alpha * 255.0f);
-    dl->AddCircleFilled(center, r, IM_COL32(35,45,70,a));
-    dl->AddCircle(center, r, IM_COL32(130,170,255,a), 24, 2.0f);
-    if (overlay.icon == OverlayIcon::Play) {
-        dl->AddTriangleFilled({center.x-6,center.y-8},{center.x-6,center.y+8},
-                               {center.x+9,center.y}, IM_COL32(240,245,255,a));
-    } else {
-        dl->AddRectFilled({center.x-8,center.y-8},{center.x-2,center.y+8},IM_COL32(240,245,255,a));
-        dl->AddRectFilled({center.x+2,center.y-8},{center.x+8,center.y+8},IM_COL32(240,245,255,a));
-    }
-}
-
 // Aliases from detail_utils / color_utils
 using main_window::detail::applyDisplayTransfer;
 using main_window::detail::colormapDiverging;
@@ -682,6 +596,7 @@ using main_window::detail::mergedFieldValues;
 using main_window::detail::minMaxFinite;
 using main_window::detail::previewTerrainValue;
 using main_window::detail::unpackColor;
+
 
 //
 class MainWindowImpl {
@@ -866,7 +781,7 @@ public:
                 drawDockSpace();
                 drawControlPanel();
                 drawSimulationCanvas();
-                drawPlaybackOverlay(overlay_, accessibility_.reduceMotion,
+                overlay_rendering::drawPlaybackOverlay(overlay_, accessibility_.reduceMotion,
                                     ImGui::GetIO().DeltaTime);
             } else if (appState_ == AppState::SessionManager) {
                 drawSessionManager();

@@ -1,5 +1,7 @@
 #ifdef WS_MAIN_WINDOW_IMPL_CLASS_CONTEXT
 
+#include "ws/gui/main_window/platform_dialogs.hpp"
+
 // Records current app state to history stack.
 // Trims forward history when new state is recorded during navigation.
 void recordAppStateHistory() {
@@ -1000,7 +1002,7 @@ void drawParameterControlSection() {
     }
     ImGui::SameLine();
     if (SecondaryButton("Browse preset...", ImVec2(150.0f, 24.0f))) {
-        if (const auto presetFile = pickNativeFilePath(
+        if (const auto presetFile = ::ws::gui::platform_dialogs::pickNativeFilePath(
                 L"Load Parameter Preset",
                 L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0",
                 presetPath,
@@ -1060,7 +1062,7 @@ void drawParameterControlSection() {
     ImGui::SameLine();
     if (SecondaryButton("Browse event log...", ImVec2(160.0f, 24.0f))) {
         const auto defaultEventPath = std::filesystem::path("checkpoints") / "event_logs" / panel_.eventLogFileName;
-        if (const auto eventFile = pickNativeFilePath(
+        if (const auto eventFile = ::ws::gui::platform_dialogs::pickNativeFilePath(
                 L"Open Event Log",
                 L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0",
                 defaultEventPath,
@@ -1086,7 +1088,7 @@ void drawParameterControlSection() {
         std::string eventMsg;
         if (runtime_.manualEventLog(events, eventMsg)) {
             const auto defaultEventPath = std::filesystem::path("checkpoints") / "event_logs" / panel_.eventLogFileName;
-            if (const auto eventFile = pickNativeFilePath(
+            if (const auto eventFile = ::ws::gui::platform_dialogs::pickNativeFilePath(
                     L"Save Event Log",
                     L"JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0",
                     defaultEventPath,

@@ -160,6 +160,9 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/color_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/detail_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/window_state_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/session_wizard_helpers.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/platform_dialogs.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/overlay_rendering.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/display_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/session_manager/session_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
