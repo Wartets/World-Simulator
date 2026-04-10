@@ -159,9 +159,10 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/color_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/detail_utils.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/display_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/window_state_store.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/display_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/session_manager/session_manager.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/parameter_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/perturbation_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/event_logger.cpp
@@ -185,11 +186,11 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/generation_advisor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/paint_tools.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/world_viewport.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/heatmap_renderer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/viewport_manager.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/render_rule_editor.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/vector_renderer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/contour_renderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/heatmap_renderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/viewport_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/render_rule_editor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/vector_renderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/contour_renderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
@@ -247,14 +248,21 @@ target_sources(model_history_test PRIVATE
 
 add_executable(viewport_manager_test
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/viewport_manager.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/viewport_manager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/viewport_manager.cpp"
 )
 target_link_libraries(viewport_manager_test PRIVATE ws_core)
 add_test(NAME viewport_manager_test COMMAND viewport_manager_test)
 
+add_executable(display_manager_validation_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/display_manager_validation.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/display_manager.cpp"
+)
+target_link_libraries(display_manager_validation_test PRIVATE ws_core)
+add_test(NAME display_manager_validation_test COMMAND display_manager_validation_test)
+
 target_sources(full_pipeline_multi_model_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/display_manager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/display_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
@@ -262,7 +270,7 @@ target_sources(full_pipeline_multi_model_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )
 target_sources(conway_activity_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
@@ -270,7 +278,7 @@ target_sources(conway_activity_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )
 target_sources(ui_error_paths_multi_model_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp
@@ -278,7 +286,7 @@ target_sources(ui_error_paths_multi_model_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )
 target_sources(ui_state_transitions_multi_model_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/world_store.cpp

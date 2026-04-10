@@ -4,6 +4,8 @@
 #include "ws/gui/main_window/color_utils.hpp"
 #include "ws/gui/main_window/detail_utils.hpp"
 #include "ws/gui/main_window/panel_state.hpp"
+#include "ws/gui/main_window/app_state.hpp"
+#include "ws/gui/main_window/window_state_store.hpp"
 #include "ws/gui/histogram_panel.hpp"
 #include "ws/gui/heatmap_renderer.hpp"
 #include "ws/gui/contour_renderer.hpp"
@@ -18,7 +20,6 @@
 #include "ws/core/model_parser.hpp"
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/session_manager/session_manager.hpp"
-enum class AppState        { ModelSelector, ModelEditor, SessionManager, NewWorldWizard, Simulation };
 #include "ws/gui/theme_bootstrap.hpp"
 #include "ws/gui/time_control_panel.hpp"
 #include "ws/gui/timeseries_panel.hpp"
@@ -72,42 +73,6 @@ namespace ws::gui {
 namespace {
 
 namespace fs = std::filesystem;
-
-struct PersistedWindowState {
-    int x = 100;
-    int y = 100;
-    int width = 1280;
-    int height = 720;
-    bool maximized = false;
-    int monitorIndex = 0;
-    bool loaded = false;
-};
-
-fs::path resolveWorkspaceRoot() {
-    std::error_code ec;
-    fs::path current = fs::current_path(ec);
-    if (ec) {
-        return fs::path{"."};
-    }
-
-    for (fs::path probe = current; !probe.empty(); probe = probe.parent_path()) {
-        if (fs::exists(probe / "CMakeLists.txt")) {
-            return probe;
-        }
-        if (probe == probe.parent_path()) {
-            break;
-        }
-    }
-
-    return current;
-}
-
-fs::path windowStatePath() {
-    const fs::path root = resolveWorkspaceRoot() / "profiles";
-    std::error_code ec;
-    fs::create_directories(root, ec);
-    return root / "window_state.cfg";
-}
 
 #ifdef _WIN32
 std::wstring utf8ToWide(const std::string& value) {
@@ -173,127 +138,6 @@ std::optional<fs::path> pickNativeFilePath(
 }
 #endif
 
-bool loadWindowState(PersistedWindowState& state) {
-    std::ifstream in(windowStatePath());
-    if (!in.is_open()) {
-        return false;
-    }
-
-    std::string line;
-    while (std::getline(in, line)) {
-        const auto eq = line.find('=');
-        if (eq == std::string::npos) {
-            continue;
-        }
-        const std::string key = line.substr(0, eq);
-        const std::string value = line.substr(eq + 1);
-        try {
-            if (key == "x") state.x = std::stoi(value);
-            else if (key == "y") state.y = std::stoi(value);
-            else if (key == "width") state.width = std::stoi(value);
-            else if (key == "height") state.height = std::stoi(value);
-            else if (key == "maximized") state.maximized = (std::stoi(value) != 0);
-            else if (key == "monitor_index") state.monitorIndex = std::stoi(value);
-        } catch (...) {
-        }
-    }
-
-    state.width = std::clamp(state.width, 640, 8192);
-    state.height = std::clamp(state.height, 480, 8192);
-    state.loaded = true;
-    return true;
-}
-
-void clampToMonitorWorkarea(
-    int& x,
-    int& y,
-    int& width,
-    int& height,
-    const int monitorX,
-    const int monitorY,
-    const int monitorW,
-    const int monitorH) {
-    width = std::clamp(width, 640, std::max(640, monitorW));
-    height = std::clamp(height, 480, std::max(480, monitorH));
-    x = std::clamp(x, monitorX, monitorX + std::max(0, monitorW - width));
-    y = std::clamp(y, monitorY, monitorY + std::max(0, monitorH - height));
-}
-
-void applyWindowState(GLFWwindow* window, PersistedWindowState state) {
-    if (window == nullptr || !state.loaded) {
-        return;
-    }
-
-    int monitorCount = 0;
-    GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
-    if (monitors == nullptr || monitorCount <= 0) {
-        return;
-    }
-
-    state.monitorIndex = std::clamp(state.monitorIndex, 0, monitorCount - 1);
-    GLFWmonitor* monitor = monitors[state.monitorIndex];
-
-    int monitorX = 0;
-    int monitorY = 0;
-    int monitorW = 0;
-    int monitorH = 0;
-    glfwGetMonitorWorkarea(monitor, &monitorX, &monitorY, &monitorW, &monitorH);
-    if (monitorW <= 0 || monitorH <= 0) {
-        monitor = glfwGetPrimaryMonitor();
-        glfwGetMonitorWorkarea(monitor, &monitorX, &monitorY, &monitorW, &monitorH);
-    }
-
-    clampToMonitorWorkarea(state.x, state.y, state.width, state.height, monitorX, monitorY, monitorW, monitorH);
-
-    glfwSetWindowSize(window, state.width, state.height);
-    glfwSetWindowPos(window, state.x, state.y);
-    if (state.maximized) {
-        glfwMaximizeWindow(window);
-    }
-}
-
-void saveWindowState(GLFWwindow* window) {
-    if (window == nullptr) {
-        return;
-    }
-
-    PersistedWindowState state;
-    glfwGetWindowPos(window, &state.x, &state.y);
-    glfwGetWindowSize(window, &state.width, &state.height);
-    state.maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == GLFW_TRUE;
-
-    int monitorCount = 0;
-    GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
-    state.monitorIndex = 0;
-    if (monitors != nullptr && monitorCount > 0) {
-        const int centerX = state.x + state.width / 2;
-        const int centerY = state.y + state.height / 2;
-        for (int i = 0; i < monitorCount; ++i) {
-            int mx = 0;
-            int my = 0;
-            int mw = 0;
-            int mh = 0;
-            glfwGetMonitorWorkarea(monitors[i], &mx, &my, &mw, &mh);
-            if (centerX >= mx && centerX < mx + mw && centerY >= my && centerY < my + mh) {
-                state.monitorIndex = i;
-                break;
-            }
-        }
-    }
-
-    std::ofstream out(windowStatePath(), std::ios::trunc);
-    if (!out.is_open()) {
-        return;
-    }
-
-    out << "x=" << state.x << '\n';
-    out << "y=" << state.y << '\n';
-    out << "width=" << state.width << '\n';
-    out << "height=" << state.height << '\n';
-    out << "maximized=" << (state.maximized ? 1 : 0) << '\n';
-    out << "monitor_index=" << state.monitorIndex << '\n';
-}
-
 const char* appStateLabel(const int stateIndex) {
     switch (stateIndex) {
         case 0: return "Model Selector";
@@ -305,19 +149,14 @@ const char* appStateLabel(const int stateIndex) {
     }
 }
 
-enum class OverlayIcon { None, Play, Pause };
-
 using PanelState = main_window::PanelState;
-
-struct OverlayState {
-    float alpha     = 0.0f;
-    OverlayIcon icon = OverlayIcon::None;
-};
+using AppState = main_window::AppState;
+using OverlayIcon = main_window::OverlayIcon;
+using OverlayState = main_window::OverlayState;
 
 enum class ScreenLayout    { Single = 0, SplitLeftRight, SplitTopBottom, Quad };
 enum class NormalizationMode { PerFrameAuto = 0, StickyPerField, FixedManual };
 enum class ColorMapMode    { Turbo = 0, Grayscale, Diverging, Water };
-enum class AppState        { ModelSelector, ModelEditor, SessionManager, NewWorldWizard, Simulation };
 
 struct ViewportConfig {
     int  primaryFieldIndex = 0;
@@ -848,12 +687,11 @@ class MainWindowImpl {
 public:
     int run() {
         if (glfwInit() != GLFW_TRUE) return 1;
-        PersistedWindowState persistedWindowState;
-        loadWindowState(persistedWindowState);
+        main_window::loadWindowState(appStateData_.persistedWindowState);
         GLFWwindow* window = createGlfwWindowWithFallback();
         if (!window) { glfwTerminate(); return 1; }
 
-        applyWindowState(window, persistedWindowState);
+        main_window::applyWindowState(window, appStateData_.persistedWindowState);
 
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
@@ -1053,7 +891,11 @@ public:
 
         stopSimulationWorker();
         stopSnapshotWorker();
-        saveWindowState(window);
+        glfwGetWindowPos(window, &appStateData_.persistedWindowState.x, &appStateData_.persistedWindowState.y);
+        glfwGetWindowSize(window, &appStateData_.persistedWindowState.width, &appStateData_.persistedWindowState.height);
+        appStateData_.persistedWindowState.maximized = glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == GLFW_TRUE;
+        appStateData_.persistedWindowState.loaded = true;
+        main_window::saveWindowState(window);
         destroyRasterResources();
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
@@ -1128,7 +970,18 @@ private:
 
     ModelSelector      modelSelector_{};
     ModelEditorWindow  modelEditor_{"Model Editor"};
-    AppState           appState_ = AppState::ModelSelector;
+    main_window::MainWindowAppState appStateData_{};
+    AppState& appState_ = appStateData_.workflow.current;
+    OverlayState& overlay_ = appStateData_.overlay;
+    std::vector<AppState>& appStateHistory_ = appStateData_.workflow.history;
+    int& appStateHistoryCursor_ = appStateData_.workflow.historyCursor;
+    bool& appStateHistoryTraversalInProgress_ = appStateData_.workflow.historyTraversalInProgress;
+    bool& taskRailAnalyzeSelected_ = appStateData_.workflow.taskRailAnalyzeSelected;
+    bool& showShortcutHelpModal_ = appStateData_.workflow.showShortcutHelpModal;
+    bool& showStopResetConfirm_ = appStateData_.workflow.showStopResetConfirm;
+    bool& showCheckpointDeleteConfirm_ = appStateData_.workflow.showCheckpointDeleteConfirm;
+    bool& showWizardResetConfirm_ = appStateData_.workflow.showWizardResetConfirm;
+    bool& workflowRailAdvancedMode_ = appStateData_.workflow.workflowRailAdvancedMode;
     std::unordered_map<std::string, std::vector<std::string>> fieldDisplayTags_{};
 
 // inlined implementation files
@@ -1144,19 +997,9 @@ private:
     PanelState           panel_{};
     session_manager::SessionUiState sessionUi_{};
     VisualizationState   viz_{};
-    OverlayState         overlay_{};
     std::vector<std::string> logs_;
     std::vector<ToastItem> toasts_;
     std::vector<ToastItem> toastHistory_;
-    std::vector<AppState> appStateHistory_{};
-    int appStateHistoryCursor_ = 0;
-    bool appStateHistoryTraversalInProgress_ = false;
-    bool taskRailAnalyzeSelected_ = false;
-    bool showShortcutHelpModal_ = false;
-    bool showStopResetConfirm_ = false;
-    bool showCheckpointDeleteConfirm_ = false;
-    bool showWizardResetConfirm_ = false;
-    bool workflowRailAdvancedMode_ = false;
 
     struct DeferredWizardInitialization {
         bool active = false;

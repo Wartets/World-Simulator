@@ -741,9 +741,13 @@ void drawSimulationCanvas() {
 
         auto it = snapshotDisplayCache_.find(dKey);
         if (it == snapshotDisplayCache_.end()) {
-            DisplayBuffer buf = buildDisplayBufferFromSnapshot(
-                snapshot, vp.primaryFieldIndex, vp.displayType,
-                vp.showSparseOverlay, vp.displayManager, fieldDisplayTags_);
+            const DisplaySnapshotRequest displayRequest{
+                snapshot,
+                vp.primaryFieldIndex,
+                vp.displayType,
+                vp.showSparseOverlay,
+                std::cref(fieldDisplayTags_)};
+            DisplayBuffer buf = buildDisplayBufferFromSnapshot(displayRequest, vp.displayManager);
             it = snapshotDisplayCache_.emplace(dKey, std::move(buf)).first;
         }
         const DisplayBuffer& db = it->second;

@@ -2043,16 +2043,18 @@
                 }
             }
 
-            DisplayBuffer previewDisplay = buildDisplayBufferFromPreviewComponents(
-                displayPrimary,
-                previewTerrain,
-                previewWater,
-                previewHumidity,
-                previewWindU,
-                previewWindV,
+            const DisplayPreviewComponentsRequest previewRequest{
+                std::cref(displayPrimary),
+                std::cref(previewTerrain),
+                std::cref(previewWater),
+                std::cref(previewHumidity),
+                std::cref(previewWindU),
+                std::cref(previewWindV),
                 viz_.generationPreviewDisplayType,
-                previewViewportConfig.displayManager,
-                "preview");
+                "preview"};
+            DisplayBuffer previewDisplay = buildDisplayBufferFromPreviewComponents(
+                previewRequest,
+                previewViewportConfig.displayManager);
 
             wizardPreviewPixels_.assign(pixelCount * 4u, 0u);
             for (std::size_t idx = 0; idx < pixelCount; ++idx) {
