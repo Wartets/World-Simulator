@@ -4,7 +4,9 @@
 #include <string>
 
 using ws::gui::OperationSeverity;
+using ws::gui::OperationStatus;
 using ws::gui::formatOperationMessageForDisplay;
+using ws::gui::translateOperationResult;
 using ws::gui::translateOperationMessage;
 
 int main() {
@@ -34,6 +36,30 @@ int main() {
         assert(message.severity == OperationSeverity::Info);
         assert(message.userMessage == "World saved");
         assert(message.technicalDetail == "world_saved name=alpha");
+    }
+
+    {
+        const auto result = translateOperationResult("world_saved name=alpha");
+        assert(result.status == OperationStatus::Success);
+        assert(result.ok());
+        assert(result.message == "World saved");
+        assert(result.technicalDetail == "world_saved name=alpha");
+    }
+
+    {
+        const auto result = translateOperationResult("world_delete_failed error=no_selection");
+        assert(result.status == OperationStatus::Warning);
+        assert(result.ok());
+        assert(result.message == "No world is selected.");
+        assert(result.technicalDetail == "world_delete_failed error=no_selection");
+    }
+
+    {
+        const auto result = translateOperationResult("world_open_failed reason=file_open");
+        assert(result.status == OperationStatus::Failure);
+        assert(!result.ok());
+        assert(result.message.find("Open world failed") != std::string::npos);
+        assert(result.technicalDetail == "world_open_failed reason=file_open");
     }
 
     return 0;

@@ -14,6 +14,12 @@ enum class OperationSeverity {
     Error = 2,
 };
 
+enum class OperationStatus {
+    Success = 0,
+    Warning = 1,
+    Failure = 2,
+};
+
 struct OperationMessage {
     OperationSeverity severity = OperationSeverity::Info;
     std::string userMessage;
@@ -23,6 +29,27 @@ struct OperationMessage {
         return severity != OperationSeverity::Error;
     }
 };
+
+struct OperationResult {
+    OperationStatus status = OperationStatus::Success;
+    std::string message;
+    std::string technicalDetail;
+
+    [[nodiscard]] bool ok() const noexcept {
+        return status != OperationStatus::Failure;
+    }
+};
+
+[[nodiscard]] inline OperationStatus statusFromSeverity(const OperationSeverity severity) {
+    switch (severity) {
+        case OperationSeverity::Warning:
+            return OperationStatus::Warning;
+        case OperationSeverity::Error:
+            return OperationStatus::Failure;
+        default:
+            return OperationStatus::Success;
+    }
+}
 
 [[nodiscard]] inline std::string toLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](const unsigned char ch) {
@@ -306,6 +333,18 @@ struct OperationMessage {
         return message.userMessage;
     }
     return message.technicalDetail;
+}
+
+[[nodiscard]] inline OperationResult toOperationResult(const OperationMessage& message) {
+    OperationResult result;
+    result.status = statusFromSeverity(message.severity);
+    result.message = formatOperationMessageForDisplay(message);
+    result.technicalDetail = message.technicalDetail;
+    return result;
+}
+
+[[nodiscard]] inline OperationResult translateOperationResult(const std::string& rawMessage) {
+    return toOperationResult(translateOperationMessage(rawMessage));
 }
 
 } // namespace ws::gui

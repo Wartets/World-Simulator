@@ -300,58 +300,44 @@ struct SimulationClockInfo {
     return info;
 }
 
-[[nodiscard]] static std::string extractReasonToken(const std::string& rawMessage) {
-    const std::string key = "reason=";
-    const std::size_t reasonPos = rawMessage.find(key);
-    if (reasonPos == std::string::npos) {
-        return "not specified";
-    }
-
-    const std::size_t valueStart = reasonPos + key.size();
-    std::size_t valueEnd = rawMessage.find_first_of(" \t\n\r", valueStart);
-    if (valueEnd == std::string::npos) {
-        valueEnd = rawMessage.size();
-    }
-    if (valueEnd <= valueStart) {
-        return "not specified";
-    }
-    return rawMessage.substr(valueStart, valueEnd - valueStart);
-}
-
 [[nodiscard]] static std::string formatUserFacingOperationMessage(
     const std::string& rawMessage,
     const std::string& fallbackWhat,
     const std::string& fallbackNext) {
-    const std::string lower = app::toLower(rawMessage);
-    const bool failed = lower.find("failed") != std::string::npos || lower.find("blocked") != std::string::npos;
-    const bool success = !failed && (
-        lower.find("ready") != std::string::npos ||
-        lower.find("complete") != std::string::npos ||
-        lower.find("saved") != std::string::npos ||
-        lower.find("started") != std::string::npos ||
-        lower.find("resumed") != std::string::npos ||
-        lower.find("paused") != std::string::npos ||
-        lower.find("stopped") != std::string::npos ||
-        lower.find("applied") != std::string::npos);
+    const OperationResult result = translateOperationResult(rawMessage);
+    const bool failed = result.status == OperationStatus::Failure;
+    const bool warned = result.status == OperationStatus::Warning;
 
-    std::string what = fallbackWhat;
-    std::string why = success ? "operation completed" : "operation returned an error state";
-    std::string next = fallbackNext;
+    std::string what = fallbackWhat.empty() ? result.message : fallbackWhat;
+    if (what.empty()) {
+        what = "Operation update";
+    }
 
+    std::string why = "operation completed";
     if (failed) {
-        why = "runtime reported reason=" + extractReasonToken(rawMessage);
-        if (next.empty()) {
+        why = "runtime reported a failure state";
+    } else if (warned) {
+        why = "runtime reported a warning state";
+    }
+
+    std::string next = fallbackNext;
+    if (next.empty()) {
+        if (failed) {
             next = "Review controls and retry after resolving the reported reason.";
+        } else if (warned) {
+            next = "Review the warning details before continuing.";
+        } else {
+            next = "Continue with the next workflow step.";
         }
-    } else if (success && next.empty()) {
-        next = "Continue with the next workflow step.";
     }
 
     std::ostringstream out;
     out << "What happened: " << what
         << " | Why: " << why
         << " | Next: " << next;
-    if (!rawMessage.empty()) {
+    if (!result.technicalDetail.empty()) {
+        out << " | Technical: " << result.technicalDetail;
+    } else if (!rawMessage.empty()) {
         out << " | Technical: " << rawMessage;
     }
     return out.str();
@@ -4957,10 +4943,19 @@ void appendLog(const std::string& line) {
         return;
     }
 
-    if (lower.find("failed") != std::string::npos || lower.find("error") != std::string::npos) {
-        pushToast(ToastLevel::Error, "Runtime error", line, 5.0f);
-    } else if (lower.find("warning") != std::string::npos || lower.find("slow") != std::string::npos) {
-        pushToast(ToastLevel::Warning, "Warning", line, 4.5f);
+    const OperationResult typedResult = translateOperationResult(line);
+    if (typedResult.status == OperationStatus::Failure) {
+        pushToast(
+            ToastLevel::Error,
+            "Runtime error",
+            typedResult.message.empty() ? line : typedResult.message,
+            5.0f);
+    } else if (typedResult.status == OperationStatus::Warning) {
+        pushToast(
+            ToastLevel::Warning,
+            "Warning",
+            typedResult.message.empty() ? line : typedResult.message,
+            4.5f);
     }
 }
 
