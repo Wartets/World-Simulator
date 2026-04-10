@@ -2779,9 +2779,10 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
     static constexpr const char* heatmapPaletteNames[] = {
         "Viridis", "Hot", "Cool", "Jet", "Turbo", "Custom"};
 
+    ImGui::TextDisabled("Render mode");
     int renderMode = static_cast<int>(vp.renderMode);
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("Render mode##rm", &renderMode, renderModeNames,
+    if (ImGui::Combo("##rm", &renderMode, renderModeNames,
             static_cast<int>(std::size(renderModeNames)))) {
         vp.renderMode = static_cast<ViewportRenderMode>(std::clamp(renderMode, 0, static_cast<int>(std::size(renderModeNames) - 1)));
         vp.showVectorField = (vp.renderMode == ViewportRenderMode::Vector);
@@ -2793,6 +2794,7 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
     }
 
     // Primary field
+    ImGui::TextDisabled("Primary field");
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::BeginCombo("##primfield",
             viz_.fieldNames.at(
@@ -2808,9 +2810,10 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
         ImGui::SetTooltip("Primary scalar field displayed in this viewport.");
 
     // Display type
+    ImGui::TextDisabled("Display type");
     int dt = static_cast<int>(vp.displayType);
-    ImGui::SetNextItemWidth(-80.0f);
-    if (ImGui::Combo("Type##dt", &dt, dispTypeNames,
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::Combo("##dt", &dt, dispTypeNames,
             static_cast<int>(std::size(dispTypeNames))))
         vp.displayType = static_cast<DisplayType>(dt);
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -2860,9 +2863,10 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
     // Color map
     const bool windFieldMode = (vp.displayType == DisplayType::WindField);
     if (!windFieldMode) {
+        ImGui::TextDisabled("Palette");
         int cm = static_cast<int>(vp.colorMapMode);
-        ImGui::SetNextItemWidth(-80.0f);
-        if (ImGui::Combo("Palette##cm", &cm, colorMapNames,
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("##cm", &cm, colorMapNames,
                 static_cast<int>(std::size(colorMapNames))))
             vp.colorMapMode = static_cast<ColorMapMode>(cm);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -2877,9 +2881,10 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
 
     // Normalization
     if (!windFieldMode) {
+        ImGui::TextDisabled("Range");
         int nm = static_cast<int>(vp.normalizationMode);
-        ImGui::SetNextItemWidth(-80.0f);
-        if (ImGui::Combo("Range##nm", &nm, normNames,
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("##nm", &nm, normNames,
                 static_cast<int>(std::size(normNames))))
             vp.normalizationMode = static_cast<NormalizationMode>(nm);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -2903,15 +2908,17 @@ void drawSingleViewportEditor(ViewportConfig& vp, const int viewportIndex) {
 
     ImGui::Separator();
     ImGui::TextDisabled("Heatmap pipeline");
+    ImGui::TextDisabled("Normalization");
     int hNorm = static_cast<int>(vp.heatmapNormalization);
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("Normalization##hmnorm", &hNorm, heatmapNormNames,
+    if (ImGui::Combo("##hmnorm", &hNorm, heatmapNormNames,
             static_cast<int>(std::size(heatmapNormNames)))) {
         vp.heatmapNormalization = static_cast<HeatmapNormalization>(std::clamp(hNorm, 0, static_cast<int>(std::size(heatmapNormNames) - 1)));
     }
+    ImGui::TextDisabled("Palette");
     int hPalette = static_cast<int>(vp.heatmapColorMap);
     ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::Combo("Palette##hmpalette", &hPalette, heatmapPaletteNames,
+    if (ImGui::Combo("##hmpalette", &hPalette, heatmapPaletteNames,
             static_cast<int>(std::size(heatmapPaletteNames)))) {
         vp.heatmapColorMap = static_cast<HeatmapColorMap>(std::clamp(hPalette, 0, static_cast<int>(std::size(heatmapPaletteNames) - 1)));
     }
