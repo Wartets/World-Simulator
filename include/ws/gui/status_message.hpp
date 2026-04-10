@@ -223,6 +223,15 @@ struct OperationResult {
                 "No world is selected.",
                 rawMessage);
         }
+        if (lower.find("invalid_world_name") != std::string::npos) {
+            return makeOperationMessage(
+                OperationSeverity::Error,
+                actionable(
+                    "Delete world failed",
+                    "the provided world name is invalid",
+                    "Use a non-empty world name containing letters, digits, '_' or '-', then retry delete."),
+                rawMessage);
+        }
         return makeOperationMessage(
             OperationSeverity::Error,
             actionable(
@@ -238,6 +247,33 @@ struct OperationResult {
                 "No world is selected.",
                 rawMessage);
         }
+        if (lower.find("error=invalid_name") != std::string::npos) {
+            return makeOperationMessage(
+                OperationSeverity::Error,
+                actionable(
+                    "Rename world failed",
+                    "the source/target world name is invalid",
+                    "Use distinct non-empty names containing letters, digits, '_' or '-', then retry rename."),
+                rawMessage);
+        }
+        if (lower.find("error=target_exists") != std::string::npos) {
+            return makeOperationMessage(
+                OperationSeverity::Error,
+                actionable(
+                    "Rename world failed",
+                    "the target world name already exists",
+                    "Choose a unique target name (for example append '_2') and retry rename."),
+                rawMessage);
+        }
+        if (lower.find("error=source_missing") != std::string::npos) {
+            return makeOperationMessage(
+                OperationSeverity::Error,
+                actionable(
+                    "Rename world failed",
+                    "the source world record was not found",
+                    "Refresh the world list and choose an existing world before retrying."),
+                rawMessage);
+        }
         return makeOperationMessage(
             OperationSeverity::Error,
             actionable(
@@ -251,6 +287,33 @@ struct OperationResult {
             return makeOperationMessage(
                 OperationSeverity::Warning,
                 "No world is selected.",
+                rawMessage);
+        }
+        if (lower.find("error=invalid_name") != std::string::npos) {
+            return makeOperationMessage(
+                OperationSeverity::Error,
+                actionable(
+                    "Duplicate world failed",
+                    "the source/target world name is invalid",
+                    "Use distinct non-empty names containing letters, digits, '_' or '-', then retry duplication."),
+                rawMessage);
+        }
+        if (lower.find("error=target_exists") != std::string::npos) {
+            return makeOperationMessage(
+                OperationSeverity::Error,
+                actionable(
+                    "Duplicate world failed",
+                    "the target world name already exists",
+                    "Choose a unique duplicate name (for example append '_copy_2') and retry."),
+                rawMessage);
+        }
+        if (lower.find("error=source_missing") != std::string::npos) {
+            return makeOperationMessage(
+                OperationSeverity::Error,
+                actionable(
+                    "Duplicate world failed",
+                    "the source world record was not found",
+                    "Refresh the world list and choose an existing world before duplicating."),
                 rawMessage);
         }
         return makeOperationMessage(

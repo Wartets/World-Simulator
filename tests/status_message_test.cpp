@@ -62,5 +62,19 @@ int main() {
         assert(result.technicalDetail == "world_open_failed reason=file_open");
     }
 
+    {
+        const auto result = translateOperationResult("world_duplicate_failed error=target_exists");
+        assert(result.status == OperationStatus::Failure);
+        assert(!result.ok());
+        assert(result.message.find("target world name already exists") != std::string::npos);
+    }
+
+    {
+        const auto result = translateOperationResult("world_rename_failed error=invalid_name");
+        assert(result.status == OperationStatus::Failure);
+        assert(!result.ok());
+        assert(result.message.find("source/target world name is invalid") != std::string::npos);
+    }
+
     return 0;
 }

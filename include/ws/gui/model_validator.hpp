@@ -14,6 +14,7 @@ struct ValidationMessage {
     Severity severity;
     std::string location;  // e.g., "node:eq_1"
     std::string message;
+    std::string constraint;
     std::string suggestion;
 };
 
@@ -46,8 +47,11 @@ private:
     std::vector<ValidationMessage> messages;
     
     // Validation helpers
-    void addMessage(ValidationMessage::Severity sev, const std::string& loc,
-                   const std::string& msg, const std::string& suggest = "");
+    void addMessage(ValidationMessage::Severity sev,
+                    const std::string& loc,
+                    const std::string& msg,
+                    const std::string& constraint = "",
+                    const std::string& suggest = "");
 };
 
 } // namespace ws::gui

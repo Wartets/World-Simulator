@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <algorithm>
+#include <climits>
 #include <regex>
 
 namespace ws::gui {
@@ -22,6 +23,16 @@ bool ModelValidator::validateSyntax(const std::string& formula) {
     
     clearMessages();
     
+    if (formula.empty()) {
+        addMessage(
+            ValidationMessage::Severity::Error,
+            "formula",
+            "Formula is empty",
+            "formula must contain at least one symbol",
+            "Enter an expression such as 'state_x = state_x + forcing_u'.");
+        return false;
+    }
+
     // Check for balanced parentheses
     int paren_count = 0;
     for (char c : formula) {
@@ -29,15 +40,23 @@ bool ModelValidator::validateSyntax(const std::string& formula) {
         else if (c == ')') paren_count--;
         
         if (paren_count < 0) {
-            addMessage(ValidationMessage::Severity::Error, "formula", 
-                      "Unbalanced parentheses: closing paren without opening");
+            addMessage(
+                ValidationMessage::Severity::Error,
+                "formula",
+                "Unbalanced parentheses: closing paren without opening",
+                "parentheses must be balanced",
+                "Add a matching '(' before this closing parenthesis.");
             return false;
         }
     }
     
     if (paren_count != 0) {
-        addMessage(ValidationMessage::Severity::Error, "formula",
-                  "Unbalanced parentheses: " + std::to_string(paren_count) + " unclosed");
+        addMessage(
+            ValidationMessage::Severity::Error,
+            "formula",
+            "Unbalanced parentheses: " + std::to_string(paren_count) + " unclosed",
+            "parentheses must be balanced",
+            "Add " + std::to_string(paren_count) + " closing ')' token(s) to complete the expression.");
         return false;
     }
     
@@ -47,8 +66,12 @@ bool ModelValidator::validateSyntax(const std::string& formula) {
     );
     
     if (!std::regex_match(formula, valid_formula_pattern)) {
-        addMessage(ValidationMessage::Severity::Error, "formula",
-                  "Formula contains invalid characters");
+        addMessage(
+            ValidationMessage::Severity::Error,
+            "formula",
+            "Formula contains invalid characters",
+            "allowed characters: [A-Za-z0-9_ + - * / ( ) , . = > < ! & | whitespace]",
+            "Remove unsupported characters or replace them with supported arithmetic/logical tokens.");
         return false;
     }
     
@@ -62,9 +85,12 @@ bool ModelValidator::validateTypes(const std::vector<std::string>& variables) {
     for (size_t i = 0; i < variables.size(); ++i) {
         for (size_t j = i + 1; j < variables.size(); ++j) {
             if (variables[i] == variables[j]) {
-                addMessage(ValidationMessage::Severity::Error, 
-                          "variable:" + variables[i],
-                          "Duplicate variable name: " + variables[i]);
+                addMessage(
+                    ValidationMessage::Severity::Error,
+                    "variable:" + variables[i],
+                    "Duplicate variable name: " + variables[i],
+                    "variable ids must be unique within a model",
+                    "Rename one of the duplicate variables (for example, append a suffix such as '_2').");
                 return false;
             }
         }
@@ -98,9 +124,12 @@ bool ModelValidator::validateUnits(const std::vector<std::string>& units) {
                 bool is_base_unit = (unit == "kg" || unit == "m" || unit == "s" || 
                                     unit == "K" || unit == "A" || unit == "mol" || unit == "cd");
                 if (!is_base_unit) {
-                    addMessage(ValidationMessage::Severity::Warning,
-                              "unit:" + unit,
-                              "Unrecognized unit: " + unit);
+                    addMessage(
+                        ValidationMessage::Severity::Warning,
+                        "unit:" + unit,
+                        "Unrecognized unit: " + unit,
+                        "accepted units include base SI symbols and common compounds (kg, m, s, K, A, mol, cd, m/s, m/s^2, kg/m^3, kg/(m*s^2), kg/(m*s), kg/s, kg/s^3)",
+                        "Use a supported SI unit token or a valid compound expression (/, *, ^). Use 'dimensionless' when no physical unit applies.");
                 }
             }
         }
@@ -126,9 +155,12 @@ bool ModelValidator::validateStructure(const std::vector<std::string>& stage_nam
     for (size_t i = 0; i < stage_names.size(); ++i) {
         for (size_t j = i + 1; j < stage_names.size(); ++j) {
             if (stage_names[i] == stage_names[j]) {
-                addMessage(ValidationMessage::Severity::Error,
-                          "stage:" + stage_names[i],
-                          "Duplicate stage name: " + stage_names[i]);
+                addMessage(
+                    ValidationMessage::Severity::Error,
+                    "stage:" + stage_names[i],
+                    "Duplicate stage name: " + stage_names[i],
+                    "stage ids must be unique within a model",
+                    "Rename one stage to a unique id (for example, add a semantic suffix such as '_transport').");
                 return false;
             }
         }
@@ -181,9 +213,12 @@ std::string ModelValidator::suggestVariableName(const std::string& typo,
     return "";
 }
 
-void ModelValidator::addMessage(ValidationMessage::Severity sev, const std::string& loc,
-                               const std::string& msg, const std::string& suggest) {
-    messages.push_back(ValidationMessage{sev, loc, msg, suggest});
+void ModelValidator::addMessage(ValidationMessage::Severity sev,
+                               const std::string& loc,
+                               const std::string& msg,
+                               const std::string& constraint,
+                               const std::string& suggest) {
+    messages.push_back(ValidationMessage{sev, loc, msg, constraint, suggest});
 }
 
 } // namespace ws::gui

@@ -1576,11 +1576,81 @@ void ModelEditorWindow::runValidation() {
     validation_errors.clear();
     validation_warnings.clear();
     validation_info.clear();
+
+    const auto pushValidationMessage = [this](const ValidationMessage& message) {
+        std::ostringstream text;
+        if (!message.location.empty()) {
+            text << message.location << ": ";
+        }
+        text << message.message;
+        if (!message.constraint.empty()) {
+            text << " | Constraint: " << message.constraint;
+        }
+        if (!message.suggestion.empty()) {
+            text << " | Next: " << message.suggestion;
+        }
+
+        const std::string rendered = text.str();
+        switch (message.severity) {
+            case ValidationMessage::Severity::Error:
+                validation_errors.push_back(rendered);
+                break;
+            case ValidationMessage::Severity::Warning:
+                validation_warnings.push_back(rendered);
+                break;
+            case ValidationMessage::Severity::Info:
+                validation_info.push_back(rendered);
+                break;
+        }
+    };
+
+    const auto appendValidatorMessages = [this, &pushValidationMessage]() {
+        for (const auto& message : validator->getMessages()) {
+            pushValidationMessage(message);
+        }
+    };
+
+    std::vector<std::string> variableNames;
+    std::vector<std::string> unitTokens;
+    std::vector<std::string> stageNames;
     
     // Check for unconnected nodes
     const auto& nodes = node_editor->getAllNodes();
     for (const auto& node : nodes) {
+        if (node->type == NodeType::GlobalVariable ||
+            node->type == NodeType::CellVariable ||
+            node->type == NodeType::Parameter ||
+            node->type == NodeType::Derived) {
+            if (node->variable_name.empty()) {
+                validation_errors.push_back(
+                    "variable:" + node->id +
+                    " | Variable name is required | Constraint: variable ids must be non-empty and unique | Next: Enter a valid id using letters, digits, '_' or '-'.");
+            } else {
+                variableNames.push_back(node->variable_name);
+            }
+            if (!node->units.empty()) {
+                unitTokens.push_back(node->units);
+            }
+        }
+
+        if (node->type == NodeType::Stage) {
+            if (!node->label.empty()) {
+                stageNames.push_back(node->label);
+            } else {
+                stageNames.push_back(node->id);
+            }
+        }
+
         if (node->type == NodeType::Equation || node->type == NodeType::Operator) {
+            if (node->formula_logic.empty()) {
+                validation_warnings.push_back(
+                    "formula:" + node->id +
+                    " | Interaction formula is empty | Constraint: equation/operator nodes should define executable logic | Next: Provide a formula expression or remove the placeholder node.");
+            } else {
+                validator->validateSyntax(node->formula_logic);
+                appendValidatorMessages();
+            }
+
             if (node->input_ports.empty()) {
                 validation_warnings.push_back("Node '" + node->label + "' has no inputs");
             }
@@ -1588,6 +1658,19 @@ void ModelEditorWindow::runValidation() {
                 validation_warnings.push_back("Node '" + node->label + "' has no outputs");
             }
         }
+    }
+
+    if (!variableNames.empty()) {
+        validator->validateTypes(variableNames);
+        appendValidatorMessages();
+    }
+    if (!unitTokens.empty()) {
+        validator->validateUnits(unitTokens);
+        appendValidatorMessages();
+    }
+    if (!stageNames.empty()) {
+        validator->validateStructure(stageNames);
+        appendValidatorMessages();
     }
     
     // Check for circular dependencies
