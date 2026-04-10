@@ -260,6 +260,12 @@ add_executable(display_manager_validation_test
 target_link_libraries(display_manager_validation_test PRIVATE ws_core)
 add_test(NAME display_manager_validation_test COMMAND display_manager_validation_test)
 
+add_executable(status_message_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/status_message_test.cpp"
+)
+target_link_libraries(status_message_test PRIVATE ws_core)
+add_test(NAME status_message_test COMMAND status_message_test)
+
 target_sources(full_pipeline_multi_model_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/display_manager.cpp

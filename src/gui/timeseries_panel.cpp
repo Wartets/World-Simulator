@@ -1,5 +1,7 @@
 #include "ws/gui/timeseries_panel.hpp"
 
+#include "ws/gui/status_message.hpp"
+
 #include <fstream>
 
 namespace ws::gui {
@@ -31,14 +33,14 @@ bool saveProbeSeriesCsv(const std::vector<ProbeSeries>& series, const std::files
     if (!parent.empty()) {
         std::filesystem::create_directories(parent, ec);
         if (ec) {
-            message = "probe_csv_export_failed reason=create_directory";
+            message = formatOperationMessageForDisplay(translateOperationMessage("probe_csv_export_failed reason=create_directory"));
             return false;
         }
     }
 
     std::ofstream output(outputPath, std::ios::trunc);
     if (!output.is_open()) {
-        message = "probe_csv_export_failed reason=file_open";
+        message = formatOperationMessageForDisplay(translateOperationMessage("probe_csv_export_failed reason=file_open"));
         return false;
     }
 

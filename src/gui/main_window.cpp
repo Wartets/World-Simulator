@@ -6,6 +6,7 @@
 #include "ws/gui/main_window/panel_state.hpp"
 #include "ws/gui/main_window/app_state.hpp"
 #include "ws/gui/main_window/window_state_store.hpp"
+#include "ws/gui/status_message.hpp"
 #include "ws/gui/histogram_panel.hpp"
 #include "ws/gui/heatmap_renderer.hpp"
 #include "ws/gui/contour_renderer.hpp"
