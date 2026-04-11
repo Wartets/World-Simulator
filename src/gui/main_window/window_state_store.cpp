@@ -1,4 +1,5 @@
 #include "ws/gui/main_window/window_state_store.hpp"
+#include "ws/gui/storage_paths.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -28,28 +29,11 @@ void clampToMonitorWorkarea(
 } // namespace
 
 std::filesystem::path resolveWorkspaceRoot() {
-    std::error_code ec;
-    std::filesystem::path current = std::filesystem::current_path(ec);
-    if (ec) {
-        return std::filesystem::path{"."};
-    }
-
-    for (std::filesystem::path probe = current; !probe.empty(); probe = probe.parent_path()) {
-        if (std::filesystem::exists(probe / "CMakeLists.txt")) {
-            return probe;
-        }
-        if (probe == probe.parent_path()) {
-            break;
-        }
-    }
-
-    return current;
+    return storage::resolveWorkspaceRootFromCurrentPath();
 }
 
 std::filesystem::path windowStatePath() {
-    const std::filesystem::path root = resolveWorkspaceRoot() / "profiles";
-    std::error_code ec;
-    std::filesystem::create_directories(root, ec);
+    const std::filesystem::path root = storage::resolveProfilesPath("WorldSimulator");
     return root / "window_state.cfg";
 }
 

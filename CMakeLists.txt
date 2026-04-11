@@ -177,6 +177,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/session_manager/session_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/platform_display_scale.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/storage_paths.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/parameter_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/perturbation_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/event_logger.cpp
@@ -225,6 +226,56 @@ target_include_directories(world_sim_gui PRIVATE
 target_link_libraries(world_sim_gui PRIVATE ws_core imgui_backend OpenGL::GL glfw)
 target_compile_definitions(world_sim_gui PRIVATE IMGUI_ENABLE_DOCKING)
 target_compile_definitions(world_sim_gui PRIVATE WS_PROJECT_VERSION="${PROJECT_VERSION}")
+
+include(GNUInstallDirs)
+
+install(TARGETS world_sim world_sim_gui
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+    ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+    DESTINATION .
+)
+
+install(DIRECTORY
+    ${CMAKE_CURRENT_SOURCE_DIR}/models/
+    DESTINATION models
+)
+
+set(CPACK_PACKAGE_NAME "WorldSimulator")
+set(CPACK_PACKAGE_VENDOR "World-Simulator")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "World Simulator")
+set(CPACK_PACKAGE_CONTACT "https://github.com/wartets/World-Simulator")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+set(CPACK_MONOLITHIC_INSTALL ON)
+set(CPACK_PACKAGE_EXECUTABLES
+    "world_sim_gui" "World Simulator GUI"
+    "world_sim" "World Simulator CLI"
+)
+
+set(wsCpackGenerators "ZIP")
+
+if(WIN32)
+    find_program(WS_MAKENSIS_EXECUTABLE NAMES makensis)
+    if(WS_MAKENSIS_EXECUTABLE)
+        list(APPEND wsCpackGenerators "NSIS")
+        set(CPACK_NSIS_EXECUTABLE "${WS_MAKENSIS_EXECUTABLE}")
+        set(CPACK_NSIS_DISPLAY_NAME "World Simulator")
+        set(CPACK_NSIS_PACKAGE_NAME "World Simulator")
+        set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+        set(CPACK_NSIS_MODIFY_PATH OFF)
+        set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator.ico")
+        set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator.ico")
+    endif()
+endif()
+
+list(JOIN wsCpackGenerators ";" CPACK_GENERATOR)
+
+include(CPack)
 
 enable_testing()
 

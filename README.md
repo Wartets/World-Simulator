@@ -110,6 +110,21 @@ After building, you will have:
 - `world_sim` - Command-line simulation runtime
 - `world_sim_gui` - Interactive GUI application
 
+#### 6. Create Distribution Packages (Installer/Archive)
+
+From the configured build directory, package artifacts can be generated with CPack:
+
+- **Windows**: ZIP package is always produced; NSIS installer is produced when `makensis` is available.
+- **Linux/macOS**: ZIP package is produced.
+
+Installed package layout includes:
+
+- `bin/` executables (`world_sim_gui`, `world_sim`)
+- `models/` built-in model packages
+- top-level `LICENSE` and `README.md`
+
+On Windows NSIS builds, uninstallation is provided by the generated installer and removes installed application-managed files while preserving user settings/data stored outside the install directory.
+
 ---
 
 ## Quick Start
