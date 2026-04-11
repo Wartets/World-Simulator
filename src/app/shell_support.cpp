@@ -164,7 +164,7 @@ std::optional<ModelTier> parseTier(const std::string& token) {
         return ModelTier::Standard;
     }
     if (normalized == "advanced" || normalized == "2") {
-        return ModelTier::Minimaldvanced;
+        return ModelTier::Advanced;
     }
     return std::nullopt;
 }

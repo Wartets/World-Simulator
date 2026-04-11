@@ -45,7 +45,7 @@ enum class ConflictResolutionMode : std::uint8_t {
 // Node in the subsystem dependency graph.
 struct DependencyNode {
     std::string subsystemName;
-    ModelTier tier = ModelTier::A;
+    ModelTier tier = ModelTier::Minimal;
 };
 
 // =============================================================================
