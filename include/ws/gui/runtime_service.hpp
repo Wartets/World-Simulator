@@ -94,8 +94,9 @@ public:
     //   are serialized internally and intended to be invoked by the GUI owner thread.
     // - Read/query methods are safe to call concurrently; methods returning snapshots
     //   provide lock-backed copies to avoid exposing mutable internal state.
-    // - isRunning()/isPaused() are low-latency best-effort cache reads; they may
-    //   transiently lag behind the most recent mutation in contended scenarios.
+    // - isRunning()/isPaused() are low-latency cache reads backed by a single
+    //   published runtime-state snapshot, so callers never observe mixed
+    //   running/paused pairs from different publication moments.
     RuntimeService();
 
     // Configuration access
@@ -191,6 +192,16 @@ public:
     bool applySettings(std::string& message);
 
 private:
+    enum class CachedRuntimeState : std::uint8_t {
+        Stopped = 0,
+        Running = 1,
+        RunningPaused = 2,
+    };
+
+    [[nodiscard]] static CachedRuntimeState makeCachedRuntimeState(bool running, bool paused) noexcept;
+    [[nodiscard]] static bool cachedStateRunning(CachedRuntimeState state) noexcept;
+    [[nodiscard]] static bool cachedStatePaused(CachedRuntimeState state) noexcept;
+
     [[nodiscard]] app::WorldModelMetadata currentWorldModelMetadata() const;
     void refreshCachedStateNoLock() const;
     bool requireRuntime(const char* operation, std::string& message) const;
@@ -211,8 +222,8 @@ private:
     float playbackSpeed_ = 1.0f;
     std::string activeWorldName_;
     std::unordered_map<std::string, std::vector<std::string>> activeFieldDisplayTags_;
-    mutable std::atomic<bool> cachedRunning_{false};
-    mutable std::atomic<bool> cachedPaused_{false};
+    mutable std::atomic<std::uint8_t> cachedRuntimeState_{
+        static_cast<std::uint8_t>(CachedRuntimeState::Stopped)};
     mutable std::recursive_mutex mutex_;
 };
 

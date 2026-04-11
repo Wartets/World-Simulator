@@ -170,29 +170,52 @@ app::WorldModelMetadata RuntimeService::currentWorldModelMetadata() const {
     return metadata;
 }
 
+RuntimeService::CachedRuntimeState RuntimeService::makeCachedRuntimeState(const bool running, const bool paused) noexcept {
+    if (!running) {
+        return CachedRuntimeState::Stopped;
+    }
+    return paused ? CachedRuntimeState::RunningPaused : CachedRuntimeState::Running;
+}
+
+bool RuntimeService::cachedStateRunning(const CachedRuntimeState state) noexcept {
+    return state == CachedRuntimeState::Running || state == CachedRuntimeState::RunningPaused;
+}
+
+bool RuntimeService::cachedStatePaused(const CachedRuntimeState state) noexcept {
+    return state == CachedRuntimeState::RunningPaused;
+}
+
 void RuntimeService::refreshCachedStateNoLock() const {
     const bool running = runtime_ && runtime_->status() == RuntimeStatus::Running;
     const bool paused = running && runtime_->paused();
-    cachedRunning_.store(running, std::memory_order_relaxed);
-    cachedPaused_.store(paused, std::memory_order_relaxed);
+    const auto snapshot = makeCachedRuntimeState(running, paused);
+    cachedRuntimeState_.store(static_cast<std::uint8_t>(snapshot), std::memory_order_release);
 }
 
 bool RuntimeService::isRunning() const {
     if (mutex_.try_lock()) {
         const std::lock_guard<std::recursive_mutex> lock(mutex_, std::adopt_lock);
         refreshCachedStateNoLock();
-        return cachedRunning_.load(std::memory_order_relaxed);
+        const auto snapshot = static_cast<CachedRuntimeState>(
+            cachedRuntimeState_.load(std::memory_order_acquire));
+        return cachedStateRunning(snapshot);
     }
-    return cachedRunning_.load(std::memory_order_relaxed);
+    const auto snapshot = static_cast<CachedRuntimeState>(
+        cachedRuntimeState_.load(std::memory_order_acquire));
+    return cachedStateRunning(snapshot);
 }
 
 bool RuntimeService::isPaused() const {
     if (mutex_.try_lock()) {
         const std::lock_guard<std::recursive_mutex> lock(mutex_, std::adopt_lock);
         refreshCachedStateNoLock();
-        return cachedPaused_.load(std::memory_order_relaxed);
+        const auto snapshot = static_cast<CachedRuntimeState>(
+            cachedRuntimeState_.load(std::memory_order_acquire));
+        return cachedStatePaused(snapshot);
     }
-    return cachedPaused_.load(std::memory_order_relaxed);
+    const auto snapshot = static_cast<CachedRuntimeState>(
+        cachedRuntimeState_.load(std::memory_order_acquire));
+    return cachedStatePaused(snapshot);
 }
 
 bool RuntimeService::start(std::string& message) {
