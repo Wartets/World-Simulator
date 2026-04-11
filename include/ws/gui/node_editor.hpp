@@ -36,7 +36,8 @@ enum class VariableRole {
 // Spatial support of a variable.
 enum class VariableSupport {
     Global,  // Single global value
-    Cell     // Per-cell values
+    Cell,    // Per-cell values
+    Boundary // Boundary-cell values
 };
 
 // Data type for variables.

@@ -1035,6 +1035,62 @@ void test_categorical_domain_loader() {
         std::cout << "Categorical domain loader test passed.\n";
 }
 
+    void test_boundary_support_loader() {
+        const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_boundary_support_test";
+        const auto modelDir = tempRoot / "boundary_support.simmodel";
+        std::filesystem::remove_all(tempRoot);
+        std::filesystem::create_directories(modelDir);
+
+        const std::string modelJson = R"JSON({
+        "id": "boundary_support_fixture",
+        "version": "1.0.0",
+        "variables": [
+        { "id": "interior", "role": "state", "support": "cell", "type": "f32", "units": "1", "initial_value": 0.1 },
+        { "id": "edge_bias", "role": "parameter", "support": "boundary", "type": "f32", "units": "1", "initial_value": 0.25 }
+        ],
+        "stages": []
+    })JSON";
+
+        {
+            std::ofstream out(modelDir / "model.json", std::ios::trunc);
+            out << modelJson;
+        }
+        {
+            std::ofstream out(modelDir / "logic.ir", std::ios::trunc);
+            out << "@global f32 dt = 1.0\n";
+        }
+
+        initialization::ModelVariableCatalog catalog;
+        std::string catalogMessage;
+        const bool catalogOk = initialization::loadModelVariableCatalog(modelDir, catalog, catalogMessage);
+        assert(catalogOk);
+        assert(catalog.variables.size() == 2u);
+
+        const auto edgeIt = std::find_if(catalog.variables.begin(), catalog.variables.end(), [](const initialization::VariableDescriptor& variable) {
+            return variable.id == "edge_bias";
+        });
+        assert(edgeIt != catalog.variables.end());
+        assert(edgeIt->support == "boundary");
+
+        std::vector<ParameterControl> controls;
+        std::string controlMessage;
+        const bool controlsOk = initialization::loadModelParameterControls(modelDir, controls, controlMessage);
+        assert(controlsOk);
+        assert(controls.size() == 1u);
+        assert(controls.front().targetVariable == "edge_bias");
+        assert(controls.front().defaultValue == 0.25f);
+
+        ModelExecutionSpec executionSpec;
+        std::string executionMessage;
+        const bool executionOk = initialization::loadModelExecutionSpec(modelDir, executionSpec, executionMessage);
+        assert(executionOk);
+        assert(std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "interior") != executionSpec.cellScalarVariableIds.end());
+        assert(std::find(executionSpec.cellScalarVariableIds.begin(), executionSpec.cellScalarVariableIds.end(), "edge_bias") != executionSpec.cellScalarVariableIds.end());
+
+        std::filesystem::remove_all(tempRoot);
+        std::cout << "Boundary support loader test passed.\n";
+    }
+
     void test_model_execution_spec_cross_constraints() {
         const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_execution_constraint_test";
         const auto modelDir = tempRoot / "execution_constraint.simmodel";
@@ -1111,6 +1167,7 @@ int main() {
     test_model_binding_plan_uses_catalog_metadata();
     test_extended_variable_metadata_schema_loader();
     test_categorical_domain_loader();
+    test_boundary_support_loader();
     test_model_execution_spec_cross_constraints();
     return 0;
 }

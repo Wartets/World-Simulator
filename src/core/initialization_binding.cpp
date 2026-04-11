@@ -54,6 +54,11 @@ bool isCategoricalCompatibleType(const std::string& rawType) {
     return type == "u32" || type == "i32" || type == "bool";
 }
 
+bool isCellOrBoundarySupport(const std::string& rawSupport) {
+    const std::string support = toLowerCopy(rawSupport);
+    return support == "cell" || support == "boundary";
+}
+
 bool parseDomainDefinitions(
     const json& parsed,
     std::unordered_map<std::string, ParsedDomainDefinition>& outDomains,
@@ -1058,7 +1063,7 @@ bool loadModelParameterControls(
                 ? variable["support"].get<std::string>()
                 : std::string{};
 
-            if (role != "parameter" || support != "cell") {
+            if (role != "parameter" || !isCellOrBoundarySupport(support)) {
                 continue;
             }
 
@@ -1165,7 +1170,7 @@ bool loadModelExecutionSpec(
                 const std::string support = variable.contains("support") && variable["support"].is_string()
                     ? variable["support"].get<std::string>()
                     : std::string{};
-                if (support != "cell") {
+                if (!isCellOrBoundarySupport(support)) {
                     continue;
                 }
 
@@ -1353,7 +1358,7 @@ bool loadModelExecutionSpec(
                     const std::string support = variable.contains("support") && variable["support"].is_string()
                         ? variable["support"].get<std::string>()
                         : std::string{};
-                    if (support != "cell") {
+                    if (!isCellOrBoundarySupport(support)) {
                         continue;
                     }
 

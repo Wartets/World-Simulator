@@ -199,8 +199,14 @@ bool isCommentKey(const std::string& key) {
 }
 
 VariableSupport parseSupport(const json& variable) {
-    const std::string support = variable.value("support", std::string{"global"});
-    return support == "cell" ? VariableSupport::Cell : VariableSupport::Global;
+    const std::string support = toLower(variable.value("support", std::string{"global"}));
+    if (support == "cell") {
+        return VariableSupport::Cell;
+    }
+    if (support == "boundary") {
+        return VariableSupport::Boundary;
+    }
+    return VariableSupport::Global;
 }
 
 VariableRole parseRole(const json& variable) {
@@ -215,7 +221,10 @@ VariableRole parseRole(const json& variable) {
 NodeType nodeTypeForVariable(VariableRole role, VariableSupport support) {
     if (role == VariableRole::Parameter) return NodeType::Parameter;
     if (role == VariableRole::Derived) return NodeType::Derived;
-    return support == VariableSupport::Cell ? NodeType::CellVariable : NodeType::GlobalVariable;
+    if (support == VariableSupport::Global) {
+        return NodeType::GlobalVariable;
+    }
+    return NodeType::CellVariable;
 }
 
 DataType parseDataType(const json& variable) {
@@ -516,6 +525,7 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
 
     float globalVarY = layout::kModelEditorStartY;
     float cellVarY = layout::kModelEditorStartY;
+    float boundaryVarY = layout::kModelEditorStartY;
     json variables = json::array();
     if (model.contains("variables") && model["variables"].is_array()) {
         variables = model["variables"];
@@ -547,9 +557,12 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
         if (support == VariableSupport::Global) {
             variableNode.position = ImVec2(layout::kModelEditorStartXVariable, globalVarY);
             globalVarY += layout::kModelEditorRowSpacing;
-        } else {
+        } else if (support == VariableSupport::Cell) {
             variableNode.position = ImVec2(layout::kModelEditorStartXCellVariable, cellVarY);
             cellVarY += layout::kModelEditorRowSpacing;
+        } else {
+            variableNode.position = ImVec2(layout::kModelEditorStartXCellVariable + 120.0f, boundaryVarY);
+            boundaryVarY += layout::kModelEditorRowSpacing;
         }
 
         variableNode.input_ports.push_back(Port("in", variableId, true));
@@ -719,7 +732,13 @@ std::string ModelEditorWindow::serializeModelFromGraph() const {
     };
 
     auto supportToString = [](const VariableSupport support) {
-        return support == VariableSupport::Cell ? "cell" : "global";
+        if (support == VariableSupport::Cell) {
+            return "cell";
+        }
+        if (support == VariableSupport::Boundary) {
+            return "boundary";
+        }
+        return "global";
     };
 
     auto nodeIdLess = [](const auto* lhs, const auto* rhs) {
@@ -1236,6 +1255,12 @@ void ModelEditorWindow::renderNodePalette() {
             status_message = "Added cell variable";
         }
     }
+    if (showItem("Boundary Variable", "variable boundary edge")) {
+        if (ImGui::Button("+ Boundary Variable", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
+            addVariableNode(NodeType::CellVariable, VariableSupport::Boundary);
+            status_message = "Added boundary variable";
+        }
+    }
 
     ImGui::Spacing();
     ImGui::TextDisabled("Interactions");
@@ -1362,7 +1387,13 @@ void ModelEditorWindow::renderPropertyInspector() {
         if (editTextField("##variable_name", selected_node->variable_name)) markDirty();
         ImGui::Text("Label:");
         if (editTextField("##variable_label", selected_node->label)) markDirty();
-        ImGui::Text("Support: %s", selected_node->support == VariableSupport::Cell ? "cell" : "global");
+        const char* supportLabel = "global";
+        if (selected_node->support == VariableSupport::Cell) {
+            supportLabel = "cell";
+        } else if (selected_node->support == VariableSupport::Boundary) {
+            supportLabel = "boundary";
+        }
+        ImGui::Text("Support: %s", supportLabel);
         
         const char* data_types[] = { "F32", "F64", "I32", "U32", "Bool", "Vec2", "Vec3" };
         int type_idx = static_cast<int>(selected_node->data_type);
@@ -1519,7 +1550,12 @@ void ModelEditorWindow::renderValidationPanel() {
 void ModelEditorWindow::addVariableNode(NodeType node_type, VariableSupport support) {
     static int counter = 0;
     std::string node_id = std::string("var_") + std::to_string(counter++);
-    std::string label = (support == VariableSupport::Global) ? "GlobalVar" : "CellVar";
+    std::string label = "GlobalVar";
+    if (support == VariableSupport::Cell) {
+        label = "CellVar";
+    } else if (support == VariableSupport::Boundary) {
+        label = "BoundaryVar";
+    }
     
     Node node(node_id, node_type, label);
     node.size = ImVec2(layout::kModelEditorNodeDefaultWidth, layout::kModelEditorNodeDefaultHeight);

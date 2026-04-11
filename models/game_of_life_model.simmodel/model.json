@@ -43,6 +43,10 @@
     {
       "id": "living", "role": "state", "support": "cell", "type": "u32", "units": "1", "domain": "binary_state",
       "description": "Binary state: 1 if the cell is alive, 0 if dead."
+    },
+    {
+      "id": "edge_seed", "role": "parameter", "support": "boundary", "type": "u32", "units": "1", "domain": "binary_state", "initial_value": 0,
+      "description": "Optional boundary-only seed value for edge-conditioned initialization workflows."
     }
   ],
 
