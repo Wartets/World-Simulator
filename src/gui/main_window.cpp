@@ -11,6 +11,7 @@
 #include "ws/gui/main_window/app_state.hpp"
 #include "ws/gui/main_window/window_state_store.hpp"
 #include "ws/gui/status_message.hpp"
+#include "ws/gui/build_info.hpp"
 #include "ws/gui/histogram_panel.hpp"
 #include "ws/gui/heatmap_renderer.hpp"
 #include "ws/gui/contour_renderer.hpp"
@@ -798,12 +799,7 @@ public:
             tickAutoRun();
             consumeSnapshotFromWorker();
 
-            std::string title = std::string("World Simulator - ") + appStateLabel(static_cast<int>(appState_));
-            const std::string worldName = runtime_.activeWorldName();
-            if (!worldName.empty()) {
-                title += " [" + worldName + "]";
-            }
-            glfwSetWindowTitle(window, title.c_str());
+            updateWindowTitleIfChanged(window);
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
@@ -884,6 +880,41 @@ public:
     }
 
 private:
+    [[nodiscard]] std::string currentWindowContext() const {
+        const std::string worldName = runtime_.activeWorldName();
+        if (!worldName.empty()) {
+            return std::string("World: ") + worldName;
+        }
+
+        if (sessionUi_.selectedModelName[0] != '\0') {
+            return std::string("Model: ") + sessionUi_.selectedModelName;
+        }
+
+        return {};
+    }
+
+    [[nodiscard]] std::string formatWindowTitle() const {
+        std::string title = std::string(kApplicationName) + " v" + kApplicationVersion +
+                            " - " + appStateLabel(static_cast<int>(appState_));
+        const std::string context = currentWindowContext();
+        if (!context.empty()) {
+            title += " [" + context + "]";
+        }
+        return title;
+    }
+
+    void updateWindowTitleIfChanged(GLFWwindow* window) {
+        if (window == nullptr) {
+            return;
+        }
+        const std::string nextTitle = formatWindowTitle();
+        if (nextTitle == lastWindowTitle_) {
+            return;
+        }
+        glfwSetWindowTitle(window, nextTitle.c_str());
+        lastWindowTitle_ = nextTitle;
+    }
+
     // per-viewport raster
     struct ViewMapping {
         ImVec2 viewportMin{}, viewportMax{}, contentMin{};
@@ -1024,6 +1055,7 @@ private:
     RuntimeService runtime_;
     ConstraintMonitor constraintMonitor_{};
     std::uint64_t recordedDiagnosticsStep_ = std::numeric_limits<std::uint64_t>::max();
+    std::string lastWindowTitle_{};
 };
 
 } // anonymous namespace

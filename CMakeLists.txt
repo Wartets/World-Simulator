@@ -17,6 +17,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_version.rc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/world_simulator_version.rc
+    @ONLY
+)
+
 option(WS_ENABLE_OPENMP "Enable OpenMP acceleration for eligible simulation loops" OFF)
 
 # --- Lexer & Parser Generation ---
@@ -213,9 +219,11 @@ find_package(OpenGL REQUIRED)
 target_include_directories(world_sim_gui PRIVATE
     include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 target_link_libraries(world_sim_gui PRIVATE ws_core imgui_backend OpenGL::GL glfw)
 target_compile_definitions(world_sim_gui PRIVATE IMGUI_ENABLE_DOCKING)
+target_compile_definitions(world_sim_gui PRIVATE WS_PROJECT_VERSION="${PROJECT_VERSION}")
 
 enable_testing()
 

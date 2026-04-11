@@ -1,5 +1,6 @@
 #include "ws/gui/main_window.hpp"
 #include "ws/gui/exception_message.hpp"
+#include "ws/gui/build_info.hpp"
 
 #include <exception>
 #include <iostream>
@@ -20,11 +21,11 @@ int GuiMain() {
             "GUI startup failed",
             "Check the configuration, model files, and available system resources, then retry.");
         std::cerr << translated.userMessage << '\n'
-                  << translated.technicalDetail << std::endl;
+                  << translated.technicalDetail << " | version=" << ws::gui::kApplicationVersion << std::endl;
         return 1;
     } catch (...) {
         std::cerr << "What happened: GUI startup failed | Why: an unknown exception was raised | Next: Check the configuration, model files, and available system resources, then retry.\n"
-                  << "GUI startup failed | unknown exception" << std::endl;
+                  << "GUI startup failed | unknown exception | version=" << ws::gui::kApplicationVersion << std::endl;
         return 1;
     }
 }

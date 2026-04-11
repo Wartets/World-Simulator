@@ -2,3 +2,4 @@
 
 WS_GUI_ICON_RESOURCE_ID ICON "world_simulator.ico"
 1 RT_MANIFEST "world_simulator.manifest"
+#include "world_simulator_version.rc"
