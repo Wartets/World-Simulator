@@ -406,94 +406,269 @@ struct RuntimeCheckpoint {
 // Runtime Class
 // =============================================================================
 
-// Main simulation runtime controller. Manages the simulation lifecycle,
-// state storage, scheduling, event processing, and observability.
+/// Main simulation runtime controller managing the simulation lifecycle,
+/// state storage, scheduling, event processing, and observability.
+///
+/// ## Public API Contract
+/// All public methods and the RuntimeConfig/RuntimeCheckpoint structures are
+/// stable for external use. The detailed initialization type parameters are
+/// currently exposed but should be considered implementation details and may
+/// be refactored in future versions.
+///
+/// ## Runtime Lifecycle
+/// 1. **Created**: After constructor; runtime is ready but not stepping.
+/// 2. **Running**: After start(); simulation is stepping forward.
+/// 3. **Paused**: After pause() called while running; stepping is suspended.
+/// 4. **Terminated**: After stop(); simulation has ended.
+///
+/// ## Step Contract (Deterministic Stepping)
+/// Each step follows this order and semantics are preserved for identical
+/// seed + config inputs:
+/// 1. Input patch ingestion (queueInput frames are applied to state).
+/// 2. Event queue apply (enqueued RuntimeEvents are processed).
+/// 3. Scheduler execution (subsystems run in order).
+/// 4. State metadata/hash commit (snapshot is updated, probes sample).
+///
+/// ## Thread Safety
+/// - **Not thread-safe for mutations**: All state modifications (start, pause,
+///   resume, stop, step, queueInput, enqueueEvent, etc.) must be called from
+///   a single owner thread.
+/// - **Safe for queries**: snapshot(), status(), metrics(), paused() can be
+///   called concurrently from other threads.
+/// - **Safe for read-only checkpoint inspection**: RuntimeCheckpoint instances
+///   can be read from multiple threads once created.
+///
+/// ## Subsystem Registration and Execution Order
+/// Subsystems are executed in the order they are registered via registerSubsystem().
+/// Each subsystem is called once per step during the scheduler execution phase.
+/// Subsystems must be registered before start() is called.
+///
+/// ## Checkpoint Semantics
+/// - Checkpoints capture the complete runtime state at a snapshot moment.
+/// - createCheckpoint() generates a new checkpoint with optional hash computation.
+/// - loadCheckpoint() and resetToCheckpoint() restore the runtime to a saved state.
+/// - Checkpoints are immutable after creation.
+///
+/// ## Determinism Guarantees
+/// - For identical (seed, config, subsystem set), stepping produces the same state.
+/// - State hashes are recorded per step and can be validated against reference hashes.
+/// - If numeric guardrail policy changes, determinism may break and is logged.
+///
+/// ## Error Handling
+/// - Methods returning `[[nodiscard]] bool` should have their return value checked.
+/// - Operations that fail return false and populate a message parameter with diagnostics.
+/// - Exceptions are not thrown; failures are reported via return codes and messages.
+///
+/// ## Initialization Type Notes
+/// The 13 initialization condition types exposed (Terrain, Conway, GrayScott, etc.)
+/// are currently visible in the public API but should be treated as internal details.
+/// Future versions may refactor this to expose only the active configuration and
+/// hide unused types. Client code should not rely on the full set of initialization types.
 class Runtime {
 public:
-    // Constructs a runtime with the given configuration.
-    // The runtime will be in Created state until start() is called.
+    /// Constructs a runtime with the given configuration.
+    /// The runtime will be in Created state until start() is called.
+    /// All subsystems and event handlers may be registered after construction.
     explicit Runtime(RuntimeConfig config);
 
-    // Registers a subsystem to be called during simulation steps.
+    /// Registers a subsystem to be called during simulation steps.
+    /// Subsystems are executed in the order they are registered.
+    /// Must be called before start().
     void registerSubsystem(std::shared_ptr<ISubsystem> subsystem);
-    // Selects the execution profile based on model characteristics.
+
+    /// Selects the execution profile based on model characteristics.
+    /// Affects performance optimizations; called during initialization.
     void selectProfile(ProfileResolverInput profileInput);
-    // Updates the numerical guardrail policy for stability monitoring.
+
+    /// Updates the numerical guardrail policy for stability monitoring.
+    /// Applies to all subsequent steps.
     void updateGuardrailPolicy(NumericGuardrailPolicy guardrailPolicy);
-    // Starts the simulation from the initial state.
+
+    /// Starts the simulation from the initial state.
+    /// Transitions from Created to Running state.
+    /// Precondition: Runtime must be in Created state.
     void start();
-    // Pauses the simulation at the current step.
+
+    /// Pauses the simulation at the current step.
+    /// Transitions from Running to Paused state; step() calls fail while paused.
+    /// Precondition: Runtime must be in Running state.
     void pause();
-    // Resumes a paused simulation from the current step.
+
+    /// Resumes a paused simulation from the current step.
+    /// Transitions from Paused to Running state.
+    /// Precondition: Runtime must be in Paused state.
     void resume();
-    // Executes a single simulation step.
+
+    /// Executes a single simulation step following the deterministic step contract.
+    /// - Ingests any queued input patches.
+    /// - Applies any queued runtime events.
+    /// - Executes all registered subsystems in order.
+    /// - Commits state metadata and samples all probes.
+    /// Precondition: Runtime must be in Running state (not paused or terminated).
     void step();
-    // Executes a controlled number of steps.
+
+    /// Executes a controlled number of steps in sequence.
+    /// - stepCount: number of steps to advance (must be > 0).
+    /// Each step follows the deterministic step contract.
+    /// Precondition: Runtime must be in Running state.
     void controlledStep(std::uint32_t stepCount);
-    // Stops the simulation and transitions to Terminated state.
+
+    /// Stops the simulation and transitions to Terminated state.
+    /// No further stepping is possible after stop().
     void stop();
-    // Queues an input frame for processing in the next step.
+
+    /// Queues an input frame for processing in the next step.
+    /// Input patches are ingested during the first phase of step().
+    /// - inputFrame: contains cell updates to apply.
     void queueInput(RuntimeInputFrame inputFrame);
-    // Enqueues a runtime event to be processed in the next step.
+
+    /// Enqueues a runtime event to be processed in the next step.
+    /// Events are applied during the second phase of step().
+    /// - event: specifies the event type and parameters.
     void enqueueEvent(RuntimeEvent event);
-    // Creates a checkpoint of the current runtime state.
-    // If computeHash is true, calculates the state hash (slower).
+
+    /// Creates a checkpoint of the current runtime state.
+    /// - label: user-provided name for the checkpoint.
+    /// - computeHash: if true, computes and stores the state hash (slower).
+    /// Returns a RuntimeCheckpoint that can be restored later.
     [[nodiscard]] RuntimeCheckpoint createCheckpoint(const std::string& label, bool computeHash = true) const;
-    // Loads a checkpoint, restoring runtime to that state.
+
+    /// Loads a checkpoint, restoring runtime to that state.
+    /// - checkpoint: must be a checkpoint previously created by createCheckpoint().
+    /// Precondition: checkpoint must be from the same model/config family.
     void loadCheckpoint(const RuntimeCheckpoint& checkpoint);
-    // Resets to a previous checkpoint, discarding all state since then.
+
+    /// Resets to a previous checkpoint, discarding all state since then.
+    /// Equivalent to loadCheckpoint() but emphasizes the discarding semantics.
     void resetToCheckpoint(const RuntimeCheckpoint& checkpoint);
-    // Computes a hash of the current simulation state.
+
+    /// Computes a hash of the current simulation state.
+    /// Used for determinism validation and replay verification.
+    /// Returns a 64-bit deterministic hash of the full state.
     [[nodiscard]] std::uint64_t computeStateHash() const noexcept;
-    // Validates determinism by comparing state hashes to reference.
+
+    /// Validates determinism by comparing state hashes to reference hashes.
+    /// - referenceHashes: vector of step-by-step hashes from a reference run.
+    /// Returns true if all recorded hashes match the reference (perfect replay).
     [[nodiscard]] bool validateDeterminism(const std::vector<std::uint64_t>& referenceHashes) const noexcept;
-    // Returns the history of state hashes recorded each step.
+
+    /// Returns the history of state hashes recorded each step.
+    /// Chronologically ordered from first step (index 0) to current step.
     [[nodiscard]] const std::vector<std::uint64_t>& stateHashHistory() const noexcept { return stateHashHistory_; }
 
-    // Returns the current runtime status.
+    // =========================================================================
+    // State and Diagnostics Queries
+    // =========================================================================
+
+    /// Returns the current runtime status (Created, Running, Paused, Terminated).
     [[nodiscard]] RuntimeStatus status() const noexcept { return status_; }
-    // Returns whether the simulation is currently paused.
+
+    /// Returns whether the simulation is currently paused.
+    /// Only meaningful if status() returns Running.
     [[nodiscard]] bool paused() const noexcept { return paused_; }
-    // Returns the current runtime snapshot.
+
+    /// Returns the current runtime snapshot.
+    /// Immutable snapshot copy; safe for concurrent reads.
+    /// Contains current step index, temporal metadata, and grid dimensions.
     [[nodiscard]] const RuntimeSnapshot& snapshot() const noexcept { return snapshot_; }
-    // Returns diagnostics from the most recent step.
+
+    /// Returns diagnostics from the most recent step (timing, effect counts, etc.).
+    /// Populated after each step() call.
     [[nodiscard]] const StepDiagnostics& lastStepDiagnostics() const noexcept { return lastStepDiagnostics_; }
-    // Returns the chronological record of runtime events.
+
+    /// Returns the chronological record of all runtime events that occurred.
+    /// Useful for replay, debugging, and audit logging.
     [[nodiscard]] const std::vector<RuntimeEventRecord>& eventChronology() const noexcept { return eventChronology_; }
-    // Returns the manually recorded events.
+
+    /// Returns the manually recorded events (patches, parameter changes, etc.).
+    /// Subset of eventChronology() containing only user-initiated changes.
     [[nodiscard]] const std::vector<ManualEventRecord>& manualEventLog() const noexcept { return eventQueue_.manualEvents(); }
-    // Returns count of queued scalar input patches waiting for ingestion.
+
+    /// Returns count of queued scalar input patches waiting for ingestion.
+    /// Used for diagnostics; count decreases by 1 at the start of each step.
     [[nodiscard]] std::size_t pendingInputPatchCount() const noexcept { return eventQueue_.pendingInputPatchCount(); }
-    // Returns count of queued runtime events waiting for event queue apply.
+
+    /// Returns count of queued runtime events waiting for event queue apply.
+    /// Used for diagnostics; count decreases as events are processed.
     [[nodiscard]] std::size_t pendingEventCount() const noexcept { return eventQueue_.pendingEventCount(); }
-    // Returns count of scheduled perturbations that have not fully completed.
+
+    /// Returns count of scheduled perturbations that have not fully completed.
+    /// Includes perturbations currently executing and waiting to execute.
     [[nodiscard]] std::size_t pendingPerturbationCount() const noexcept { return pendingPerturbations_.size(); }
-    // Returns count of recorded manual events in current runtime session/checkpoint state.
+
+    /// Returns count of recorded manual events in current runtime session/checkpoint state.
+    /// Incremented when parameters are set or patches are applied.
     [[nodiscard]] std::size_t manualEventCount() const noexcept { return eventQueue_.manualEvents().size(); }
-    // Returns the probe manager for data collection.
+
+    /// Returns the probe manager for data collection and time-series queries.
+    /// Thread-safe for read-only queries; modifications must be serialized.
     [[nodiscard]] const ProbeManager& probes() const noexcept { return probeManager_; }
-    // Returns the list of runtime-adjustable parameter controls.
+
+    /// Returns the list of runtime-adjustable parameter controls defined by the model.
+    /// Each parameter has name, bounds, units, and default value metadata.
     [[nodiscard]] std::vector<ParameterControl> parameterControls() const;
-    // Returns trace records for debugging and analysis.
+
+    /// Returns trace records for debugging and analysis (one record per step).
+    /// Includes timing, event counts, and subsystem-specific diagnostics.
     [[nodiscard]] const std::vector<TraceRecord>& traceRecords() const noexcept { return observability_.records(); }
-    // Returns runtime performance metrics.
+
+    /// Returns runtime performance metrics.
+    /// Includes total execution time, steps completed, allocations, etc.
     [[nodiscard]] RuntimeMetrics metrics() const noexcept { return observability_.metrics(); }
-    // Returns the admission report from the last profile resolution.
+
+    /// Returns the admission report from the last profile resolution.
+    /// Indicates model compatibility and performance class.
     [[nodiscard]] const AdmissionReport& admissionReport() const;
 
-    // Sets a runtime parameter value by name.
+    // =========================================================================
+    // State Modification
+    // =========================================================================
+
+    /// Sets a runtime parameter value by name.
+    /// - parameterName: must exist in parameterControls().
+    /// - value: must be within the parameter's bounds (validated).
+    /// - note: optional description for logging.
+    /// - message: output for diagnostic information.
+    /// Returns true on success; false if parameter unknown or out of range.
     [[nodiscard]] bool setParameterValue(const std::string& parameterName, float value, std::string note, std::string& message);
-    // Applies a manual patch to a specific cell in a variable.
+
+    /// Applies a manual patch to a specific cell in a variable.
+    /// - variableName: must exist in the model.
+    /// - cell: if provided, patches a single cell; if empty, patches entire grid.
+    /// - newValue: new value to assign (validated by field constraints).
+    /// - note: optional description for logging.
+    /// - message: output for diagnostic information.
+    /// Returns true on success; false if variable unknown or cell out of bounds.
     [[nodiscard]] bool applyManualPatch(const std::string& variableName, std::optional<Cell> cell, float newValue, std::string note, std::string& message);
-    // Undoes the most recent manual patch.
+
+    /// Undoes the most recent manual patch.
+    /// Restores values overwritten by the most recent applyManualPatch().
+    /// - message: output for diagnostic information.
+    /// Returns true on success; false if no patch history or undo fails.
     [[nodiscard]] bool undoLastManualPatch(std::string& message);
-    // Enqueues a perturbation to be applied during simulation.
+
+    /// Enqueues a perturbation to be applied during simulation.
+    /// Perturbations are scheduled events that modify state based on triggers.
+    /// - perturbation: must define trigger and action (validated).
+    /// - message: output for diagnostic information.
+    /// Returns true on success; false if perturbation invalid or queue full.
     [[nodiscard]] bool enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message);
-    // Adds a data collection probe.
+
+    /// Adds a data collection probe.
+    /// Probes sample named variables at each step for time-series analysis.
+    /// - definition: must have unique probeId and valid variable references.
+    /// - message: output for diagnostic information.
+    /// Returns true on success; false if probe already exists or definition invalid.
     [[nodiscard]] bool addProbe(const ProbeDefinition& definition, std::string& message);
-    // Removes a probe by identifier.
+
+    /// Removes a probe by identifier.
+    /// - probeId: must match an existing probe.
+    /// - message: output for diagnostic information.
+    /// Returns true on success; false if probe not found.
     [[nodiscard]] bool removeProbe(const std::string& probeId, std::string& message);
-    // Clears all registered probes.
+
+    /// Clears all registered probes and discards their data.
+    /// Equivalent to removing probes individually but faster.
     void clearProbes() noexcept;
 
 private:
