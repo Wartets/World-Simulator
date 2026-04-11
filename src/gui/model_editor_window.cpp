@@ -842,11 +842,11 @@ std::string ModelEditorWindow::serializeModelFromGraph() const {
 
     auto findAssignedStageId = [&](const std::string& interactionNodeId) -> std::string {
         for (const auto& connection : connections) {
-            if (connection.to_node_id != interactionNodeId) {
+            if (connection.toNodeId != interactionNodeId) {
                 continue;
             }
 
-            const auto fromIt = nodesById.find(connection.from_node_id);
+            const auto fromIt = nodesById.find(connection.fromNodeId);
             if (fromIt == nodesById.end() || fromIt->second->type != NodeType::Stage) {
                 continue;
             }
@@ -876,14 +876,14 @@ std::string ModelEditorWindow::serializeModelFromGraph() const {
         std::vector<std::string> reads;
         std::vector<std::string> writes;
         for (const auto& connection : connections) {
-            if (connection.to_node_id == interactionNode->id) {
-                const auto sourceVarIt = variableNameByNodeId.find(connection.from_node_id);
+            if (connection.toNodeId == interactionNode->id) {
+                const auto sourceVarIt = variableNameByNodeId.find(connection.fromNodeId);
                 if (sourceVarIt != variableNameByNodeId.end()) {
                     reads.push_back(sourceVarIt->second);
                 }
             }
-            if (connection.from_node_id == interactionNode->id) {
-                const auto targetVarIt = variableNameByNodeId.find(connection.to_node_id);
+            if (connection.fromNodeId == interactionNode->id) {
+                const auto targetVarIt = variableNameByNodeId.find(connection.toNodeId);
                 if (targetVarIt != variableNameByNodeId.end()) {
                     writes.push_back(targetVarIt->second);
                 }
@@ -1307,10 +1307,10 @@ void ModelEditorWindow::renderPropertyInspector() {
     int incoming_connections = 0;
     int outgoing_connections = 0;
     for (const auto& connection : node_editor->getConnections()) {
-        if (connection.to_node_id == selected_node->id) {
+        if (connection.toNodeId == selected_node->id) {
             ++incoming_connections;
         }
-        if (connection.from_node_id == selected_node->id) {
+        if (connection.fromNodeId == selected_node->id) {
             ++outgoing_connections;
         }
     }
@@ -1446,10 +1446,10 @@ void ModelEditorWindow::renderPropertyInspector() {
 
     if (ImGui::CollapsingHeader("Connection Context", ImGuiTreeNodeFlags_DefaultOpen)) {
         for (const auto& connection : node_editor->getConnections()) {
-            if (connection.from_node_id == selected_node->id || connection.to_node_id == selected_node->id) {
+            if (connection.fromNodeId == selected_node->id || connection.toNodeId == selected_node->id) {
                 ImGui::BulletText("%s:%s -> %s:%s",
-                                  connection.from_node_id.c_str(), connection.from_port_name.c_str(),
-                                  connection.to_node_id.c_str(), connection.to_port_name.c_str());
+                                  connection.fromNodeId.c_str(), connection.fromPortName.c_str(),
+                                  connection.toNodeId.c_str(), connection.toPortName.c_str());
             }
         }
     }
@@ -1703,12 +1703,12 @@ bool ModelEditorWindow::hasCyclicDependencies() const {
     }
 
     for (const auto& connection : connections) {
-        auto fromIt = adjacency.find(connection.from_node_id);
-        auto toIt = adjacency.find(connection.to_node_id);
+        auto fromIt = adjacency.find(connection.fromNodeId);
+        auto toIt = adjacency.find(connection.toNodeId);
         if (fromIt == adjacency.end() || toIt == adjacency.end()) {
             continue;
         }
-        fromIt->second.push_back(connection.to_node_id);
+        fromIt->second.push_back(connection.toNodeId);
     }
 
     std::unordered_set<std::string> visited;

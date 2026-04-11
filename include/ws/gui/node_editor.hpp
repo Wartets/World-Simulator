@@ -55,13 +55,13 @@ enum class DataType {
 // Connection point on a node.
 struct Port {
     std::string name;
-    std::string variable_id;
-    bool is_input{true};
+    std::string variableId;
+    bool isInput{true};
     ImVec2 position;
     
     Port() = default;
     Port(const std::string& n, const std::string& vid, bool is_in) 
-        : name(n), variable_id(vid), is_input(is_in) {}
+        : name(n), variableId(vid), isInput(is_in) {}
 };
 
 // === Node Definition ===
@@ -114,7 +114,7 @@ struct Node {
         const float half_w = std::max(24.0f, size.x * 0.5f - 6.0f);
         const float half_h = std::max(14.0f, size.y * 0.5f - 6.0f);
         const float shape_n = 4.0f; // superellipse exponent ~ rounded rectangle
-        const std::size_t hash = std::hash<std::string>{}(port.name + "|" + port.variable_id + (port.is_input ? "|in" : "|out"));
+        const std::size_t hash = std::hash<std::string>{}(port.name + "|" + port.variableId + (port.isInput ? "|in" : "|out"));
         const float hash01 = static_cast<float>(hash & 0xFFFFu) / 65535.0f;
         const float angle = hash01 * 6.28318530718f;
         const float dx = std::cos(angle);
@@ -146,16 +146,16 @@ struct Node {
 
 // A connection between two nodes.
 struct Connection {
-    std::string from_node_id;
-    std::string to_node_id;
-    std::string from_port_name;
-    std::string to_port_name;
+    std::string fromNodeId;
+    std::string toNodeId;
+    std::string fromPortName;
+    std::string toPortName;
     
     Connection() = default;
     Connection(const std::string& from, const std::string& to,
                const std::string& from_p, const std::string& to_p)
-        : from_node_id(from), to_node_id(to), 
-          from_port_name(from_p), to_port_name(to_p) {}
+                : fromNodeId(from), toNodeId(to), 
+                    fromPortName(from_p), toPortName(to_p) {}
 };
 
 // === Node Editor State ===

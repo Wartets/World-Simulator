@@ -175,8 +175,8 @@ ImVec2 connectionAnchorForNode(const ws::gui::Node& node,
     const float base_angle = std::atan2(other_center.y - center.y, other_center.x - center.x);
 
     const std::string hashKey = source_side
-        ? (conn.from_node_id + "|" + conn.from_port_name + "|" + conn.to_node_id + "|" + conn.to_port_name)
-        : (conn.to_node_id + "|" + conn.to_port_name + "|" + conn.from_node_id + "|" + conn.from_port_name);
+        ? (conn.fromNodeId + "|" + conn.fromPortName + "|" + conn.toNodeId + "|" + conn.toPortName)
+        : (conn.toNodeId + "|" + conn.toPortName + "|" + conn.fromNodeId + "|" + conn.fromPortName);
     const std::size_t h = std::hash<std::string>{}(hashKey);
     const float u = static_cast<float>(h & 0xFFFFu) / 65535.0f; // [0,1]
     const float signed_u = (u * 2.0f) - 1.0f; // [-1,1]
@@ -205,8 +205,8 @@ ImVec2 connectionAnchorForLabelBox(const ws::gui::Node& node,
     
     // Hash-based angular spread to distribute multiple edges around the perimeter
     const std::string hashKey = source_side
-        ? (conn.from_node_id + "|" + conn.from_port_name + "|" + conn.to_node_id + "|" + conn.to_port_name)
-        : (conn.to_node_id + "|" + conn.to_port_name + "|" + conn.from_node_id + "|" + conn.from_port_name);
+        ? (conn.fromNodeId + "|" + conn.fromPortName + "|" + conn.toNodeId + "|" + conn.toPortName)
+        : (conn.toNodeId + "|" + conn.toPortName + "|" + conn.fromNodeId + "|" + conn.fromPortName);
     const std::size_t h = std::hash<std::string>{}(hashKey);
     const float u = static_cast<float>(h & 0xFFFFu) / 65535.0f;
     const float signed_u = (u * 2.0f) - 1.0f;
@@ -404,7 +404,7 @@ void NodeEditor::removeNode(const std::string& node_id) {
     connections.erase(
         std::remove_if(connections.begin(), connections.end(),
             [&node_id](const Connection& c) {
-                return c.from_node_id == node_id || c.to_node_id == node_id;
+                return c.fromNodeId == node_id || c.toNodeId == node_id;
             }),
         connections.end()
     );
@@ -433,10 +433,10 @@ const Node* NodeEditor::getNode(const std::string& node_id) const {
 void NodeEditor::addConnection(const Connection& conn) {
     // Check if already exists
     for (const auto& c : connections) {
-        if (c.from_node_id == conn.from_node_id && 
-            c.to_node_id == conn.to_node_id &&
-            c.from_port_name == conn.from_port_name &&
-            c.to_port_name == conn.to_port_name) {
+        if (c.fromNodeId == conn.fromNodeId && 
+            c.toNodeId == conn.toNodeId &&
+            c.fromPortName == conn.fromPortName &&
+            c.toPortName == conn.toPortName) {
             return; // Already exists
         }
     }
@@ -447,10 +447,10 @@ void NodeEditor::removeConnection(const Connection& conn) {
     connections.erase(
         std::remove_if(connections.begin(), connections.end(),
             [&conn](const Connection& c) {
-                return c.from_node_id == conn.from_node_id && 
-                       c.to_node_id == conn.to_node_id &&
-                       c.from_port_name == conn.from_port_name &&
-                       c.to_port_name == conn.to_port_name;
+                  return c.fromNodeId == conn.fromNodeId && 
+                      c.toNodeId == conn.toNodeId &&
+                      c.fromPortName == conn.fromPortName &&
+                      c.toPortName == conn.toPortName;
             }),
         connections.end()
     );
@@ -734,8 +734,8 @@ void NodeEditor::relaxCircularLayout() {
 
     // Edge spring forces: use pre-built index map to avoid O(n) searches per edge
     for (const auto& conn : connections) {
-        auto fitIter = nodeIdToIndex.find(conn.from_node_id);
-        auto tiIter = nodeIdToIndex.find(conn.to_node_id);
+        auto fitIter = nodeIdToIndex.find(conn.fromNodeId);
+        auto tiIter = nodeIdToIndex.find(conn.toNodeId);
         if (fitIter == nodeIdToIndex.end() || tiIter == nodeIdToIndex.end()) {
             continue;  // Skip invalid edges
         }
@@ -883,8 +883,8 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
     const float line_width = std::max(1.6f, 2.6f * std::sqrt(std::max(0.15f, zoom)));
     
     for (const auto& conn : connections) {
-        Node* from_node = getNode(conn.from_node_id);
-        Node* to_node = getNode(conn.to_node_id);
+        Node* from_node = getNode(conn.fromNodeId);
+        Node* to_node = getNode(conn.toNodeId);
         
         if (!from_node || !to_node) continue;
         
@@ -893,14 +893,14 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
         Port* to_port = nullptr;
         
         for (auto& port : from_node->output_ports) {
-            if (port.name == conn.from_port_name) {
+            if (port.name == conn.fromPortName) {
                 from_port = &port;
                 break;
             }
         }
         
         for (auto& port : to_node->input_ports) {
-            if (port.name == conn.to_port_name) {
+            if (port.name == conn.toPortName) {
                 to_port = &port;
                 break;
             }
@@ -924,7 +924,7 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
                 line_color = ImGui::GetColorU32(ImVec4(0.88f, 0.80f, 0.34f, 0.92f));
             } else if (from_node->type == NodeType::Domain || to_node->type == NodeType::Domain) {
                 line_color = ImGui::GetColorU32(ImVec4(0.47f, 0.73f, 0.94f, 0.88f));
-            } else if (from_port->is_input || to_port->is_input) {
+            } else if (from_port->isInput || to_port->isInput) {
                 line_color = ImGui::GetColorU32(ImVec4(0.36f, 0.90f, 0.64f, 0.88f));
             }
 
@@ -963,7 +963,7 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
             
             // Perpendicular offset to separate nearby edges - context-aware edge bundling
             // Uses connection hash to offset each edge slightly, creating natural separation
-            const std::string edge_hash_key = conn.from_node_id + "|" + conn.to_node_id + "|" + conn.from_port_name + "|" + conn.to_port_name;
+            const std::string edge_hash_key = conn.fromNodeId + "|" + conn.toNodeId + "|" + conn.fromPortName + "|" + conn.toPortName;
             const std::size_t edge_hash = std::hash<std::string>{}(edge_hash_key);
             const float hash01 = static_cast<float>(edge_hash & 0xFFFFu) / 65535.0f;
             const float edge_offset = (hash01 - 0.5f) * std::min(24.0f, direct * 0.12f);
