@@ -123,6 +123,14 @@ Installed package layout includes:
 - `models/` built-in model packages
 - top-level `LICENSE` and `README.md`
 
+Release diagnostics:
+
+- **Windows (MSVC)**: packaged builds include `.pdb` symbol files (Release/RelWithDebInfo) alongside executables.
+- GUI crash diagnostics write timestamped reports under per-user settings storage:
+  - Windows: `%APPDATA%/WorldSimulator/crash_reports/`
+  - Linux: `${XDG_CONFIG_HOME:-~/.config}/WorldSimulator/crash_reports/`
+  - macOS: `~/Library/Application Support/WorldSimulator/crash_reports/`
+
 On Windows NSIS builds, uninstallation is provided by the generated installer and removes installed application-managed files while preserving user settings/data stored outside the install directory.
 
 ---

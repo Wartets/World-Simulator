@@ -2,6 +2,7 @@
 #include "ws/gui/exception_message.hpp"
 #include "ws/gui/build_info.hpp"
 #include "ws/gui/launch_options.hpp"
+#include "ws/gui/crash_report.hpp"
 
 #include <exception>
 #include <iostream>
@@ -16,6 +17,9 @@
 // GUI application entry point.
 // Creates and runs the main window with exception handling.
 int GuiMain(const std::vector<std::string>& args) {
+    ws::gui::crash::installCrashHandlers(ws::gui::kApplicationVersion);
+    ws::gui::crash::setCrashContext("gui", "startup");
+
     const ws::gui::LaunchParseResult launch = ws::gui::parseLaunchOptions(args);
     if (launch.showHelp) {
         std::cout
@@ -39,6 +43,13 @@ int GuiMain(const std::vector<std::string>& args) {
         ws::gui::MainWindow window(launch.request);
         return window.run();
     } catch (const std::exception& exception) {
+        ws::gui::crash::recordHandledFailure(ws::gui::crash::CrashReportInput{
+            ws::gui::kApplicationVersion,
+            "gui",
+            "startup",
+            "std_exception",
+            exception.what(),
+            false});
         const auto translated = ws::gui::translateExceptionMessage(
             exception,
             "GUI startup failed",
@@ -47,6 +58,13 @@ int GuiMain(const std::vector<std::string>& args) {
                   << translated.technicalDetail << " | version=" << ws::gui::kApplicationVersion << std::endl;
         return 1;
     } catch (...) {
+        ws::gui::crash::recordHandledFailure(ws::gui::crash::CrashReportInput{
+            ws::gui::kApplicationVersion,
+            "gui",
+            "startup",
+            "unknown_exception",
+            "unknown non-std exception",
+            false});
         std::cerr << "What happened: GUI startup failed | Why: an unknown exception was raised | Next: Check the configuration, model files, and available system resources, then retry.\n"
                   << "GUI startup failed | unknown exception | version=" << ws::gui::kApplicationVersion << std::endl;
         return 1;

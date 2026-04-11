@@ -166,6 +166,7 @@ target_compile_definitions(imgui_backend PUBLIC IMGUI_ENABLE_DOCKING)
 
 add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/crash_report.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/color_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/main_window/detail_utils.cpp
@@ -228,11 +229,57 @@ target_link_libraries(world_sim_gui PRIVATE ws_core imgui_backend OpenGL::GL glf
 target_compile_definitions(world_sim_gui PRIVATE IMGUI_ENABLE_DOCKING)
 target_compile_definitions(world_sim_gui PRIVATE WS_PROJECT_VERSION="${PROJECT_VERSION}")
 
+if(MSVC)
+    target_compile_options(world_sim PRIVATE $<$<CONFIG:Release>:/Zi>)
+    target_compile_options(world_sim_gui PRIVATE $<$<CONFIG:Release>:/Zi>)
+
+    target_link_options(world_sim PRIVATE
+        $<$<CONFIG:Release>:/DEBUG:FULL /INCREMENTAL:NO /OPT:REF /OPT:ICF>
+        $<$<CONFIG:RelWithDebInfo>:/DEBUG:FULL>)
+    target_link_options(world_sim_gui PRIVATE
+        $<$<CONFIG:Release>:/DEBUG:FULL /INCREMENTAL:NO /OPT:REF /OPT:ICF>
+        $<$<CONFIG:RelWithDebInfo>:/DEBUG:FULL>)
+endif()
+
+if(NOT MSVC)
+    find_program(WS_OBJCOPY_EXECUTABLE NAMES llvm-objcopy objcopy)
+    if(WS_OBJCOPY_EXECUTABLE)
+        add_custom_command(TARGET world_sim POST_BUILD
+            COMMAND ${WS_OBJCOPY_EXECUTABLE} --only-keep-debug
+                $<TARGET_FILE:world_sim>
+                $<TARGET_FILE:world_sim>.debug
+            VERBATIM)
+        add_custom_command(TARGET world_sim_gui POST_BUILD
+            COMMAND ${WS_OBJCOPY_EXECUTABLE} --only-keep-debug
+                $<TARGET_FILE:world_sim_gui>
+                $<TARGET_FILE:world_sim_gui>.debug
+            VERBATIM)
+    endif()
+endif()
+
 include(GNUInstallDirs)
 
 install(TARGETS world_sim world_sim_gui
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+if(MSVC)
+    install(FILES
+        $<TARGET_PDB_FILE:world_sim>
+        $<TARGET_PDB_FILE:world_sim_gui>
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        CONFIGURATIONS Release RelWithDebInfo
+        OPTIONAL)
+endif()
+
+if(NOT MSVC)
+    install(FILES
+        $<TARGET_FILE:world_sim>.debug
+        $<TARGET_FILE:world_sim_gui>.debug
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        CONFIGURATIONS Release RelWithDebInfo
+        OPTIONAL)
+endif()
 
 install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
@@ -358,6 +405,14 @@ add_executable(launch_options_test
 )
 target_link_libraries(launch_options_test PRIVATE ws_core)
 add_test(NAME launch_options_test COMMAND launch_options_test)
+
+add_executable(crash_report_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/crash_report_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/crash_report.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/storage_paths.cpp"
+)
+target_link_libraries(crash_report_test PRIVATE ws_core)
+add_test(NAME crash_report_test COMMAND crash_report_test)
 
 target_sources(full_pipeline_multi_model_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
