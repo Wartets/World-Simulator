@@ -2,6 +2,8 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <cstdint>
+#include <cstring>
 #include "miniz.h"
 #include "model_schema_generated.h"
 #include <stdexcept>
@@ -18,15 +20,38 @@ static std::string readTextFile(const std::filesystem::path& p) {
     return ss.str();
 }
 
+// Helper to read entire file as bytes
+static std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& p) {
+    if (!std::filesystem::exists(p)) return {};
+    std::ifstream is(p, std::ios::in | std::ios::binary);
+    if (!is) return {};
+
+    is.seekg(0, std::ios::end);
+    const auto size = is.tellg();
+    if (size <= 0) return {};
+    is.seekg(0, std::ios::beg);
+
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    is.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!is) return {};
+    return bytes;
+}
+
 ModelContext ModelParser::loadFromDirectory(const std::filesystem::path& dirPath) {
     ModelContext ctx;
     ctx.metadata_json = readTextFile(dirPath / "metadata.json");
     ctx.version_json = readTextFile(dirPath / "version.json");
     ctx.model_json = readTextFile(dirPath / "model.json");
     ctx.ir_logic_string = readTextFile(dirPath / "logic.ir");
+
+    ctx.model_bin = readBinaryFile(dirPath / "model.bin");
+    ctx.layout_bin = readBinaryFile(dirPath / "layout.bin");
+    ctx.logic_opt_bin = readBinaryFile(dirPath / "logic.opt.bin");
+    ctx.logic_cpu_bin = readBinaryFile(dirPath / "logic.cpu.bin");
+    ctx.logic_gpu_spv = readBinaryFile(dirPath / "logic.gpu.spv");
     
-    if (ctx.model_json.empty()) {
-        throw ModelParseError("Missing or empty model.json in directory: " + dirPath.string());
+    if (ctx.model_json.empty() && ctx.model_bin.empty()) {
+        throw ModelParseError("Missing model source in directory (expected model.json or model.bin): " + dirPath.string());
     }
     if (ctx.ir_logic_string.empty()) {
         throw ModelParseError("Missing or empty logic.ir in directory: " + dirPath.string());
@@ -56,16 +81,38 @@ ModelContext ModelParser::loadFromZip(const std::filesystem::path& zipPath) {
         return s;
     };
 
+    auto extract_bin = [&](const char* filename) -> std::vector<std::uint8_t> {
+        int target_index = mz_zip_reader_locate_file(&zip_archive, filename, nullptr, 0);
+        if (target_index < 0) return {};
+
+        size_t uncomp_size = 0;
+        void* p = mz_zip_reader_extract_to_heap(&zip_archive, target_index, &uncomp_size, 0);
+        if (!p || uncomp_size == 0u) {
+            if (p) mz_free(p);
+            return {};
+        }
+
+        std::vector<std::uint8_t> bytes(uncomp_size);
+        std::memcpy(bytes.data(), p, uncomp_size);
+        mz_free(p);
+        return bytes;
+    };
+
     ModelContext ctx;
     ctx.metadata_json = extract_str("metadata.json");
     ctx.version_json = extract_str("version.json");
     ctx.model_json = extract_str("model.json");
     ctx.ir_logic_string = extract_str("logic.ir");
+    ctx.model_bin = extract_bin("model.bin");
+    ctx.layout_bin = extract_bin("layout.bin");
+    ctx.logic_opt_bin = extract_bin("logic.opt.bin");
+    ctx.logic_cpu_bin = extract_bin("logic.cpu.bin");
+    ctx.logic_gpu_spv = extract_bin("logic.gpu.spv");
 
     mz_zip_reader_end(&zip_archive);
 
-    if (ctx.model_json.empty() || ctx.ir_logic_string.empty()) {
-        throw ModelParseError("Required files missing from .simmodel ZIP: " + zipPath.string());
+    if ((ctx.model_json.empty() && ctx.model_bin.empty()) || ctx.ir_logic_string.empty()) {
+        throw ModelParseError("Required files missing from .simmodel ZIP (expected model.json or model.bin, and logic.ir): " + zipPath.string());
     }
 
     return ctx;
@@ -86,12 +133,17 @@ ModelContext ModelParser::load(const std::filesystem::path& path) {
         throw ModelParseError("Failed to parse logic.ir: " + std::string(e.what()));
     }
     
-    // Attempt json to flatbuffer compilation dynamically
-    try {
-        auto j = nlohmann::json::parse(ctx.model_json);
-        ctx.flatbuffers_bin = compileToFlatBuffers(j);
-    } catch(const std::exception& e) {
-        throw ModelParseError("Failed to parse or compile model.json: " + std::string(e.what()));
+    // Prefer packaged binary model artifact when present.
+    if (!ctx.model_bin.empty()) {
+        ctx.flatbuffers_bin = ctx.model_bin;
+    } else {
+        // Fall back to json -> flatbuffer compilation.
+        try {
+            auto j = nlohmann::json::parse(ctx.model_json);
+            ctx.flatbuffers_bin = compileToFlatBuffers(j);
+        } catch(const std::exception& e) {
+            throw ModelParseError("Failed to parse or compile model.json: " + std::string(e.what()));
+        }
     }
 
     return ctx;

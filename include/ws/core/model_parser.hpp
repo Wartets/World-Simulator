@@ -15,6 +15,13 @@ struct ModelContext {
     std::string version_json;
     std::string model_json;
     std::string ir_logic_string;
+
+    // Optional runtime/package artifacts.
+    std::vector<uint8_t> model_bin;
+    std::vector<uint8_t> layout_bin;
+    std::vector<uint8_t> logic_opt_bin;
+    std::vector<uint8_t> logic_cpu_bin;
+    std::vector<uint8_t> logic_gpu_spv;
     
     std::vector<uint8_t> flatbuffers_bin;
     std::unique_ptr<ir::Program> ir_program;

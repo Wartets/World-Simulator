@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cstring>
+#include <cstdint>
 #include <iterator>
 #include <set>
 #include <nlohmann/json.hpp>
@@ -201,6 +202,50 @@ static bool create_model_archive(
     return ok;
 }
 
+static bool create_binary_first_model_archive(
+    const std::filesystem::path& modelDir,
+    const std::filesystem::path& archivePath) {
+    const auto modelJsonText = read_text_file(modelDir / "model.json");
+    if (modelJsonText.empty()) {
+        return false;
+    }
+
+    std::vector<std::uint8_t> modelBin;
+    try {
+        const auto modelJson = nlohmann::json::parse(modelJsonText);
+        modelBin = ModelParser::compileToFlatBuffers(modelJson);
+    } catch (...) {
+        return false;
+    }
+
+    if (modelBin.empty()) {
+        return false;
+    }
+
+    // Use parser-stable IR for archive fixtures.
+    const std::string logicIr = R"IR(
+        @global f32 dt = 1.0
+        @interaction (physics) func tick() {
+            f32 %t = Load("temperature", 0, 0)
+            f32 %n = Add(%t, 0.0)
+            Store("temperature", 0, %n)
+        }
+    )IR";
+
+    mz_zip_archive zip{};
+    std::memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_writer_init_file(&zip, archivePath.string().c_str(), 0)) {
+        return false;
+    }
+
+    bool ok = true;
+    ok = ok && mz_zip_writer_add_mem(&zip, "model.bin", modelBin.data(), modelBin.size(), MZ_BEST_COMPRESSION);
+    ok = ok && mz_zip_writer_add_mem(&zip, "logic.ir", logicIr.data(), logicIr.size(), MZ_BEST_COMPRESSION);
+    ok = ok && mz_zip_writer_finalize_archive(&zip);
+    ok = ok && mz_zip_writer_end(&zip);
+    return ok;
+}
+
 static bool copy_directory_recursive(const std::filesystem::path& source, const std::filesystem::path& destination) {
     std::error_code ec;
     std::filesystem::create_directories(destination, ec);
@@ -278,6 +323,36 @@ void test_model_variable_catalog_loader() {
 
     std::filesystem::remove_all(tempRoot);
     std::cout << "Model Variable Catalog loader tests passed for directory and archive inputs.\n";
+}
+
+void test_model_parser_binary_first_archive() {
+    const std::filesystem::path modelDir = resolveModelDir("environmental_model_2d.simmodel");
+    if (!std::filesystem::exists(modelDir)) {
+        std::cout << "Skipping binary-first model parser test, path not found based on execution working directory.\n";
+        return;
+    }
+
+    const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_model_binary_first_test";
+    std::filesystem::create_directories(tempRoot);
+    const auto archivePath = tempRoot / "environmental_model_2d_binary_first.simmodel";
+
+    if (!create_binary_first_model_archive(modelDir, archivePath)) {
+        std::cerr << "Failed to create binary-first model archive fixture.\n";
+        assert(false);
+    }
+
+    try {
+        auto ctx = ModelParser::load(archivePath);
+        assert(!ctx.flatbuffers_bin.empty());
+        assert(!ctx.model_bin.empty());
+        assert(ctx.ir_program != nullptr);
+    } catch (const std::exception& e) {
+        std::cerr << "Binary-first model parser test failed: " << e.what() << "\n";
+        assert(false);
+    }
+
+    std::filesystem::remove_all(tempRoot);
+    std::cout << "Binary-first model parser test passed.\n";
 }
 
 void test_model_parameter_controls_loader() {
@@ -906,6 +981,7 @@ int main() {
     test_model_parser();
     test_all_shipped_models_parse();
     test_model_variable_catalog_loader();
+    test_model_parser_binary_first_archive();
     test_model_parameter_controls_loader();
     test_model_execution_spec_loader();
     test_forest_fire_execution_aliases();
