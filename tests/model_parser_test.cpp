@@ -98,6 +98,51 @@ void test_model_parser() {
     }
 }
 
+void test_model_parser_enforces_2d_grid_constraints() {
+    const auto baseModel = nlohmann::json::parse(R"JSON({
+        "name": "dimension_guard_fixture",
+        "version": "1.0.0",
+        "grid": {
+            "dimensions": [64, 32],
+            "topology": "Cartesian2D"
+        },
+        "numerics": {
+            "dt_ref": 0.1,
+            "time_integrator": "Euler"
+        }
+    })JSON");
+
+    auto validModel = baseModel;
+    auto compiled = ModelParser::compileToFlatBuffers(validModel);
+    assert(!compiled.empty());
+
+    validModel["grid"]["dimensions"] = 2;
+    compiled = ModelParser::compileToFlatBuffers(validModel);
+    assert(!compiled.empty());
+
+    bool threw = false;
+    auto invalidDimensionsModel = baseModel;
+    invalidDimensionsModel["grid"]["dimensions"] = nlohmann::json::array({16, 16, 16});
+    try {
+        (void)ModelParser::compileToFlatBuffers(invalidDimensionsModel);
+    } catch (const ModelParseError&) {
+        threw = true;
+    }
+    assert(threw);
+
+    threw = false;
+    auto invalidTopologyModel = baseModel;
+    invalidTopologyModel["grid"]["topology"] = "Cartesian3D";
+    try {
+        (void)ModelParser::compileToFlatBuffers(invalidTopologyModel);
+    } catch (const ModelParseError&) {
+        threw = true;
+    }
+    assert(threw);
+
+    std::cout << "Model parser 2D grid constraint tests passed.\n";
+}
+
 static std::string read_text_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input.is_open()) {
@@ -1149,6 +1194,7 @@ int main() {
     test_ir_parser();
     test_ir_parser_negative_literals();
     test_model_parser();
+    test_model_parser_enforces_2d_grid_constraints();
     test_all_shipped_models_parse();
     test_model_variable_catalog_loader();
     test_model_parser_binary_first_archive();

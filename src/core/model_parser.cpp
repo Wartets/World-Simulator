@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cstdint>
 #include <cstring>
+#include <cctype>
 #include "miniz.h"
 #include "model_schema_generated.h"
 #include <stdexcept>
@@ -35,6 +36,69 @@ static std::vector<std::uint8_t> readBinaryFile(const std::filesystem::path& p) 
     is.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     if (!is) return {};
     return bytes;
+}
+
+static std::string normalizeGridTopology(std::string topology) {
+    std::string normalized;
+    normalized.reserve(topology.size());
+    for (const char ch : topology) {
+        if (ch == '_' || ch == '-' || std::isspace(static_cast<unsigned char>(ch))) {
+            continue;
+        }
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    return normalized;
+}
+
+static std::vector<uint32_t> parseGridDimensions2D(const nlohmann::json& gridJson) {
+    constexpr uint32_t defaultExtent = 100u;
+
+    if (!gridJson.contains("dimensions")) {
+        return {defaultExtent, defaultExtent};
+    }
+
+    const auto& dimensions = gridJson.at("dimensions");
+    if (dimensions.is_array()) {
+        std::vector<uint32_t> parsedDimensions;
+        try {
+            parsedDimensions = dimensions.get<std::vector<uint32_t>>();
+        } catch (...) {
+            throw ModelParseError("grid.dimensions must be an array of positive integers for 2D models");
+        }
+
+        if (parsedDimensions.size() != 2u) {
+            throw ModelParseError(
+                "Only 2D grids are currently supported: grid.dimensions array must contain exactly two extents");
+        }
+        if (parsedDimensions[0] == 0u || parsedDimensions[1] == 0u) {
+            throw ModelParseError("grid.dimensions extents must be greater than zero");
+        }
+        return parsedDimensions;
+    }
+
+    if (dimensions.is_number_integer() || dimensions.is_number_unsigned()) {
+        const auto requestedDimensions = dimensions.get<uint32_t>();
+        if (requestedDimensions <= 1u) {
+            return {defaultExtent, defaultExtent};
+        }
+        if (requestedDimensions == 2u) {
+            return {defaultExtent, defaultExtent};
+        }
+        throw ModelParseError("Only 2D grids are currently supported: grid.dimensions cannot exceed 2");
+    }
+
+    throw ModelParseError("grid.dimensions must be an integer or an array of two positive integers");
+}
+
+static std::string parseGridTopology2D(const nlohmann::json& gridJson) {
+    const std::string topology = gridJson.value("topology", std::string{"Cartesian2D"});
+    const std::string normalizedTopology = normalizeGridTopology(topology);
+    if (normalizedTopology == "cartesian2d" || normalizedTopology == "cartesian") {
+        return "Cartesian2D";
+    }
+
+    throw ModelParseError(
+        "Only Cartesian2D topology is currently supported for runtime execution");
 }
 
 ModelContext ModelParser::loadFromDirectory(const std::filesystem::path& dirPath) {
@@ -247,27 +311,10 @@ std::vector<uint8_t> ModelParser::compileToFlatBuffers(const nlohmann::json& j) 
     
     // grid
     auto grid_j = j.value("grid", nlohmann::json::object());
-    std::vector<uint32_t> dims{100, 100};
-    if (grid_j.contains("dimensions")) {
-        const auto& d = grid_j["dimensions"];
-        if (d.is_array()) {
-            try {
-                dims = d.get<std::vector<uint32_t>>();
-            } catch (...) {
-                dims = {100, 100};
-            }
-        } else if (d.is_number_integer() || d.is_number_unsigned()) {
-            const auto dim = d.get<uint32_t>();
-            if (dim <= 1u) {
-                dims = {100, 100};
-            } else {
-                dims = std::vector<uint32_t>(dim, 100u);
-            }
-        }
-    }
+    const auto dims = parseGridDimensions2D(grid_j);
 
     auto fb_dims = builder.CreateVector(dims);
-    const std::string topology = grid_j.value("topology", std::string{"Cartesian2D"});
+    const std::string topology = parseGridTopology2D(grid_j);
 
     std::string boundaryConditions{"Wrap"};
     if (grid_j.contains("boundary_conditions")) {
