@@ -1,10 +1,13 @@
 #include "ws/gui/node_editor.hpp"
+#include "ws/gui/layout_constants.hpp"
 
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
 #include <sstream>
 #include <limits>
+
+#define layout ws::gui::layout
 
 namespace {
 
@@ -14,9 +17,9 @@ namespace {
 // @return Brightened color as packed U32
 ImU32 brighten(ImU32 color, float factor) {
     ImVec4 rgba = ImGui::ColorConvertU32ToFloat4(color);
-    rgba.x = std::clamp(rgba.x * factor, 0.0f, 1.0f);
-    rgba.y = std::clamp(rgba.y * factor, 0.0f, 1.0f);
-    rgba.z = std::clamp(rgba.z * factor, 0.0f, 1.0f);
+    rgba.x = std::clamp(rgba.x * factor, layout::kZero, layout::kOne);
+    rgba.y = std::clamp(rgba.y * factor, layout::kZero, layout::kOne);
+    rgba.z = std::clamp(rgba.z * factor, layout::kZero, layout::kOne);
     return ImGui::GetColorU32(rgba);
 }
 
@@ -66,7 +69,7 @@ std::string normalizeNodeLabel(const std::string& label) {
 }
 
 std::string wrapLabelToWidth(const std::string& text, float max_width, int max_lines) {
-    if (text.empty() || max_width <= 8.0f || max_lines <= 1) {
+    if (text.empty() || max_width <= layout::kNodeEditorMinTextWidth || max_lines <= 1) {
         return text;
     }
 
@@ -153,17 +156,17 @@ float dot(const ImVec2& a, const ImVec2& b) {
     return a.x * b.x + a.y * b.y;
 }
 
-ImVec2 superellipsePoint(const ws::gui::Node& node, float angle, float inset = 4.0f) {
+ImVec2 superellipsePoint(const ws::gui::Node& node, float angle, float inset = layout::kNodeEditorPortInset) {
     const ImVec2 center(node.position.x + node.size.x * 0.5f, node.position.y + node.size.y * 0.5f);
-    const float half_w = std::max(20.0f, node.size.x * 0.5f - inset);
-    const float half_h = std::max(12.0f, node.size.y * 0.5f - inset);
-    const float n = 8.0f;
+    const float half_w = std::max(layout::kNodeEditorMinHalfWidth, node.size.x * 0.5f - inset);
+    const float half_h = std::max(layout::kNodeEditorMinHalfHeight, node.size.y * 0.5f - inset);
+    const float n = layout::kNodeEditorSuperellipseExponent;
     const float dx = std::cos(angle);
     const float dy = std::sin(angle);
     const float norm = std::pow(std::pow(std::fabs(dx) / half_w, n) +
                                 std::pow(std::fabs(dy) / half_h, n),
                                 1.0f / n);
-    const float scale = (norm > 0.000001f) ? (1.0f / norm) : 1.0f;
+    const float scale = (norm > 0.000001f) ? (layout::kOne / norm) : layout::kOne;
     return ImVec2(center.x + dx * scale, center.y + dy * scale);
 }
 
@@ -179,11 +182,13 @@ ImVec2 connectionAnchorForNode(const ws::gui::Node& node,
         : (conn.toNodeId + "|" + conn.toPortName + "|" + conn.fromNodeId + "|" + conn.fromPortName);
     const std::size_t h = std::hash<std::string>{}(hashKey);
     const float u = static_cast<float>(h & 0xFFFFu) / 65535.0f; // [0,1]
-    const float signed_u = (u * 2.0f) - 1.0f; // [-1,1]
+    const float signed_u = (u * 2.0f) - layout::kOne; // [-1,1]
 
     const float dist = std::sqrt((other_center.x - center.x) * (other_center.x - center.x) +
                                  (other_center.y - center.y) * (other_center.y - center.y));
-    const float spread = std::clamp(0.16f + 80.0f / std::max(80.0f, dist), 0.18f, 0.52f);
+    const float spread = std::clamp(layout::kNodeEditorAnchorSpreadBase + layout::kNodeEditorAnchorSpreadDistance / std::max(layout::kNodeEditorAnchorSpreadDistance, dist),
+                                    layout::kNodeEditorAnchorSpreadMin,
+                                    layout::kNodeEditorAnchorSpreadMax);
     const float angle = base_angle + signed_u * spread;
     return superellipsePoint(node, angle, 4.5f);
 }
@@ -209,28 +214,28 @@ ImVec2 connectionAnchorForLabelBox(const ws::gui::Node& node,
         : (conn.toNodeId + "|" + conn.toPortName + "|" + conn.fromNodeId + "|" + conn.fromPortName);
     const std::size_t h = std::hash<std::string>{}(hashKey);
     const float u = static_cast<float>(h & 0xFFFFu) / 65535.0f;
-    const float signed_u = (u * 2.0f) - 1.0f;
+    const float signed_u = (u * 2.0f) - layout::kOne;
     
     // Spread angle based on distance to other node
-    const float spread = std::clamp(0.12f + 60.0f / std::max(80.0f, dist_to_other), 0.12f, 0.48f);
+    const float spread = std::clamp(0.12f + 60.0f / std::max(layout::kNodeEditorAnchorSpreadDistance, dist_to_other), 0.12f, 0.48f);
     const float final_angle = base_angle + signed_u * spread;
     
     // Exact label dimensions from Node::render():
     // - max_label_width = scaled_size.x - 18.0f (in world space: node.size.x - 18.0f)
     // - Vertical: full node height (text centered in entire node)
-    const float half_width = std::max(10.0f, (node.size.x - 18.0f) * 0.5f);
+    const float half_width = std::max(10.0f, (node.size.x - layout::kNodeEditorLabelPaddingX) * 0.5f);
     const float half_height = node.size.y * 0.5f;
     
     // Rounded rectangle perimeter intersection using superellipse (n=4)
     const float abs_cos = std::fabs(std::cos(final_angle));
     const float abs_sin = std::fabs(std::sin(final_angle));
-    const float shape_n = 8.0f;
+    const float shape_n = layout::kNodeEditorSuperellipseExponent;
     
     const float norm = std::pow(std::pow(abs_cos / half_width, shape_n) +
                                 std::pow(abs_sin / half_height, shape_n),
                                 1.0f / shape_n);
     
-    const float scale = (norm > 0.000001f) ? (1.0f / norm) : 1.0f;
+    const float scale = (norm > 0.000001f) ? (layout::kOne / norm) : layout::kOne;
     
     const ImVec2 anchor(center.x + std::cos(final_angle) * scale,
                        center.y + std::sin(final_angle) * scale);
@@ -239,7 +244,7 @@ ImVec2 connectionAnchorForLabelBox(const ws::gui::Node& node,
 
 void drawArrowHead(ImDrawList* draw_list, const ImVec2& from, const ImVec2& to, ImU32 color, float size) {
     const ImVec2 dir(to.x - from.x, to.y - from.y);
-    const float len = std::max(1.0f, std::sqrt(dir.x * dir.x + dir.y * dir.y));
+    const float len = std::max(layout::kOne, std::sqrt(dir.x * dir.x + dir.y * dir.y));
     const ImVec2 n(dir.x / len, dir.y / len);
     const ImVec2 p(-n.y, n.x);
     const ImVec2 tip = to;
@@ -256,37 +261,37 @@ namespace ws::gui {
 // === Node Implementation ===
 
 ImU32 Node::getColorU32() const {
-    ImVec4 color = ImVec4(0.82f, 0.86f, 0.95f, 1.0f);
+    ImVec4 color = ImVec4(0.82f, 0.86f, 0.95f, layout::kOne);
     
     switch (type) {
         case NodeType::GlobalVariable:
-            color = ImVec4(0.27f, 0.49f, 0.90f, 1.0f);
+            color = ImVec4(0.27f, 0.49f, 0.90f, layout::kOne);
             break;
         case NodeType::CellVariable:
-            color = ImVec4(0.30f, 0.76f, 0.50f, 1.0f);
+            color = ImVec4(0.30f, 0.76f, 0.50f, layout::kOne);
             break;
         case NodeType::Parameter:
-            color = ImVec4(0.55f, 0.58f, 0.67f, 1.0f);
+            color = ImVec4(0.55f, 0.58f, 0.67f, layout::kOne);
             break;
         case NodeType::Derived:
-            color = ImVec4(0.70f, 0.45f, 0.88f, 1.0f);
+            color = ImVec4(0.70f, 0.45f, 0.88f, layout::kOne);
             break;
         case NodeType::Equation:
         case NodeType::Operator:
-            color = ImVec4(0.93f, 0.66f, 0.32f, 1.0f);
+            color = ImVec4(0.93f, 0.66f, 0.32f, layout::kOne);
             break;
         case NodeType::Stage:
-            color = ImVec4(0.80f, 0.76f, 0.45f, 1.0f);
+            color = ImVec4(0.80f, 0.76f, 0.45f, layout::kOne);
             break;
         case NodeType::Domain:
-            color = ImVec4(0.45f, 0.72f, 0.90f, 1.0f);
+            color = ImVec4(0.45f, 0.72f, 0.90f, layout::kOne);
             break;
     }
     
     if (is_selected) {
-        color.x = std::min(1.0f, color.x + 0.14f);
-        color.y = std::min(1.0f, color.y + 0.14f);
-        color.z = std::min(1.0f, color.z + 0.14f);
+        color.x = std::min(layout::kOne, color.x + 0.14f);
+        color.y = std::min(layout::kOne, color.y + 0.14f);
+        color.z = std::min(layout::kOne, color.z + 0.14f);
     }
     
     return ImGui::GetColorU32(color);
@@ -295,12 +300,12 @@ ImU32 Node::getColorU32() const {
 
 bool Node::contains(ImVec2 point) const {
     const ImVec2 center(position.x + size.x * 0.5f, position.y + size.y * 0.5f);
-    const float rx = std::max(18.0f, size.x * 0.5f);
-    const float ry = std::max(10.0f, size.y * 0.5f);
-    const float n = 4.0f;
+    const float rx = std::max(layout::kNodeEditorContainsRadiusX, size.x * 0.5f);
+    const float ry = std::max(layout::kNodeEditorContainsRadiusY, size.y * 0.5f);
+    const float n = layout::kNodeEditorContainsExponent;
     const float dx = std::fabs(point.x - center.x) / rx;
     const float dy = std::fabs(point.y - center.y) / ry;
-    return std::pow(dx, n) + std::pow(dy, n) <= 1.0f;
+    return std::pow(dx, n) + std::pow(dy, n) <= layout::kOne;
 }
 
 void Node::render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is_hovered_node) {
@@ -308,23 +313,23 @@ void Node::render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is
     ImU32 border_color = is_hovered_node
         ? brighten(bg_color, 1.40f)
         : brighten(bg_color, 0.55f);
-    const float border_thickness = (is_hovered_node ? 3.0f : 1.8f) * scale;
+    const float border_thickness = (is_hovered_node ? layout::kNodeEditorHoverBorderThickness : layout::kNodeEditorBorderThickness) * scale;
 
     const ImVec2 scaled_size(size.x * scale, size.y * scale);
     const ImVec2 min_pos = screen_pos;
     const ImVec2 max_pos(screen_pos.x + scaled_size.x, screen_pos.y + scaled_size.y);
-    const float rounding = std::max(18.0f * scale, std::min(scaled_size.x, scaled_size.y) * 0.24f);
+    const float rounding = std::max(layout::kNodeEditorRoundingMin * scale, std::min(scaled_size.x, scaled_size.y) * layout::kNodeEditorRoundingFactor);
 
     draw_list->AddRectFilled(min_pos, max_pos, bg_color, rounding);
     draw_list->AddRect(min_pos, max_pos, border_color, rounding, 0, border_thickness);
     draw_list->AddRectFilled(ImVec2(min_pos.x + 2.0f * scale, min_pos.y + 2.0f * scale),
                              ImVec2(max_pos.x - 2.0f * scale, max_pos.y - 2.0f * scale),
-                             ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.03f)),
+                             ImGui::GetColorU32(ImVec4(layout::kOne, layout::kOne, layout::kOne, layout::kNodeEditorHighlightAlpha)),
                              rounding * 0.75f);
 
-    draw_list->AddRectFilled(ImVec2(min_pos.x + 1.0f * scale, min_pos.y + 1.0f * scale),
-                             ImVec2(max_pos.x - 1.0f * scale, min_pos.y + 14.0f * scale),
-                             ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 0.08f)),
+    draw_list->AddRectFilled(ImVec2(min_pos.x + layout::kNodeEditorHighlightInset * scale, min_pos.y + layout::kNodeEditorHighlightInset * scale),
+                             ImVec2(max_pos.x - layout::kNodeEditorHighlightInset * scale, min_pos.y + layout::kNodeEditorHighlightTopHeight * scale),
+                             ImGui::GetColorU32(ImVec4(layout::kOne, layout::kOne, layout::kOne, layout::kNodeEditorHighlightBandAlpha)),
                              rounding,
                              ImDrawFlags_RoundCornersTop);
 
@@ -332,7 +337,7 @@ void Node::render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is
 
     // Draw label (hide when zoomed out too far)
     if (scale > 0.34f) {
-        ImU32 text_color = ImGui::GetColorU32(ImVec4(0.05f, 0.06f, 0.08f, 1.0f));
+        ImU32 text_color = ImGui::GetColorU32(ImVec4(0.05f, 0.06f, 0.08f, layout::kOne));
         std::string display_label = normalizeNodeLabel(label);
         if (display_label.empty()) {
             display_label = nodeSymbol(type);
@@ -342,8 +347,8 @@ void Node::render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is
         float scaled_font_size = original_font_size * std::max(0.92f, scale * 1.10f);
         scaled_font_size = std::max(scaled_font_size, 12.0f);
 
-        const float max_label_width = std::max(24.0f, scaled_size.x - 18.0f * scale);
-        const int max_lines = std::max(1, static_cast<int>((scaled_size.y - 10.0f * scale) / (scaled_font_size * 1.1f)));
+        const float max_label_width = std::max(layout::kNodeEditorLabelMinWidth, scaled_size.x - layout::kNodeEditorLabelPaddingX * scale);
+        const int max_lines = std::max(1, static_cast<int>((scaled_size.y - layout::kNodeEditorLabelPaddingY * scale) / (scaled_font_size * 1.1f)));
         display_label = wrapLabelToWidth(display_label, max_label_width, std::min(3, max_lines));
 
         const ImVec2 text_size = ImGui::CalcTextSize(display_label.c_str());
@@ -351,7 +356,7 @@ void Node::render(ImDrawList* draw_list, ImVec2 screen_pos, float scale, bool is
         draw_list->AddText(ImGui::GetFont(), scaled_font_size, text_pos, text_color, display_label.c_str());
     } else {
         const char* symbol = nodeSymbol(type);
-        const float icon_size = std::max(10.0f, ImGui::GetFont()->FontSize * std::max(0.95f, scale * 1.8f));
+        const float icon_size = std::max(layout::kNodeEditorIconMinSize, ImGui::GetFont()->FontSize * std::max(0.95f, scale * 1.8f));
         const ImVec2 sym_size = ImGui::CalcTextSize(symbol);
         const ImVec2 sym_pos(center.x - sym_size.x * 0.5f, center.y - sym_size.y * 0.5f);
         draw_list->AddText(ImGui::GetFont(), icon_size, sym_pos, ImGui::GetColorU32(ImVec4(0.07f, 0.08f, 0.10f, 0.95f)), symbol);
@@ -504,20 +509,20 @@ void NodeEditor::render(ImVec2 avail_size) {
                         ImGui::IsMouseDown(ImGuiMouseButton_Right));
 
         if (panning && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
+            ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, layout::kZero);
             handlePanning(delta);
             ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
         }
         
         // Handle panning (right mouse drag)
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f)) {
-            ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right, 0.0f);
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, layout::kZero)) {
+            ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right, layout::kZero);
             handlePanning(delta);
             ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
         }
         
         // Handle zoom with mouse wheel (centered on cursor)
-        if (ImGui::GetIO().MouseWheel != 0.0f) {
+        if (ImGui::GetIO().MouseWheel != layout::kZero) {
             handleZoom(ImGui::GetIO().MouseWheel, mouse_pos);
         }
     } else {
@@ -539,7 +544,7 @@ void NodeEditor::render(ImVec2 avail_size) {
     const double now = ImGui::GetTime();
     const ImGuiIO& io = ImGui::GetIO();
     const bool mouse_buttons_down = io.MouseDown[ImGuiMouseButton_Left] || io.MouseDown[ImGuiMouseButton_Right];
-    const bool user_interacting_now = mouse_buttons_down || std::fabs(io.MouseWheel) > 0.0f;
+    const bool user_interacting_now = mouse_buttons_down || std::fabs(io.MouseWheel) > layout::kZero;
     const bool in_cooldown = last_user_interaction_time >= 0.0 &&
                              (now - last_user_interaction_time) < LAYOUT_INTERACTION_COOLDOWN_SEC;
     const int adaptive_interval = std::clamp(
@@ -648,7 +653,7 @@ void NodeEditor::handleZoom(float delta, ImVec2 mouse_screen_pos) {
     // Zoom centered on the mouse cursor position
     ImVec2 world_before = screenToWorld(mouse_screen_pos);
     
-    float zoom_factor = delta > 0.0f ? 1.12f : (1.0f / 1.12f);
+    float zoom_factor = delta > layout::kZero ? layout::kNodeEditorZoomStep : (layout::kOne / layout::kNodeEditorZoomStep);
     setZoom(zoom * zoom_factor);
     
     // After zoom, the same world point should be under the cursor
@@ -668,8 +673,8 @@ void NodeEditor::autoLayout() {
     if (nodes.empty()) {
         return;
     }
-    const float baseRadius = std::max(260.0f, 118.0f * std::sqrt(static_cast<float>(nodes.size())));
-    const ImVec2 center(0.5f * baseRadius, 0.5f * baseRadius);
+    const float baseRadius = std::max(layout::kNodeEditorBaseRadiusMin, layout::kNodeEditorBaseRadiusFactor * std::sqrt(static_cast<float>(nodes.size())));
+    const ImVec2 center(layout::kOne * 0.5f * baseRadius, layout::kOne * 0.5f * baseRadius);
 
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         const std::size_t h = std::hash<std::string>{}(nodes[i]->id);
@@ -709,9 +714,9 @@ void NodeEditor::relaxCircularLayout() {
                             nodes[i]->position.y + nodes[i]->size.y * 0.5f);
     }
 
-    const float repulsion = 128000.0f;
-    const float idealEdgeLength = 320.0f;
-    const float centerPull = 0.006f;
+    const float repulsion = layout::kNodeEditorRepulsion;
+    const float idealEdgeLength = layout::kNodeEditorIdealEdgeLength;
+    const float centerPull = layout::kNodeEditorCenterPull;
 
     // Pairwise repulsion: prevent node overlap
     const std::size_t phase = static_cast<std::size_t>(repulsion_phase) % repulsion_stride;
@@ -764,8 +769,8 @@ void NodeEditor::relaxCircularLayout() {
 
     // Apply forces to move nodes with damping for smooth updates
     // Damping prevents oscillation and creates smooth, natural motion
-    const float damping = 0.065f;  // Reduced from 0.090f for gentler, smoother motion
-    const float maxStep = 55.0f;   // Reduced from 62.0f to limit per-frame movement
+    const float damping = layout::kNodeEditorDamping;  // Reduced from 0.090f for gentler, smoother motion
+    const float maxStep = layout::kNodeEditorMaxStep;   // Reduced from 62.0f to limit per-frame movement
     
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         ImVec2 toCenter(centerOfMass.x - centers[i].x, centerOfMass.y - centers[i].y);
@@ -782,15 +787,15 @@ void NodeEditor::resetView() {
     if (!nodes.empty() && canvas_size.x > 0.0f && canvas_size.y > 0.0f) {
         fitAllNodes(canvas_size);
     } else {
-        view_offset = ImVec2(0.0f, 0.0f);
-        zoom = 1.0f;
+        view_offset = ImVec2(layout::kZero, layout::kZero);
+        zoom = layout::kOne;
     }
 }
 
 void NodeEditor::fitAllNodes(ImVec2 fit_canvas_size) {
     if (nodes.empty()) {
-        view_offset = ImVec2(0.0f, 0.0f);
-        zoom = 1.0f;
+        view_offset = ImVec2(layout::kZero, layout::kZero);
+        zoom = layout::kOne;
         return;
     }
     
@@ -818,14 +823,14 @@ void NodeEditor::fitAllNodes(ImVec2 fit_canvas_size) {
     world_width += 2.0f * pad_x;
     world_height += 2.0f * pad_y;
     
-    if (world_width <= 0.0f) world_width = 1.0f;
-    if (world_height <= 0.0f) world_height = 1.0f;
+    if (world_width <= layout::kZero) world_width = layout::kOne;
+    if (world_height <= layout::kZero) world_height = layout::kOne;
     
     // Compute zoom to fit
     float zoom_x = fit_canvas_size.x / world_width;
     float zoom_y = fit_canvas_size.y / world_height;
     zoom = std::min(zoom_x, zoom_y);
-    zoom = std::max(0.1f, std::min(zoom, 3.0f)); // Clamp
+    zoom = std::max(layout::kNodeEditorMinFitZoom, std::min(zoom, layout::kNodeEditorMaxFitZoom)); // Clamp
     
     // Center the content: view_offset is such that the center of the AABB maps to the center of the canvas
     float center_world_x = min_x + world_width * 0.5f;
@@ -930,7 +935,7 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
 
             const ImVec2 delta(to_screen.x - from_screen.x, to_screen.y - from_screen.y);
             const float direct = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-            if (direct < 1.0f) {
+            if (direct < layout::kOne) {
                 continue;
             }
 
@@ -940,7 +945,7 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
             base_handle = std::clamp(base_handle, 14.0f, 180.0f);
             
             // Direction vectors for control points - perpendicular to connection axis
-            const ImVec2 axis = normalizedOr(delta, ImVec2(1.0f, 0.0f));
+            const ImVec2 axis = normalizedOr(delta, ImVec2(layout::kOne, layout::kZero));
             const ImVec2 perp = ImVec2(-axis.y, axis.x);
             
             // Calculate node direction vectors at anchor points
@@ -954,8 +959,8 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
                 ImVec2(-axis.x, -axis.y));
             
             // Control handle length varies based on directional alignment.
-            const float from_align = std::max(0.0f, dot(from_dir, axis));
-            const float to_align = std::max(0.0f, dot(to_dir, ImVec2(-axis.x, -axis.y)));
+            const float from_align = std::max(layout::kZero, dot(from_dir, axis));
+            const float to_align = std::max(layout::kZero, dot(to_dir, ImVec2(-axis.x, -axis.y)));
             
             // Keep handles proportional to the visible segment to avoid self-loops.
             const float alignment_factor = 0.58f + 0.42f * (from_align + to_align) * 0.5f;
@@ -966,7 +971,7 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
             const std::string edge_hash_key = conn.fromNodeId + "|" + conn.toNodeId + "|" + conn.fromPortName + "|" + conn.toPortName;
             const std::size_t edge_hash = std::hash<std::string>{}(edge_hash_key);
             const float hash01 = static_cast<float>(edge_hash & 0xFFFFu) / 65535.0f;
-            const float edge_offset = (hash01 - 0.5f) * std::min(24.0f, direct * 0.12f);
+            const float edge_offset = (hash01 - 0.5f) * std::min(24.0f, direct * layout::kNodeEditorGridPowerOffset);
             
             // Control points: one on source node direction, one on target node direction
             // With perpendicular offset for edge separation
@@ -986,7 +991,7 @@ void NodeEditor::renderConnections(ImDrawList* draw_list) {
 void NodeEditor::renderConnectionPreview(ImDrawList* draw_list) {
     if (creating_connection && connection_source_port) {
         // Draw preview line from source port to current mouse position
-        ImU32 preview_color = ImGui::GetColorU32(ImVec4(1.0f, 0.7f, 0.2f, 0.8f));
+        ImU32 preview_color = ImGui::GetColorU32(ImVec4(layout::kOne, 0.7f, 0.2f, 0.8f));
         draw_list->AddLine(ImGui::GetMousePos(), connection_preview_end, preview_color, 2.0f);
     }
 }
@@ -996,11 +1001,11 @@ void NodeEditor::renderGrid(ImDrawList* draw_list, ImVec2 grid_canvas_size) {
     ImU32 grid_color_major = ImGui::GetColorU32(ImVec4(0.40f, 0.40f, 0.40f, 0.24f));
 
     // Half the previous density: 32 -> 64 world units.
-    const float base_grid_world = 64.0f;
-    const float major_every = 4.0f;
+    const float base_grid_world = layout::kNodeEditorGridSpacing;
+    const float major_every = layout::kNodeEditorGridMajorEvery;
 
     const float scaled_grid = base_grid_world * zoom;
-    if (scaled_grid < 6.0f) {
+    if (scaled_grid < layout::kNodeEditorGridMinScale) {
         return;
     }
 
@@ -1023,7 +1028,7 @@ void NodeEditor::renderGrid(ImDrawList* draw_list, ImVec2 grid_canvas_size) {
         draw_list->AddLine(ImVec2(a.x, canvas_origin.y),
                            ImVec2(a.x, canvas_origin.y + grid_canvas_size.y),
                            major ? grid_color_major : grid_color,
-                           major ? 1.0f : 0.6f);
+                           major ? layout::kNodeEditorGridLineThick : layout::kNodeEditorGridLineThin);
     }
 
     for (float yw = first_y; yw <= bottom + base_grid_world; yw += base_grid_world) {
@@ -1033,7 +1038,7 @@ void NodeEditor::renderGrid(ImDrawList* draw_list, ImVec2 grid_canvas_size) {
         draw_list->AddLine(ImVec2(canvas_origin.x, a.y),
                            ImVec2(canvas_origin.x + grid_canvas_size.x, a.y),
                            major ? grid_color_major : grid_color,
-                           major ? 1.0f : 0.6f);
+                           major ? layout::kNodeEditorGridLineThick : layout::kNodeEditorGridLineThin);
     }
 }
 

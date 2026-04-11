@@ -1,5 +1,6 @@
 #include "ws/gui/model_editor_window.hpp"
 #include "ws/gui/exception_message.hpp"
+#include "ws/gui/layout_constants.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -432,7 +433,7 @@ void ModelEditorWindow::showFileActionPopups() {
         ImGui::InputText("##open_model_path", open_model_path_buffer, sizeof(open_model_path_buffer));
         ImGui::Spacing();
 
-        if (ImGui::Button("Open", ImVec2(120.0f, 0.0f))) {
+        if (ImGui::Button("Open", ImVec2(layout::kModelEditorButtonWidth, layout::kModelEditorButtonHeight))) {
             std::string payload;
             if (readTextFile(open_model_path_buffer, payload)) {
                 current_model.model_json = payload;
@@ -454,7 +455,7 @@ void ModelEditorWindow::showFileActionPopups() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+        if (ImGui::Button("Cancel", ImVec2(layout::kModelEditorButtonWidth, layout::kModelEditorButtonHeight))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -465,7 +466,7 @@ void ModelEditorWindow::showFileActionPopups() {
         ImGui::InputText("##save_model_path", save_model_path_buffer, sizeof(save_model_path_buffer));
         ImGui::Spacing();
 
-        if (ImGui::Button("Save", ImVec2(120.0f, 0.0f))) {
+        if (ImGui::Button("Save", ImVec2(layout::kModelEditorButtonWidth, layout::kModelEditorButtonHeight))) {
             saveModel();
             if (error_message.empty()) {
                 appendStatusDetail("save_path=" + std::string(save_model_path_buffer));
@@ -473,7 +474,7 @@ void ModelEditorWindow::showFileActionPopups() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+        if (ImGui::Button("Cancel", ImVec2(layout::kModelEditorButtonWidth, layout::kModelEditorButtonHeight))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -496,7 +497,7 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
     std::unordered_map<std::string, std::string> variableNodeByVariableId;
     std::unordered_map<std::string, std::string> domainNodeByDomainId;
 
-    float domainY = 80.0f;
+    float domainY = layout::kModelEditorStartY;
     if (model.contains("domains") && model["domains"].is_object()) {
         for (const auto& [domainId, domainValue] : model["domains"].items()) {
             if (isCommentKey(domainId) || !domainValue.is_object()) {
@@ -504,18 +505,18 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
             }
 
             Node domainNode("domain_" + domainId, NodeType::Domain, parseLabel(domainValue, domainId));
-            domainNode.position = ImVec2(60.0f, domainY);
+            domainNode.position = ImVec2(layout::kModelEditorStartXDomain, domainY);
             domainNode.description = valueToString(domainValue.value("kind", json{}));
             domainNode.output_ports.push_back(Port("domain", domainId, false));
             node_editor->addNode(domainNode);
 
             domainNodeByDomainId[domainId] = domainNode.id;
-            domainY += 86.0f;
+            domainY += layout::kModelEditorRowSpacing;
         }
     }
 
-    float globalVarY = 80.0f;
-    float cellVarY = 80.0f;
+    float globalVarY = layout::kModelEditorStartY;
+    float cellVarY = layout::kModelEditorStartY;
     json variables = json::array();
     if (model.contains("variables") && model["variables"].is_array()) {
         variables = model["variables"];
@@ -545,11 +546,11 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
         }
 
         if (support == VariableSupport::Global) {
-            variableNode.position = ImVec2(300.0f, globalVarY);
-            globalVarY += 86.0f;
+            variableNode.position = ImVec2(layout::kModelEditorStartXVariable, globalVarY);
+            globalVarY += layout::kModelEditorRowSpacing;
         } else {
-            variableNode.position = ImVec2(540.0f, cellVarY);
-            cellVarY += 86.0f;
+            variableNode.position = ImVec2(layout::kModelEditorStartXCellVariable, cellVarY);
+            cellVarY += layout::kModelEditorRowSpacing;
         }
 
         variableNode.input_ports.push_back(Port("in", variableId, true));
@@ -576,7 +577,7 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
         }
     }
 
-    float stageY = 80.0f;
+    float stageY = layout::kModelEditorStartY;
     if (model.contains("stages") && model["stages"].is_array()) {
         int stageIndex = 0;
         for (const auto& stage : model["stages"]) {
@@ -587,11 +588,11 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
             const std::string stageId = stage.value("id", std::string{"stage_" + std::to_string(stageIndex)});
 
             Node stageNode("stage_" + stageId, NodeType::Stage, parseLabel(stage, stageId));
-            stageNode.position = ImVec2(860.0f, stageY);
+            stageNode.position = ImVec2(layout::kModelEditorStartXStage, stageY);
             stageNode.description = stage.value("description", std::string{});
             node_editor->addNode(stageNode);
 
-            float interactionY = stageY + 88.0f;
+            float interactionY = stageY + layout::kModelEditorFormulaHeight;
             if (stage.contains("interactions") && stage["interactions"].is_array()) {
                 int interactionIndex = 0;
                 for (const auto& interaction : stage["interactions"]) {
@@ -603,7 +604,7 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
                         "id", std::string{"interaction_" + std::to_string(stageIndex) + "_" + std::to_string(interactionIndex)});
 
                     Node interactionNode("interaction_" + interactionId, NodeType::Equation, parseLabel(interaction, interactionId));
-                    interactionNode.position = ImVec2(1140.0f, interactionY);
+                    interactionNode.position = ImVec2(layout::kModelEditorStartXInteraction, interactionY);
                     interactionNode.target_type = interaction.value("target_type", std::string{});
                     interactionNode.formula_logic = interaction.value("formula", std::string{});
                     interactionNode.input_ports.push_back(Port("stage", stageId, true));
@@ -659,12 +660,12 @@ void ModelEditorWindow::populateNodeGraphFromModel(const std::string& model_json
                         }
                     }
 
-                    interactionY += 96.0f;
+                    interactionY += layout::kModelEditorInteractionSpacing;
                     ++interactionIndex;
                 }
             }
 
-            stageY = std::max(stageY + 140.0f, interactionY + 24.0f);
+            stageY = std::max(stageY + layout::kModelEditorStageSpacing, interactionY + layout::kModelEditorStageFallbackSpacing);
             ++stageIndex;
         }
     }
@@ -965,7 +966,7 @@ void ModelEditorWindow::recordHistorySnapshot(const std::string& description) {
 void ModelEditorWindow::render(ImVec2 available_size) {
     if (!window_open) return;
 
-    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(layout::kZero, layout::kZero), ImGuiCond_Always);
     ImGui::SetNextWindowSize(available_size, ImGuiCond_Always);
     ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar |
                              ImGuiWindowFlags_NoCollapse |
@@ -1091,9 +1092,9 @@ void ModelEditorWindow::render(ImVec2 available_size) {
 
         showFileActionPopups();
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, layout::kModelEditorModeStripRounding);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(20, 24, 34, 220));
-        if (ImGui::BeginChild("EditorCapabilityModeStrip", ImVec2(0.0f, 48.0f), true,
+        if (ImGui::BeginChild("EditorCapabilityModeStrip", ImVec2(layout::kZero, layout::kModelEditorModeStripHeight), true,
                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
             ImGui::TextDisabled("Editor capability mode");
             ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Structure Editing Mode");
@@ -1111,23 +1112,23 @@ void ModelEditorWindow::render(ImVec2 available_size) {
 
         // Compute explicit layout heights to prevent micro-scrolling
         ImVec2 content_avail = ImGui::GetContentRegionAvail();
-        const float paletteWidth = 240.0f;
-        const float propertiesWidth = show_property_inspector ? 320.0f : 0.0f;
-        const float statusBarHeight = 78.0f;
+        const float paletteWidth = layout::kModelEditorPaletteWidth;
+        const float propertiesWidth = show_property_inspector ? layout::kModelEditorPropertiesWidth : layout::kZero;
+        const float statusBarHeight = layout::kModelEditorStatusBarHeight;
         const float spacing = ImGui::GetStyle().ItemSpacing.y;
-        const float validationHeight = show_validation_panel ? 180.0f : 0.0f;
+        const float validationHeight = show_validation_panel ? layout::kModelEditorValidationHeight : layout::kZero;
         
         // Top row gets: total height - validation - status bar - spacing between sections
         float topRowHeight = content_avail.y - statusBarHeight;
         if (show_validation_panel) {
             topRowHeight -= (validationHeight + spacing);
         }
-        topRowHeight = std::max(topRowHeight, 100.0f);
+        topRowHeight = std::max(topRowHeight, layout::kModelEditorTopRowMinimumHeight);
 
         // === Top Row (Palette + Graph + Properties) ===
-        if (ImGui::BeginChild("EditorTopRow", ImVec2(0.0f, topRowHeight), false,
+        if (ImGui::BeginChild("EditorTopRow", ImVec2(layout::kZero, topRowHeight), false,
                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-            if (ImGui::BeginChild("NodePalettePane", ImVec2(paletteWidth, 0.0f), true)) {
+            if (ImGui::BeginChild("NodePalettePane", ImVec2(paletteWidth, layout::kZero), true)) {
                 ImGui::TextDisabled("Node Palette");
                 ImGui::Separator();
                 renderNodePalette();
@@ -1138,10 +1139,10 @@ void ModelEditorWindow::render(ImVec2 available_size) {
             float graphWidth = ImGui::GetContentRegionAvail().x;
             if (show_property_inspector) {
                 graphWidth -= (propertiesWidth + ImGui::GetStyle().ItemSpacing.x);
-                graphWidth = std::max(graphWidth, 240.0f);
+                graphWidth = std::max(graphWidth, layout::kModelEditorGraphMinimumWidth);
             }
 
-            if (ImGui::BeginChild("ModelGraphPane", ImVec2(graphWidth, 0.0f), true,
+            if (ImGui::BeginChild("ModelGraphPane", ImVec2(graphWidth, layout::kZero), true,
                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
                 ImGui::TextDisabled("Model Graph");
                 ImGui::Separator();
@@ -1152,7 +1153,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
 
             if (show_property_inspector) {
                 ImGui::SameLine();
-                if (ImGui::BeginChild("PropertiesPane", ImVec2(0.0f, 0.0f), true)) {
+                if (ImGui::BeginChild("PropertiesPane", ImVec2(layout::kZero, layout::kZero), true)) {
                     ImGui::TextDisabled("Properties");
                     ImGui::Separator();
                     renderPropertyInspector();
@@ -1164,7 +1165,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
 
         // === Validation Panel (explicit height) ===
         if (show_validation_panel) {
-            if (ImGui::BeginChild("ValidationPane", ImVec2(0.0f, validationHeight), true)) {
+            if (ImGui::BeginChild("ValidationPane", ImVec2(layout::kZero, validationHeight), true)) {
                 ImGui::TextDisabled("Validation");
                 ImGui::Separator();
                 renderValidationPanel();
@@ -1176,7 +1177,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
         {
             ImVec2 status_region = ImGui::GetContentRegionAvail();
             const float status_height = std::max(statusBarHeight, status_region.y);
-            if (ImGui::BeginChild("StatusBar", ImVec2(0.0f, status_height), true,
+            if (ImGui::BeginChild("StatusBar", ImVec2(layout::kZero, status_height), true,
                                   ImGuiWindowFlags_NoScrollbar)) {
                 ImGui::TextDisabled("Status");
                 ImGui::Separator();
@@ -1218,7 +1219,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
 
 void ModelEditorWindow::renderNodePalette() {
     ImGui::TextDisabled("Creation Palette");
-    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::SetNextItemWidth(layout::kModelEditorNodePaletteWidth);
     editTextField("##palette_filter", palette_filter, 256);
 
     const auto showItem = [&](const std::string& name, const std::string& tags) {
@@ -1228,13 +1229,13 @@ void ModelEditorWindow::renderNodePalette() {
     ImGui::Spacing();
     ImGui::TextDisabled("Variables");
     if (showItem("Global Variable", "variable global state parameter")) {
-        if (ImGui::Button("+ Global Variable", ImVec2(-1.0f, 0.0f))) {
+        if (ImGui::Button("+ Global Variable", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
             addVariableNode(NodeType::GlobalVariable, VariableSupport::Global);
             status_message = "Added global variable";
         }
     }
     if (showItem("Cell Variable", "variable cell state grid")) {
-        if (ImGui::Button("+ Cell Variable", ImVec2(-1.0f, 0.0f))) {
+        if (ImGui::Button("+ Cell Variable", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
             addVariableNode(NodeType::CellVariable, VariableSupport::Cell);
             status_message = "Added cell variable";
         }
@@ -1243,13 +1244,13 @@ void ModelEditorWindow::renderNodePalette() {
     ImGui::Spacing();
     ImGui::TextDisabled("Interactions");
     if (showItem("Equation Node", "interaction equation formula")) {
-        if (ImGui::Button("+ Equation Node", ImVec2(-1.0f, 0.0f))) {
+        if (ImGui::Button("+ Equation Node", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
             addInteractionNode(NodeType::Equation);
             status_message = "Added equation node";
         }
     }
     if (showItem("Operator Node", "interaction operator transform")) {
-        if (ImGui::Button("+ Operator Node", ImVec2(-1.0f, 0.0f))) {
+        if (ImGui::Button("+ Operator Node", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
             addInteractionNode(NodeType::Operator);
             status_message = "Added operator node";
         }
@@ -1258,7 +1259,7 @@ void ModelEditorWindow::renderNodePalette() {
     ImGui::Spacing();
     ImGui::TextDisabled("Organization");
     if (showItem("Stage", "pipeline stage")) {
-        if (ImGui::Button("+ Stage", ImVec2(-1.0f, 0.0f))) {
+        if (ImGui::Button("+ Stage", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
             addStageNode();
             status_message = "Added stage";
         }
@@ -1267,7 +1268,7 @@ void ModelEditorWindow::renderNodePalette() {
     ImGui::Spacing();
     ImGui::TextDisabled("Constraints");
     if (showItem("Domain (Interval)", "domain interval constraints")) {
-        if (ImGui::Button("+ Domain (Interval)", ImVec2(-1.0f, 0.0f))) {
+        if (ImGui::Button("+ Domain (Interval)", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
             addDomainNode(NodeType::Domain);
             status_message = "Added domain";
         }
@@ -1276,13 +1277,13 @@ void ModelEditorWindow::renderNodePalette() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::TextDisabled("Batch Tools");
-    if (ImGui::Button("Select All Nodes", ImVec2(-1.0f, 0.0f))) {
+    if (ImGui::Button("Select All Nodes", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
         selectAllNodes();
     }
-    if (ImGui::Button("Duplicate Selected", ImVec2(-1.0f, 0.0f))) {
+    if (ImGui::Button("Duplicate Selected", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
         duplicateSelectedNodes();
     }
-    if (ImGui::Button("Delete Selected", ImVec2(-1.0f, 0.0f))) {
+    if (ImGui::Button("Delete Selected", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorButtonHeight))) {
         deleteSelectedNodes();
     }
 }
@@ -1388,7 +1389,7 @@ void ModelEditorWindow::renderPropertyInspector() {
         ImGui::Text("Initial value:");
         if (editTextField("##initial_value", selected_node->initial_value)) markDirty();
         ImGui::Text("Description:");
-        if (editMultilineField("##description", selected_node->description, ImVec2(-1.0f, 78.0f))) markDirty();
+        if (editMultilineField("##description", selected_node->description, ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorDescriptionHeight))) markDirty();
     }
     
     // Interaction-specific properties
@@ -1398,7 +1399,7 @@ void ModelEditorWindow::renderPropertyInspector() {
         ImGui::Text("Interaction label:");
         if (editTextField("##interaction_label", selected_node->label)) markDirty();
         ImGui::Text("Formula logic:");
-        if (editMultilineField("##formula_logic", selected_node->formula_logic, ImVec2(-1.0f, 88.0f))) markDirty();
+        if (editMultilineField("##formula_logic", selected_node->formula_logic, ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorFormulaHeight))) markDirty();
         ImGui::Text("Target type:");
         if (editTextField("##target_type", selected_node->target_type)) markDirty();
         
@@ -1425,7 +1426,7 @@ void ModelEditorWindow::renderPropertyInspector() {
         } else {
             ImGui::TextDisabled("Runtime logic");
             std::string preview = selected_node->formula_logic;
-            editMultilineField("##logic_preview", preview, ImVec2(-1.0f, 92.0f));
+            editMultilineField("##logic_preview", preview, ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorLogicPreviewHeight));
             if (ImGui::Button("Copy Logic")) {
                 ImGui::SetClipboardText(selected_node->formula_logic.c_str());
                 status_message = "Logic copied to clipboard";
@@ -1438,7 +1439,7 @@ void ModelEditorWindow::renderPropertyInspector() {
         codeSummary << "label=" << selected_node->label << "\n";
         codeSummary << "inputs=" << selected_node->input_ports.size() << " outputs=" << selected_node->output_ports.size() << "\n";
         const std::string codeSummaryText = codeSummary.str();
-        if (ImGui::BeginChild("NodeCodeSummary", ImVec2(-1.0f, 88.0f), true)) {
+        if (ImGui::BeginChild("NodeCodeSummary", ImVec2(layout::kModelEditorNodePaletteWidth, layout::kModelEditorCodeSummaryHeight), true)) {
             ImGui::TextUnformatted(codeSummaryText.c_str());
         }
         ImGui::EndChild();
@@ -1457,14 +1458,14 @@ void ModelEditorWindow::renderPropertyInspector() {
     ImGui::Separator();
     ImGui::Text("Position:");
     float pos[2] = {selected_node->position.x, selected_node->position.y};
-    if (ImGui::DragFloat2("##node_position", pos, 1.0f)) {
+    if (ImGui::DragFloat2("##node_position", pos, layout::kModelEditorNodeDragStep)) {
         selected_node->position = ImVec2(pos[0], pos[1]);
         markDirty();
     }
     ImGui::Text("Size:");
     float size[2] = {selected_node->size.x, selected_node->size.y};
-    if (ImGui::DragFloat2("##node_size", size, 1.0f, 40.0f, 4096.0f)) {
-        selected_node->size = ImVec2(std::max(40.0f, size[0]), std::max(40.0f, size[1]));
+    if (ImGui::DragFloat2("##node_size", size, layout::kModelEditorNodeDragStep, layout::kModelEditorSelectedNodeMinSize, layout::kModelEditorSelectedNodeMaxSize)) {
+        selected_node->size = ImVec2(std::max(layout::kModelEditorNodeMinDisplaySize, size[0]), std::max(layout::kModelEditorNodeMinDisplaySize, size[1]));
         markDirty();
     }
 }
@@ -1525,7 +1526,7 @@ void ModelEditorWindow::addVariableNode(NodeType node_type, VariableSupport supp
     std::string label = (support == VariableSupport::Global) ? "GlobalVar" : "CellVar";
     
     Node node(node_id, node_type, label);
-    node.size = ImVec2(136.0f, 68.0f);
+    node.size = ImVec2(layout::kModelEditorNodeDefaultWidth, layout::kModelEditorNodeDefaultHeight);
     node.position = ImVec2(100.0f + counter * 20, 100.0f + counter * 20);
     node.support = support;
     node.output_ports.push_back(Port("out", node_id, false));
@@ -1540,8 +1541,8 @@ void ModelEditorWindow::addInteractionNode(NodeType node_type) {
     std::string label = (node_type == NodeType::Equation) ? "Equation" : "Operator";
     
     Node node(node_id, node_type, label);
-    node.size = ImVec2(160.0f, 80.0f);
-    node.position = ImVec2(300.0f + counter * 20, 100.0f + counter * 20);
+    node.size = ImVec2(layout::kModelEditorEquationNodeWidth, layout::kModelEditorEquationNodeHeight);
+    node.position = ImVec2(layout::kModelEditorStartXVariable + counter * 20, 100.0f + counter * 20);
     node.input_ports.push_back(Port("in", "", true));
     node.output_ports.push_back(Port("out", "", false));
     
@@ -1554,7 +1555,7 @@ void ModelEditorWindow::addStageNode() {
     std::string node_id = std::string("stage_") + std::to_string(counter++);
     
     Node node(node_id, NodeType::Stage, "Stage");
-    node.size = ImVec2(152.0f, 76.0f);
+    node.size = ImVec2(layout::kModelEditorStageNodeWidth, layout::kModelEditorStageNodeHeight);
     node.position = ImVec2(50.0f, 300.0f + counter * 50);
     
     node_editor->addNode(node);
@@ -1566,7 +1567,7 @@ void ModelEditorWindow::addDomainNode(NodeType node_type) {
     std::string node_id = std::string("domain_") + std::to_string(counter++);
     
     Node node(node_id, node_type, "Domain");
-    node.size = ImVec2(144.0f, 72.0f);
+    node.size = ImVec2(layout::kModelEditorDomainNodeWidth, layout::kModelEditorDomainNodeHeight);
     node.position = ImVec2(500.0f, 100.0f + counter * 50);
     
     node_editor->addNode(node);

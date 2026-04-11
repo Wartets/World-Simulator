@@ -1,0 +1,95 @@
+#pragma once
+
+namespace ws::gui::layout {
+
+inline constexpr float kZero = 0.0f;
+inline constexpr float kOne = 1.0f;
+
+inline constexpr float kNodeEditorMinTextWidth = 8.0f;
+inline constexpr float kNodeEditorPortInset = 4.0f;
+inline constexpr float kNodeEditorMinHalfWidth = 20.0f;
+inline constexpr float kNodeEditorMinHalfHeight = 12.0f;
+inline constexpr float kNodeEditorSuperellipseExponent = 8.0f;
+inline constexpr float kNodeEditorAnchorSpreadBase = 0.16f;
+inline constexpr float kNodeEditorAnchorSpreadDistance = 80.0f;
+inline constexpr float kNodeEditorAnchorSpreadMin = 0.18f;
+inline constexpr float kNodeEditorAnchorSpreadMax = 0.52f;
+inline constexpr float kNodeEditorLabelPaddingX = 18.0f;
+inline constexpr float kNodeEditorLabelPaddingY = 10.0f;
+inline constexpr float kNodeEditorLabelMinWidth = 24.0f;
+inline constexpr float kNodeEditorLabelMinLines = 1.0f;
+inline constexpr float kNodeEditorIconMinSize = 10.0f;
+inline constexpr float kNodeEditorHoverBorderThickness = 3.0f;
+inline constexpr float kNodeEditorBorderThickness = 1.8f;
+inline constexpr float kNodeEditorContainsRadiusX = 18.0f;
+inline constexpr float kNodeEditorContainsRadiusY = 10.0f;
+inline constexpr float kNodeEditorContainsExponent = 4.0f;
+inline constexpr float kNodeEditorRoundingFactor = 0.24f;
+inline constexpr float kNodeEditorRoundingMin = 18.0f;
+inline constexpr float kNodeEditorHighlightInset = 1.0f;
+inline constexpr float kNodeEditorHighlightTopHeight = 14.0f;
+inline constexpr float kNodeEditorHighlightAlpha = 0.03f;
+inline constexpr float kNodeEditorHighlightBandAlpha = 0.08f;
+inline constexpr float kNodeEditorDragThreshold = 0.0f;
+inline constexpr float kNodeEditorZoomStep = 1.12f;
+inline constexpr float kNodeEditorBaseRadiusMin = 260.0f;
+inline constexpr float kNodeEditorBaseRadiusFactor = 118.0f;
+inline constexpr float kNodeEditorRepulsion = 128000.0f;
+inline constexpr float kNodeEditorIdealEdgeLength = 320.0f;
+inline constexpr float kNodeEditorCenterPull = 0.006f;
+inline constexpr float kNodeEditorRepulsionStrideThreshold = 260.0f;
+inline constexpr float kNodeEditorDamping = 0.065f;
+inline constexpr float kNodeEditorMaxStep = 55.0f;
+inline constexpr float kNodeEditorMinFitZoom = 0.1f;
+inline constexpr float kNodeEditorMaxFitZoom = 3.0f;
+inline constexpr float kNodeEditorMinBoundsSize = 1.0f;
+inline constexpr float kNodeEditorGridSpacing = 64.0f;
+inline constexpr float kNodeEditorGridMajorEvery = 4.0f;
+inline constexpr float kNodeEditorGridMinScale = 6.0f;
+inline constexpr float kNodeEditorGridLineThin = 0.6f;
+inline constexpr float kNodeEditorGridLineThick = 1.0f;
+inline constexpr float kNodeEditorGridPowerOffset = 0.12f;
+inline constexpr float kNodeEditorGridMinorAlpha = 0.11f;
+inline constexpr float kNodeEditorGridMajorAlpha = 0.24f;
+
+inline constexpr float kModelEditorButtonWidth = 120.0f;
+inline constexpr float kModelEditorButtonHeight = 0.0f;
+inline constexpr float kModelEditorStartXDomain = 60.0f;
+inline constexpr float kModelEditorStartXVariable = 300.0f;
+inline constexpr float kModelEditorStartXCellVariable = 540.0f;
+inline constexpr float kModelEditorStartXStage = 860.0f;
+inline constexpr float kModelEditorStartXInteraction = 1140.0f;
+inline constexpr float kModelEditorStartY = 80.0f;
+inline constexpr float kModelEditorRowSpacing = 86.0f;
+inline constexpr float kModelEditorStageSpacing = 140.0f;
+inline constexpr float kModelEditorInteractionSpacing = 96.0f;
+inline constexpr float kModelEditorStageFallbackSpacing = 24.0f;
+inline constexpr float kModelEditorPaletteWidth = 240.0f;
+inline constexpr float kModelEditorPropertiesWidth = 320.0f;
+inline constexpr float kModelEditorValidationHeight = 180.0f;
+inline constexpr float kModelEditorStatusBarHeight = 78.0f;
+inline constexpr float kModelEditorTopRowMinimumHeight = 100.0f;
+inline constexpr float kModelEditorGraphMinimumWidth = 240.0f;
+inline constexpr float kModelEditorModeStripHeight = 48.0f;
+inline constexpr float kModelEditorModeStripRounding = 6.0f;
+inline constexpr float kModelEditorNodeDefaultWidth = 136.0f;
+inline constexpr float kModelEditorNodeDefaultHeight = 68.0f;
+inline constexpr float kModelEditorEquationNodeWidth = 160.0f;
+inline constexpr float kModelEditorEquationNodeHeight = 80.0f;
+inline constexpr float kModelEditorStageNodeWidth = 152.0f;
+inline constexpr float kModelEditorStageNodeHeight = 76.0f;
+inline constexpr float kModelEditorDomainNodeWidth = 144.0f;
+inline constexpr float kModelEditorDomainNodeHeight = 72.0f;
+inline constexpr float kModelEditorSelectedNodeMinSize = 40.0f;
+inline constexpr float kModelEditorSelectedNodeMaxSize = 4096.0f;
+inline constexpr float kModelEditorNodeSizeStep = 1.0f;
+inline constexpr float kModelEditorNodeDragStep = 1.0f;
+inline constexpr float kModelEditorNodeMinDisplaySize = 40.0f;
+inline constexpr float kModelEditorDescriptionHeight = 78.0f;
+inline constexpr float kModelEditorFormulaHeight = 88.0f;
+inline constexpr float kModelEditorLogicPreviewHeight = 92.0f;
+inline constexpr float kModelEditorCodeSummaryHeight = 88.0f;
+inline constexpr float kModelEditorNodePaletteWidth = -1.0f;
+inline constexpr float kModelEditorExpandedPanelHeight = 0.0f;
+
+} // namespace ws::gui::layout
