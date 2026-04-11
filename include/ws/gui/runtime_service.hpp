@@ -1,3 +1,17 @@
+// =============================================================================
+// Public API Note
+// =============================================================================
+// RuntimeService is the primary GUI-facing interface for simulation control,
+// state queries, checkpoint management, and world storage.
+//
+// Public contract: The types, enums, and method signatures in this header are
+// stable for external use. Internal implementation may change without notice,
+// but the public method contracts are maintained.
+//
+// The data structures below (ModelScopeContext, StoredWorldInfo, CheckpointInfo)
+// represent query results and are designed to be stable for query-based access.
+// =============================================================================
+
 #pragma once
 
 #include "ws/app/world_store.hpp"
@@ -19,7 +33,6 @@
 
 namespace ws::gui {
 
-// Context information about the currently loaded model.
 struct ModelScopeContext {
     std::string modelId;
     std::string modelName;

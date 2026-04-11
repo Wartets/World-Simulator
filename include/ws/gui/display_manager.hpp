@@ -1,3 +1,15 @@
+// =============================================================================
+// Display Manager Public API
+// =============================================================================
+// This module provides display buffer construction from simulation state.
+//
+// Public contract: DisplayType, DisplayManagerParams, display buffer functions,
+// and request structures are stable for external use.
+//
+// Implementation detail: Internal display computation logic may be refactored
+// without changing the public interface contracts.
+// =============================================================================
+
 #pragma once
 
 #include "ws/core/state_store.hpp"

@@ -1,3 +1,19 @@
+// =============================================================================
+// Runtime Public API
+// =============================================================================
+// Core simulation runtime interface including configuration, execution control,
+// and state management.
+//
+// Public contract: RuntimeConfig, the Grid/Memory/Temporal/Boundary enums,
+// Probe types, and runtime execution methods are stable for external use.
+//
+// Note on initialization types: The 13 initialization condition types and their
+// parameter structures are currently exposed but should be considered internal
+// implementation details. Future versions may refactor this API to expose only
+// the active configuration. Client code should not depend on the full set of
+// initialization types.
+// =============================================================================
+
 #pragma once
 
 // Core simulation headers

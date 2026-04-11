@@ -1,3 +1,14 @@
+// =============================================================================
+// Model Validator Public API
+// =============================================================================
+// Provides validation services for simulation model syntax, types, units,
+// dependencies, and structure.
+//
+// Public contract: ValidationMessage structure and validation method signatures
+// are stable for external use. Message content and validation rules may be
+// enhanced without changing the contract.
+// =============================================================================
+
 #pragma once
 
 #include <string>
@@ -6,7 +17,6 @@
 
 namespace ws::gui {
 
-// A single validation message produced during model validation.
 struct ValidationMessage {
     // Severity level of the validation message.
     enum class Severity { Error, Warning, Info };
