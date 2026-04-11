@@ -33,6 +33,22 @@ void testPositionalCheckpointRoutesToCheckpointLoader() {
     expect(parsed.request.action == ws::gui::LaunchAction::OpenCheckpointFile, "positional .wscp should route to checkpoint loader");
 }
 
+void testPositionalWorldExportRoutesToImport() {
+    const auto parsedWsexp = ws::gui::parseLaunchOptions({"exports/coastal_snapshot.wsexp"});
+    expect(parsedWsexp.ok, "positional .wsexp should parse successfully");
+    expect(parsedWsexp.request.action == ws::gui::LaunchAction::ImportWorldFile, "positional .wsexp should route to world import");
+
+    const auto parsedWsworld = ws::gui::parseLaunchOptions({"exports/coastal_snapshot.wsworld"});
+    expect(parsedWsworld.ok, "positional .wsworld should parse successfully");
+    expect(parsedWsworld.request.action == ws::gui::LaunchAction::ImportWorldFile, "positional .wsworld should route to world import");
+}
+
+void testOpenFlagIsCaseInsensitiveByExtension() {
+    const auto parsed = ws::gui::parseLaunchOptions({"--open", "exports/COASTAL_SNAPSHOT.WSWORLD"});
+    expect(parsed.ok, "--open should accept uppercase world extension");
+    expect(parsed.request.action == ws::gui::LaunchAction::ImportWorldFile, "uppercase world extension should route to world import");
+}
+
 void testWorldOpenWithModelScope() {
     const auto parsed = ws::gui::parseLaunchOptions({"--model", "models/environmental_model_2d.simmodel", "--world", "world_0001"});
     expect(parsed.ok, "--model + --world should parse successfully");
@@ -58,6 +74,8 @@ int main() {
         testModelSelectionFlag();
         testPositionalSimmodelRoutesToEditor();
         testPositionalCheckpointRoutesToCheckpointLoader();
+        testPositionalWorldExportRoutesToImport();
+        testOpenFlagIsCaseInsensitiveByExtension();
         testWorldOpenWithModelScope();
         testConflictingPrimaryTargetsFail();
         testUnsupportedOpenExtensionFails();

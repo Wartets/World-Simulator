@@ -318,6 +318,44 @@ if(WIN32)
         set(CPACK_NSIS_MODIFY_PATH OFF)
         set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator.ico")
         set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator.ico")
+        set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS [=[
+    WriteRegStr HKCU "Software\Classes\.simmodel" "" "WorldSimulator.simmodel"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.simmodel" "" "World Simulator Model"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.simmodel\DefaultIcon" "" "$INSTDIR\bin\world_sim_gui.exe,0"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.simmodel\shell\open\command" "" "$\"$INSTDIR\bin\world_sim_gui.exe$\" $\"%1$\""
+    WriteRegStr HKCU "Software\Classes\.wscp" "" "WorldSimulator.wscp"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wscp" "" "World Simulator Checkpoint"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wscp\DefaultIcon" "" "$INSTDIR\bin\world_sim_gui.exe,0"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wscp\shell\open\command" "" "$\"$INSTDIR\bin\world_sim_gui.exe$\" $\"%1$\""
+    WriteRegStr HKCU "Software\Classes\.wsexp" "" "WorldSimulator.wsexp"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wsexp" "" "World Simulator World Export"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wsexp\DefaultIcon" "" "$INSTDIR\bin\world_sim_gui.exe,0"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wsexp\shell\open\command" "" "$\"$INSTDIR\bin\world_sim_gui.exe$\" $\"%1$\""
+    WriteRegStr HKCU "Software\Classes\.wsworld" "" "WorldSimulator.wsworld"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wsworld" "" "World Simulator World"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wsworld\DefaultIcon" "" "$INSTDIR\bin\world_sim_gui.exe,0"
+    WriteRegStr HKCU "Software\Classes\WorldSimulator.wsworld\shell\open\command" "" "$\"$INSTDIR\bin\world_sim_gui.exe$\" $\"%1$\""
+System::Call 'shell32::SHChangeNotify(i, i, p, p) (0x08000000, 0, 0, 0)'
+]=])
+        set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [=[
+    ReadRegStr $0 HKCU "Software\Classes\.simmodel" ""
+StrCmp $0 "WorldSimulator.simmodel" 0 +2
+    DeleteRegKey HKCU "Software\Classes\.simmodel"
+    DeleteRegKey HKCU "Software\Classes\WorldSimulator.simmodel"
+    ReadRegStr $0 HKCU "Software\Classes\.wscp" ""
+StrCmp $0 "WorldSimulator.wscp" 0 +2
+    DeleteRegKey HKCU "Software\Classes\.wscp"
+    DeleteRegKey HKCU "Software\Classes\WorldSimulator.wscp"
+    ReadRegStr $0 HKCU "Software\Classes\.wsexp" ""
+StrCmp $0 "WorldSimulator.wsexp" 0 +2
+    DeleteRegKey HKCU "Software\Classes\.wsexp"
+    DeleteRegKey HKCU "Software\Classes\WorldSimulator.wsexp"
+    ReadRegStr $0 HKCU "Software\Classes\.wsworld" ""
+StrCmp $0 "WorldSimulator.wsworld" 0 +2
+    DeleteRegKey HKCU "Software\Classes\.wsworld"
+    DeleteRegKey HKCU "Software\Classes\WorldSimulator.wsworld"
+System::Call 'shell32::SHChangeNotify(i, i, p, p) (0x08000000, 0, 0, 0)'
+]=])
     endif()
 endif()
 

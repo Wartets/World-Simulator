@@ -133,6 +133,14 @@ Release diagnostics:
 
 On Windows NSIS builds, uninstallation is provided by the generated installer and removes installed application-managed files while preserving user settings/data stored outside the install directory.
 
+Windows NSIS builds also register per-user file associations for:
+
+- `.simmodel` (model package)
+- `.wscp` (checkpoint)
+- `.wsexp` and `.wsworld` (world export/import package)
+
+Double-click shell-open for those extensions launches `world_sim_gui` and routes through the same startup parser used by explicit CLI arguments.
+
 ---
 
 ## Quick Start
