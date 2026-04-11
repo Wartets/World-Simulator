@@ -1,5 +1,9 @@
 #pragma once
 
+#include "ws/gui/launch_options.hpp"
+
+#include <utility>
+
 namespace ws::gui {
 
 /**
@@ -26,6 +30,8 @@ public:
      *       constructor parameters rather than hidden global state.
      */
     MainWindow() = default;
+    explicit MainWindow(MainWindowLaunchRequest launchRequest)
+        : launchRequest_(std::move(launchRequest)) {}
     MainWindow(const MainWindow&) = delete;
     MainWindow& operator=(const MainWindow&) = delete;
     MainWindow(MainWindow&&) = delete;
@@ -48,6 +54,9 @@ public:
      *         stable exit code.
      */
     int run();
+
+private:
+    MainWindowLaunchRequest launchRequest_{};
 };
 
 } // namespace ws::gui

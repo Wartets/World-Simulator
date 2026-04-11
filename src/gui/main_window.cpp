@@ -682,6 +682,9 @@ using main_window::detail::unpackColor;
 //
 class MainWindowImpl {
 public:
+    explicit MainWindowImpl(MainWindowLaunchRequest launchRequest)
+        : launchRequest_(std::move(launchRequest)) {}
+
     int run() {
         if (glfwInit() != GLFW_TRUE) return 1;
         main_window::loadWindowState(appStateData_.persistedWindowState);
@@ -760,7 +763,7 @@ public:
         modelSelector_.on_edit_model = [openModelInEditor](const ModelInfo& model) {
             openModelInEditor(model.path, "model_load_error");
         };
-        modelSelector_.on_load_model = [this](const ModelInfo& model) {
+        const auto selectModelForSession = [this](const ModelInfo& model) {
             modelSelector_.close();
             modelEditor_.close();
             runtime_.setModelScope(ModelScopeContext{
@@ -838,9 +841,13 @@ public:
             std::snprintf(sessionUi_.statusMessage, sizeof(sessionUi_.statusMessage), "model_selected=%s", model.name.c_str());
             appState_ = AppState::SessionManager;
         };
+
+        modelSelector_.on_load_model = selectModelForSession;
         modelSelector_.on_model_created = [openModelInEditor](const std::string& modelName) {
             openModelInEditor(modelName, "model_create_error");
         };
+
+        applyStartupLaunchRequest(selectModelForSession, openModelInEditor);
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -928,6 +935,173 @@ public:
     }
 
 private:
+    [[nodiscard]] std::optional<ModelInfo> findModelInfoByPath(const std::filesystem::path& rawModelPath) {
+        if (rawModelPath.empty()) {
+            return std::nullopt;
+        }
+
+        std::error_code ec;
+        const std::filesystem::path targetCanonical = std::filesystem::weakly_canonical(rawModelPath, ec);
+        const std::filesystem::path targetComparable = ec ? rawModelPath.lexically_normal() : targetCanonical;
+
+        modelSelector_.refreshModelList();
+        for (const auto& model : modelSelector_.getModels()) {
+            std::error_code modelEc;
+            const std::filesystem::path modelPath = std::filesystem::path(model.path);
+            const std::filesystem::path modelCanonical = std::filesystem::weakly_canonical(modelPath, modelEc);
+            const std::filesystem::path modelComparable = modelEc ? modelPath.lexically_normal() : modelCanonical;
+            if (modelComparable == targetComparable) {
+                return model;
+            }
+        }
+
+        if (!std::filesystem::exists(rawModelPath)) {
+            return std::nullopt;
+        }
+
+        ModelInfo synthetic;
+        synthetic.path = rawModelPath.string();
+        synthetic.name = rawModelPath.stem().string();
+        synthetic.model_id = synthetic.name;
+        synthetic.description = "launch-selected model";
+        synthetic.author = "Unknown";
+        synthetic.version = "unknown";
+        return synthetic;
+    }
+
+    void applyStartupLaunchRequest(
+        const std::function<void(const ModelInfo&)>& selectModelForSession,
+        const std::function<void(const std::filesystem::path&, const char*)>& openModelInEditor) {
+        if (launchRequest_.action == LaunchAction::None) {
+            return;
+        }
+
+        const auto applyModelScope = [&]() -> bool {
+            const std::filesystem::path requestedPath =
+                launchRequest_.modelPath.empty() ? launchRequest_.targetPath : launchRequest_.modelPath;
+            if (requestedPath.empty()) {
+                return true;
+            }
+
+            const auto model = findModelInfoByPath(requestedPath);
+            if (!model.has_value()) {
+                appendLog("launch_model_scope_failed path=" + requestedPath.string());
+                return false;
+            }
+
+            selectModelForSession(*model);
+            return true;
+        };
+
+        switch (launchRequest_.action) {
+            case LaunchAction::OpenModelEditor:
+                openModelInEditor(launchRequest_.targetPath, "launch_model_editor_error");
+                return;
+
+            case LaunchAction::SelectModelForSession:
+                if (launchRequest_.targetPath.empty()) {
+                    appendLog("launch_model_session_failed reason=model_path_missing");
+                    return;
+                }
+                if (!applyModelScope()) {
+                    appendLog("launch_model_session_failed reason=model_not_found");
+                }
+                return;
+
+            case LaunchAction::OpenWorldByName: {
+                if (!applyModelScope()) {
+                    appendLog("launch_world_open_failed reason=model_scope_missing");
+                    return;
+                }
+                if (launchRequest_.worldName.empty()) {
+                    appendLog("launch_world_open_failed reason=world_name_missing");
+                    return;
+                }
+
+                const auto startedAt = std::chrono::steady_clock::now();
+                beginOperationStatus("open world", 0.2f, launchRequest_.worldName.c_str());
+                std::string message;
+                if (runtime_.openWorld(launchRequest_.worldName, message)) {
+                    appendLog(message);
+                    syncPanelFromConfig();
+                    refreshFieldNames();
+                    resetDisplayConfigToDefaults();
+                    loadDisplayPrefs();
+                    completeOperationStatus(startedAt, "world opened");
+                    setSessionStatusText(std::string("Opened '") + launchRequest_.worldName + "' from launch input.");
+                    enterSimulationPaused();
+                } else {
+                    appendLog(message);
+                    completeOperationStatus(startedAt, "world open failed");
+                    setSessionStatusText(translateSessionStatusMessage(message));
+                }
+                return;
+            }
+
+            case LaunchAction::ImportWorldFile: {
+                if (!applyModelScope()) {
+                    appendLog("launch_world_import_failed reason=model_scope_missing");
+                    return;
+                }
+                if (launchRequest_.targetPath.empty()) {
+                    appendLog("launch_world_import_failed reason=import_path_missing");
+                    return;
+                }
+
+                std::string importedWorldName;
+                std::string importMessage;
+                if (!runtime_.importWorld(launchRequest_.targetPath, importedWorldName, importMessage)) {
+                    appendLog(importMessage);
+                    return;
+                }
+
+                appendLog(importMessage);
+                std::string openMessage;
+                if (runtime_.openWorld(importedWorldName, openMessage)) {
+                    appendLog(openMessage);
+                    syncPanelFromConfig();
+                    refreshFieldNames();
+                    resetDisplayConfigToDefaults();
+                    loadDisplayPrefs();
+                    setSessionStatusText(std::string("Imported and opened world '") + importedWorldName + "'.");
+                    enterSimulationPaused();
+                } else {
+                    appendLog(openMessage);
+                    setSessionStatusText(translateSessionStatusMessage(openMessage));
+                }
+                return;
+            }
+
+            case LaunchAction::OpenCheckpointFile: {
+                if (!applyModelScope()) {
+                    appendLog("launch_checkpoint_open_failed reason=model_scope_missing");
+                    return;
+                }
+                if (launchRequest_.targetPath.empty()) {
+                    appendLog("launch_checkpoint_open_failed reason=checkpoint_path_missing");
+                    return;
+                }
+
+                std::string message;
+                if (runtime_.openCheckpointFile(launchRequest_.targetPath, message)) {
+                    appendLog(message);
+                    syncPanelFromConfig();
+                    refreshFieldNames();
+                    resetDisplayConfigToDefaults();
+                    enterSimulationPaused();
+                } else {
+                    appendLog(message);
+                    setSessionStatusText(translateSessionStatusMessage(message));
+                }
+                return;
+            }
+
+            case LaunchAction::None:
+            default:
+                return;
+        }
+    }
+
     [[nodiscard]] std::string currentWindowContext() const {
         const std::string worldName = runtime_.activeWorldName();
         if (!worldName.empty()) {
@@ -1104,12 +1278,13 @@ private:
     ConstraintMonitor constraintMonitor_{};
     std::uint64_t recordedDiagnosticsStep_ = std::numeric_limits<std::uint64_t>::max();
     std::string lastWindowTitle_{};
+    MainWindowLaunchRequest launchRequest_{};
 };
 
 } // anonymous namespace
 
 int MainWindow::run() {
-    MainWindowImpl impl;
+    MainWindowImpl impl(launchRequest_);
     return impl.run();
 }
 

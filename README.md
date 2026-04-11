@@ -141,6 +141,20 @@ Launch the graphical interface:
 ./build/world_sim_gui
 ```
 
+### GUI Launch Arguments and File-Open Routing
+
+The GUI executable accepts startup arguments for model/world/checkpoint workflows:
+
+- `--model <path>`: select model scope and open Session Manager.
+- `--edit-model <path>`: open model directly in Model Editor.
+- `--world <name>`: open stored world by name (uses current or `--model` scope).
+- `--import-world <path>`: import exported world package and open it.
+- `--checkpoint <path>`: start runtime and restore a checkpoint file.
+- `--open <path>` or positional `<path>`: route by extension:
+  - `.simmodel` → Model Editor
+  - `.wscp` → Checkpoint loader
+  - `.wsexp` / `.wsworld` → World import + open
+
 ### Running from Command Line
 
 ```bash

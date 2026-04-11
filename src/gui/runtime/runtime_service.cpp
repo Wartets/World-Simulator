@@ -467,6 +467,54 @@ bool RuntimeService::openWorld(const std::string& worldName, std::string& messag
     return true;
 }
 
+bool RuntimeService::openCheckpointFile(const std::filesystem::path& checkpointPath, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    ErrorContext context{"checkpoint_open_file"};
+
+    if (checkpointPath.empty()) {
+        message = "checkpoint_open_failed reason=path_empty";
+        return false;
+    }
+    if (!std::filesystem::exists(checkpointPath)) {
+        message = "checkpoint_open_failed reason=path_missing path=" + checkpointPath.string();
+        return false;
+    }
+
+    if (!runtime_ || runtime_->status() != RuntimeStatus::Running) {
+        auto startScope = context.push("start_runtime");
+        std::string startMessage;
+        if (!start(startMessage)) {
+            message = context.formatFailure("checkpoint_open_failed", startMessage);
+            return false;
+        }
+    }
+
+    if (!runtime_) {
+        message = context.formatFailure("checkpoint_open_failed", "runtime_not_initialized");
+        return false;
+    }
+
+    try {
+        auto restoreScope = context.push("restore_checkpoint_file");
+        const auto checkpoint = app::readCheckpointFile(checkpointPath);
+        runtime_->resetToCheckpoint(checkpoint);
+        checkpointManager_.clear();
+        checkpointStorage_.clearIndex();
+        std::string timelineMessage;
+        captureTimelineCheckpointNoLock("checkpoint_file_open", timelineMessage);
+        activeWorldName_.clear();
+
+        std::ostringstream output;
+        output << "checkpoint_opened path=" << checkpointPath.string()
+               << " step=" << checkpoint.stateSnapshot.header.stepIndex;
+        message = output.str();
+        return true;
+    } catch (const std::exception& exception) {
+        message = context.formatFailure("checkpoint_open_failed", exception.what());
+        return false;
+    }
+}
+
 bool RuntimeService::saveActiveWorld(std::string& message) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
 

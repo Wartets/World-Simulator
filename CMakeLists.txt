@@ -178,6 +178,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/platform_display_scale.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/storage_paths.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/launch_options.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/parameter_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/perturbation_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/event_logger.cpp
@@ -350,6 +351,13 @@ add_executable(exception_message_test
 )
 target_link_libraries(exception_message_test PRIVATE ws_core)
 add_test(NAME exception_message_test COMMAND exception_message_test)
+
+add_executable(launch_options_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/launch_options_test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/launch_options.cpp"
+)
+target_link_libraries(launch_options_test PRIVATE ws_core)
+add_test(NAME launch_options_test COMMAND launch_options_test)
 
 target_sources(full_pipeline_multi_model_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp

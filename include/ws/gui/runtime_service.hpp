@@ -157,6 +157,7 @@ public:
     [[nodiscard]] std::string normalizeWorldNameForUi(const std::string& worldName) const;
     bool createWorld(const std::string& worldName, const app::LaunchConfig& config, std::string& message);
     bool openWorld(const std::string& worldName, std::string& message);
+    bool openCheckpointFile(const std::filesystem::path& checkpointPath, std::string& message);
     bool saveActiveWorld(std::string& message);
     bool deleteWorld(const std::string& worldName, std::string& message);
     bool renameWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message);
