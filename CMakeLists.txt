@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(WorldSimulator VERSION 0.1.0 LANGUAGES CXX)
 
+if(WIN32)
+    enable_language(RC)
+endif()
+
 # Some third-party dependencies still ship with legacy CMake files that
 # declare a minimum version older than the policy baseline required by
 # modern CMake releases. Keep the build permissive for those subprojects
@@ -194,6 +198,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/render_rule_editor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/vector_renderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/contour_renderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_icon.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
@@ -205,7 +210,10 @@ add_executable(world_sim_gui WIN32
 
 find_package(OpenGL REQUIRED)
 
-target_include_directories(world_sim_gui PRIVATE include)
+target_include_directories(world_sim_gui PRIVATE
+    include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources
+)
 target_link_libraries(world_sim_gui PRIVATE ws_core imgui_backend OpenGL::GL glfw)
 target_compile_definitions(world_sim_gui PRIVATE IMGUI_ENABLE_DOCKING)
 

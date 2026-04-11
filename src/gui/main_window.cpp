@@ -33,8 +33,16 @@
 #include "ws/gui/viewport_manager.hpp"
 #include "ws/gui/generation_advisor.hpp"
 
+#include "world_simulator_icon_id.h"
+
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
+
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <windows.h>
+#include <GLFW/glfw3native.h>
+#endif
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -585,6 +593,32 @@ GLFWwindow* createGlfwWindowWithFallback() {
     return nullptr;
 }
 
+#ifdef _WIN32
+void applyApplicationIcon(GLFWwindow* window) {
+    if (!window) {
+        return;
+    }
+
+    HICON icon = static_cast<HICON>(LoadImageW(
+        GetModuleHandleW(nullptr),
+        MAKEINTRESOURCEW(WS_GUI_ICON_RESOURCE_ID),
+        IMAGE_ICON,
+        0,
+        0,
+        LR_DEFAULTSIZE | LR_SHARED));
+    if (!icon) {
+        return;
+    }
+
+    if (HWND hwnd = glfwGetWin32Window(window)) {
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+    }
+}
+#else
+void applyApplicationIcon(GLFWwindow*) {}
+#endif
+
 // Aliases from detail_utils / color_utils
 using main_window::detail::applyDisplayTransfer;
 using main_window::detail::colormapDiverging;
@@ -608,6 +642,7 @@ public:
         GLFWwindow* window = createGlfwWindowWithFallback();
         if (!window) { glfwTerminate(); return 1; }
 
+        applyApplicationIcon(window);
         main_window::applyWindowState(window, appStateData_.persistedWindowState);
 
         glfwMakeContextCurrent(window);

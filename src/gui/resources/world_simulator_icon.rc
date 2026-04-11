@@ -1,0 +1,3 @@
+#include "world_simulator_icon_id.h"
+
+WS_GUI_ICON_RESOURCE_ID ICON "world_simulator.ico"
