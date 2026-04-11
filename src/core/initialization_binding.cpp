@@ -36,6 +36,98 @@ std::optional<float> readDomainBound(const json& domain, const char* key) {
     return std::nullopt;
 }
 
+struct ParsedDomainDefinition {
+    std::string id;
+    std::string kind = "interval";
+    std::string declaredType;
+    std::optional<float> minValue;
+    std::optional<float> maxValue;
+    std::vector<int> allowedValues;
+};
+
+bool isCommentKey(const std::string& key) {
+    return key.rfind("__comment", 0) == 0;
+}
+
+bool isCategoricalCompatibleType(const std::string& rawType) {
+    const std::string type = toLowerCopy(rawType);
+    return type == "u32" || type == "i32" || type == "bool";
+}
+
+bool parseDomainDefinitions(
+    const json& parsed,
+    std::unordered_map<std::string, ParsedDomainDefinition>& outDomains,
+    std::string& message) {
+    outDomains.clear();
+    if (!parsed.contains("domains") || !parsed["domains"].is_object()) {
+        return true;
+    }
+
+    for (auto it = parsed["domains"].begin(); it != parsed["domains"].end(); ++it) {
+        const std::string domainId = it.key();
+        if (domainId.empty() || isCommentKey(domainId)) {
+            continue;
+        }
+        if (!it.value().is_object()) {
+            message = "model_catalog_load_failed reason=domain_not_object id=" + domainId;
+            return false;
+        }
+
+        ParsedDomainDefinition definition;
+        definition.id = domainId;
+        if (it.value().contains("kind") && it.value()["kind"].is_string()) {
+            definition.kind = toLowerCopy(it.value()["kind"].get<std::string>());
+        }
+        if (it.value().contains("type") && it.value()["type"].is_string()) {
+            definition.declaredType = toLowerCopy(it.value()["type"].get<std::string>());
+        }
+
+        if (definition.kind == "categorical") {
+            if (!it.value().contains("allowed_values") || !it.value()["allowed_values"].is_array()) {
+                message = "model_catalog_load_failed reason=domain_categorical_missing_values id=" + domainId;
+                return false;
+            }
+
+            for (const auto& allowedValue : it.value()["allowed_values"]) {
+                if (allowedValue.is_boolean()) {
+                    definition.allowedValues.push_back(allowedValue.get<bool>() ? 1 : 0);
+                    continue;
+                }
+                if (allowedValue.is_number_integer() || allowedValue.is_number_unsigned()) {
+                    definition.allowedValues.push_back(allowedValue.get<int>());
+                    continue;
+                }
+
+                message = "model_catalog_load_failed reason=domain_categorical_non_integer id=" + domainId;
+                return false;
+            }
+
+            std::sort(definition.allowedValues.begin(), definition.allowedValues.end());
+            definition.allowedValues.erase(
+                std::unique(definition.allowedValues.begin(), definition.allowedValues.end()),
+                definition.allowedValues.end());
+            if (definition.allowedValues.empty()) {
+                message = "model_catalog_load_failed reason=domain_categorical_empty id=" + domainId;
+                return false;
+            }
+        } else if (definition.kind == "interval") {
+            definition.minValue = readDomainBound(it.value(), "min");
+            definition.maxValue = readDomainBound(it.value(), "max");
+            if (definition.minValue.has_value() && definition.maxValue.has_value() &&
+                (*definition.minValue > *definition.maxValue)) {
+                std::swap(*definition.minValue, *definition.maxValue);
+            }
+        } else {
+            message = "model_catalog_load_failed reason=domain_kind_unsupported id=" + domainId + " kind=" + definition.kind;
+            return false;
+        }
+
+        outDomains.insert_or_assign(domainId, std::move(definition));
+    }
+
+    return true;
+}
+
 void normalizeStringVector(std::vector<std::string>& values) {
     values.erase(
         std::remove_if(values.begin(), values.end(), [](const std::string& value) { return value.empty(); }),
@@ -295,6 +387,11 @@ bool populateCatalogFromModelJson(
             outCatalog.modelId = parsed["id"].get<std::string>();
         }
 
+        std::unordered_map<std::string, ParsedDomainDefinition> domainDefinitions;
+        if (!parseDomainDefinitions(parsed, domainDefinitions, message)) {
+            return false;
+        }
+
         if (!parsed.contains("variables") || !parsed["variables"].is_array()) {
             message = "model_catalog_load_failed reason=variables_missing";
             return false;
@@ -367,6 +464,54 @@ bool populateCatalogFromModelJson(
             if (maxBound.has_value()) {
                 descriptor.hasDomainMax = true;
                 descriptor.domainMax = *maxBound;
+            }
+
+            if (variable.contains("domain") && variable["domain"].is_string()) {
+                const std::string domainId = variable["domain"].get<std::string>();
+                if (!domainId.empty() && !isCommentKey(domainId)) {
+                    const auto domainIt = domainDefinitions.find(domainId);
+                    if (domainIt == domainDefinitions.end()) {
+                        message = "model_catalog_load_failed reason=domain_missing id=" + descriptor.id + " domain=" + domainId;
+                        return false;
+                    }
+
+                    const ParsedDomainDefinition& domain = domainIt->second;
+                    if (domain.kind == "interval") {
+                        if (!descriptor.hasDomainMin && domain.minValue.has_value()) {
+                            descriptor.hasDomainMin = true;
+                            descriptor.domainMin = *domain.minValue;
+                        }
+                        if (!descriptor.hasDomainMax && domain.maxValue.has_value()) {
+                            descriptor.hasDomainMax = true;
+                            descriptor.domainMax = *domain.maxValue;
+                        }
+                    } else if (domain.kind == "categorical") {
+                        if (!isCategoricalCompatibleType(descriptor.type)) {
+                            message = "model_catalog_load_failed reason=domain_categorical_type_mismatch id=" +
+                                descriptor.id + " type=" + descriptor.type;
+                            return false;
+                        }
+                        descriptor.hasCategoricalDomain = true;
+                        descriptor.categoricalAllowedValues = domain.allowedValues;
+
+                        if (variable.contains("initial_value")) {
+                            std::optional<int> initialValue;
+                            const auto& rawInitial = variable["initial_value"];
+                            if (rawInitial.is_boolean()) {
+                                initialValue = rawInitial.get<bool>() ? 1 : 0;
+                            } else if (rawInitial.is_number_integer() || rawInitial.is_number_unsigned()) {
+                                initialValue = rawInitial.get<int>();
+                            }
+
+                            if (initialValue.has_value() &&
+                                !std::binary_search(domain.allowedValues.begin(), domain.allowedValues.end(), *initialValue)) {
+                                message = "model_catalog_load_failed reason=domain_categorical_initial_out_of_range id=" +
+                                    descriptor.id;
+                                return false;
+                            }
+                        }
+                    }
+                }
             }
 
             outCatalog.variables.push_back(std::move(descriptor));
@@ -795,16 +940,9 @@ bool loadModelParameterControls(
             metadataParsed = json::parse(ctx.metadata_json);
         }
 
-        std::map<std::string, std::pair<std::optional<float>, std::optional<float>>, std::less<>> domainBounds;
-        if (parsed.contains("domains") && parsed["domains"].is_object()) {
-            for (auto it = parsed["domains"].begin(); it != parsed["domains"].end(); ++it) {
-                if (!it.value().is_object()) {
-                    continue;
-                }
-                domainBounds.insert_or_assign(it.key(), std::make_pair(
-                    readDomainBound(it.value(), "min"),
-                    readDomainBound(it.value(), "max")));
-            }
+        std::unordered_map<std::string, ParsedDomainDefinition> domainDefinitions;
+        if (!parseDomainDefinitions(parsed, domainDefinitions, message)) {
+            return false;
         }
 
         if (!parsed.contains("variables") || !parsed["variables"].is_array()) {
@@ -849,13 +987,32 @@ bool loadModelParameterControls(
             auto maxBound = readDomainBound(variable, "max");
 
             if (variable.contains("domain") && variable["domain"].is_string()) {
-                const auto domainIt = domainBounds.find(variable["domain"].get<std::string>());
-                if (domainIt != domainBounds.end()) {
-                    if (!minBound.has_value()) {
-                        minBound = domainIt->second.first;
-                    }
-                    if (!maxBound.has_value()) {
-                        maxBound = domainIt->second.second;
+                const auto domainIt = domainDefinitions.find(variable["domain"].get<std::string>());
+                if (domainIt != domainDefinitions.end()) {
+                    const auto& domain = domainIt->second;
+                    if (domain.kind == "interval") {
+                        if (!minBound.has_value()) {
+                            minBound = domain.minValue;
+                        }
+                        if (!maxBound.has_value()) {
+                            maxBound = domain.maxValue;
+                        }
+                    } else if (domain.kind == "categorical") {
+                        const std::string type = variable.contains("type") && variable["type"].is_string()
+                            ? variable["type"].get<std::string>()
+                            : std::string{};
+                        if (!isCategoricalCompatibleType(type)) {
+                            message = "model_parameter_controls_failed reason=domain_categorical_type_mismatch id=" + id;
+                            return false;
+                        }
+                        if (!domain.allowedValues.empty()) {
+                            if (!minBound.has_value()) {
+                                minBound = static_cast<float>(domain.allowedValues.front());
+                            }
+                            if (!maxBound.has_value()) {
+                                maxBound = static_cast<float>(domain.allowedValues.back());
+                            }
+                        }
                     }
                 }
             }

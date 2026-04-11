@@ -27,6 +27,8 @@ struct VariableDescriptor {
     bool hasDomainMax = false;
     float domainMin = 0.0f;
     float domainMax = 0.0f;
+    bool hasCategoricalDomain = false;
+    std::vector<int> categoricalAllowedValues;
 };
 
 // Default initialization settings for a variable.

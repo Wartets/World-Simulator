@@ -21,7 +21,7 @@
 
   "domains": {
     "__comment__": "Domains define valid states. Here we ensure 'living' only holds 0 or 1.",
-    "binary_state": { "kind": "interval", "min": 0, "max": 1, "type": "u32" }
+    "binary_state": { "kind": "categorical", "allowed_values": [0, 1], "type": "u32" }
   },
 
   "variables": [

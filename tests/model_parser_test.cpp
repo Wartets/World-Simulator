@@ -974,6 +974,67 @@ void test_extended_variable_metadata_schema_loader() {
         std::cout << "Extended variable metadata schema loader test passed.\n";
 }
 
+void test_categorical_domain_loader() {
+        const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_categorical_domain_test";
+        const auto modelDir = tempRoot / "categorical_domain.simmodel";
+        std::filesystem::remove_all(tempRoot);
+        std::filesystem::create_directories(modelDir);
+
+        const std::string modelJson = R"JSON({
+    "id": "categorical_domain_fixture",
+    "version": "1.0.0",
+    "domains": {
+        "phase_states": {
+            "kind": "categorical",
+            "allowed_values": [0, 1, 2],
+            "type": "u32"
+        }
+    },
+    "variables": [
+        {
+            "id": "phase_state",
+            "role": "parameter",
+            "support": "cell",
+            "type": "u32",
+            "units": "1",
+            "domain": "phase_states",
+            "initial_value": 1
+        }
+    ],
+    "stages": []
+})JSON";
+
+        {
+                std::ofstream out(modelDir / "model.json", std::ios::trunc);
+                out << modelJson;
+        }
+        {
+                std::ofstream out(modelDir / "logic.ir", std::ios::trunc);
+                out << "@global f32 dt = 1.0\n";
+        }
+
+        initialization::ModelVariableCatalog catalog;
+        std::string catalogMessage;
+        const bool catalogOk = initialization::loadModelVariableCatalog(modelDir, catalog, catalogMessage);
+        assert(catalogOk);
+        assert(catalog.variables.size() == 1u);
+        assert(catalog.variables.front().hasCategoricalDomain);
+        assert(catalog.variables.front().categoricalAllowedValues == std::vector<int>({0, 1, 2}));
+
+        std::vector<ParameterControl> controls;
+        std::string controlMessage;
+        const bool controlsOk = initialization::loadModelParameterControls(modelDir, controls, controlMessage);
+        assert(controlsOk);
+        assert(controls.size() == 1u);
+        assert(controls.front().targetVariable == "phase_state");
+        assert(controls.front().minValue == 0.0f);
+        assert(controls.front().maxValue == 2.0f);
+        assert(controls.front().defaultValue == 1.0f);
+
+        std::filesystem::remove_all(tempRoot);
+        std::cout << "Categorical domain loader test passed.\n";
+}
+
 int main() {
     test_unit_system();
     test_ir_parser();
@@ -996,5 +1057,6 @@ int main() {
     test_model_display_spec_loader();
     test_model_binding_plan_uses_catalog_metadata();
     test_extended_variable_metadata_schema_loader();
+    test_categorical_domain_loader();
     return 0;
 }
