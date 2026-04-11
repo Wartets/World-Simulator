@@ -15,6 +15,17 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(WS_ENABLE_CLANG_TIDY "Enable clang-tidy static analysis (uses .clang-tidy when available)" OFF)
+if(WS_ENABLE_CLANG_TIDY)
+    find_program(WS_CLANG_TIDY_EXECUTABLE NAMES clang-tidy)
+    if(WS_CLANG_TIDY_EXECUTABLE)
+        set(CMAKE_CXX_CLANG_TIDY "${WS_CLANG_TIDY_EXECUTABLE}")
+        message(STATUS "WS_ENABLE_CLANG_TIDY is ON: using ${WS_CLANG_TIDY_EXECUTABLE}")
+    else()
+        message(WARNING "WS_ENABLE_CLANG_TIDY is ON, but clang-tidy was not found. Continuing without clang-tidy.")
+    endif()
+endif()
+
 include(FetchContent)
 
 configure_file(

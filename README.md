@@ -411,10 +411,16 @@ Contributions are welcome! Please read our guidelines before submitting.
 ### Coding Standards
 
 - Follow C++20 best practices
-- Use meaningful variable and function names
+- Use the repository naming policy (types `PascalCase`, functions/variables `camelCase`, constants `kPascalCase`)
 - Add documentation for new features
 - Ensure cross-platform compatibility
 - Test thoroughly before submitting
+
+For naming lint on project-owned C++ sources, enable clang-tidy during configuration:
+
+- `cmake .. -DWS_ENABLE_CLANG_TIDY=ON`
+
+Identifier naming checks are configured in `.clang-tidy`.
 
 ---
 
