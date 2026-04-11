@@ -19,12 +19,12 @@ namespace {
 ws::ProfileResolverInput baselineProfileInput() {
     ws::ProfileResolverInput input;
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
-        input.requestedSubsystemTiers[subsystem->name()] = ws::ModelTier::A;
+        input.requestedSubsystemTiers[subsystem->name()] = ws::ModelTier::Minimal;
     }
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
-        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
+        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::Minimal;
     }
-    input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::A;
+    input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::Minimal;
     input.compatibilityAssumptions = {
         "phase6_live_patching_test",
         "deterministic_manual_event_pipeline"

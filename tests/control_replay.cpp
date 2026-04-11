@@ -19,10 +19,10 @@ namespace {
 ws::ProfileResolverInput baselineProfileInput() {
     ws::ProfileResolverInput input;
     for (const auto& subsystem : ws::makePhase4Subsystems()) {
-        input.requestedSubsystemTiers[subsystem->name()] = ws::ModelTier::A;
+        input.requestedSubsystemTiers[subsystem->name()] = ws::ModelTier::Minimal;
     }
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
-        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
+        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::Minimal;
     }
     input.compatibilityAssumptions = {
         "control_surface_runtime_contract",

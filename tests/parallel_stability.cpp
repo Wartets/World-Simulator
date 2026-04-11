@@ -73,9 +73,9 @@ std::uint64_t runDeterministicReducedOnce() {
     scheduler.registerSubsystem(std::make_shared<IndependentWriteSubsystem>("beta", "beta_out", 2.0f));
 
     ws::ModelProfile profile;
-    profile.subsystemTiers["alpha"] = ws::ModelTier::A;
-    profile.subsystemTiers["beta"] = ws::ModelTier::A;
-    profile.subsystemTiers["temporal"] = ws::ModelTier::A;
+    profile.subsystemTiers["alpha"] = ws::ModelTier::Minimal;
+    profile.subsystemTiers["beta"] = ws::ModelTier::Minimal;
+    profile.subsystemTiers["temporal"] = ws::ModelTier::Minimal;
     profile.compatibilityAssumptions = {"parallel_independent_subsystems"};
 
     ws::InteractionCoordinator coordinator;
@@ -110,7 +110,7 @@ std::uint64_t runDeterministicReducedOnce() {
 ws::ProfileResolverInput baselineProfileInput() {
     ws::ProfileResolverInput input;
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
-        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
+        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::Minimal;
     }
     input.compatibilityAssumptions = {
         "throughput_mode_recovery_validation",

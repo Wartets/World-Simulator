@@ -9,9 +9,9 @@ namespace {
 ws::ProfileResolverInput baselineProfileInput() {
     ws::ProfileResolverInput input;
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
-        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
+        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::Minimal;
     }
-    input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::A;
+    input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::Minimal;
     input.compatibilityAssumptions = {
         "determinism_test_assumption",
         "deterministic_serial_scheduler"

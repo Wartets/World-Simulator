@@ -110,7 +110,7 @@ int main() {
     ws::app::LaunchConfig config = service.config();
     config.seed = 0xC0FFEEu;
     config.grid = ws::GridSpec{128u, 128u};
-    config.tier = ws::ModelTier::A;
+    config.tier = ws::ModelTier::Minimal;
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     applyConwayBindingFromCatalog(catalog, config);
 

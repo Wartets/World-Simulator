@@ -86,7 +86,7 @@ void verifyCTierAdmissionAndExecution() {
     config.grid = ws::GridSpec{6, 6};
     config.temporalPolicy = ws::TemporalPolicy::MultiRateC;
     config.guardrailPolicy.multiRateMicroStepCount = 3;
-    config.profileInput = fullTierProfileInput(ws::ModelTier::C);
+    config.profileInput = fullTierProfileInput(ws::ModelTier::Advanced);
     config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
@@ -117,10 +117,10 @@ ws::RuntimeSnapshot runBoundedScenario() {
     config.seed = 314159;
     config.grid = ws::GridSpec{5, 5};
     config.temporalPolicy = ws::TemporalPolicy::MultiRateC;
-    config.profileInput = fullTierProfileInput(ws::ModelTier::B);
-    config.profileInput.requestedSubsystemTiers["hydrology"] = ws::ModelTier::C;
-    config.profileInput.requestedSubsystemTiers["temperature"] = ws::ModelTier::C;
-    config.profileInput.requestedSubsystemTiers["temporal"] = ws::ModelTier::C;
+    config.profileInput = fullTierProfileInput(ws::ModelTier::Standard);
+    config.profileInput.requestedSubsystemTiers["hydrology"] = ws::ModelTier::Advanced;
+    config.profileInput.requestedSubsystemTiers["temperature"] = ws::ModelTier::Advanced;
+    config.profileInput.requestedSubsystemTiers["temporal"] = ws::ModelTier::Advanced;
     config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
@@ -183,8 +183,8 @@ void verifyEscalationFallbackPath() {
     scheduler.registerSubsystem(std::make_shared<SpikeSubsystem>());
 
     ws::ModelProfile profile;
-    profile.subsystemTiers["spike"] = ws::ModelTier::C;
-    profile.subsystemTiers["temporal"] = ws::ModelTier::C;
+    profile.subsystemTiers["spike"] = ws::ModelTier::Advanced;
+    profile.subsystemTiers["temporal"] = ws::ModelTier::Advanced;
     profile.compatibilityAssumptions = {"escalation_path_test"};
     profile.modelExecutionSpec = *executionSpec;
 

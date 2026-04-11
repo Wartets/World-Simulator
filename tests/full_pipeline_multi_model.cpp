@@ -521,7 +521,7 @@ void runModelPipeline(const std::filesystem::path& modelPath, const std::size_t 
     ws::app::LaunchConfig config = service.config();
     config.seed = ws::DeterministicHash::hashString(modelPath.string()) ^ 0x9e3779b97f4a7c15ull;
     config.grid = ws::GridSpec{12, 10};
-    config.tier = ws::ModelTier::A;
+    config.tier = ws::ModelTier::Minimal;
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     configureInitializationFromCatalog(catalog, config);
 

@@ -14,7 +14,7 @@ void verifyInitialConditionRoundTrip() {
     ws::app::LaunchConfig config;
     config.seed = 123456789ULL;
     config.grid = ws::GridSpec{96, 64};
-    config.tier = ws::ModelTier::C;
+    config.tier = ws::ModelTier::Advanced;
     config.temporalPolicy = ws::TemporalPolicy::MultiRateC;
     config.timeIntegratorId = "RK4";
 

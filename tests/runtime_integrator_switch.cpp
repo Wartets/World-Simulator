@@ -15,7 +15,7 @@ ws::RuntimeConfig baselineRuntimeConfig() {
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
     config.timeIntegratorId = "explicit_euler";
     config.initialConditions.type = ws::InitialConditionType::Blank;
-    config.profileInput.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::A;
+    config.profileInput.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::Minimal;
     config.profileInput.compatibilityAssumptions = {
         "runtime_integrator_switch_test"
     };

@@ -48,9 +48,9 @@ std::string toString(const AdmissionIssue::Severity severity) {
 
 std::uint64_t tierPriority(const ModelTier tier) {
     switch (tier) {
-        case ModelTier::C: return 2;
-        case ModelTier::B: return 1;
-        case ModelTier::A: return 0;
+        case ModelTier::Advanced: return 2;
+        case ModelTier::Standard: return 1;
+        case ModelTier::Minimal: return 0;
     }
     return 0;
 }
@@ -65,7 +65,7 @@ std::pair<ReproducibilityClass, double> classifyReproducibility(const std::map<s
         if (subsystemName == "temporal") {
             continue;
         }
-        if (tier == ModelTier::C) {
+        if (tier == ModelTier::Advanced) {
             cTierCount += 1;
         }
     }
@@ -197,19 +197,19 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
 
     const auto temporalTierIt = profile.subsystemTiers.find("temporal");
     if (temporalTierIt != profile.subsystemTiers.end()) {
-        if (temporalTierIt->second == ModelTier::A && temporalPolicy != TemporalPolicy::UniformA) {
+        if (temporalTierIt->second == ModelTier::Minimal && temporalPolicy != TemporalPolicy::UniformA) {
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_POLICY_MISMATCH",
                 "Temporal subsystem tier A requires UniformA execution policy"});
         }
-        if (temporalTierIt->second == ModelTier::B && temporalPolicy != TemporalPolicy::PhasedB) {
+        if (temporalTierIt->second == ModelTier::Standard && temporalPolicy != TemporalPolicy::PhasedB) {
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_POLICY_MISMATCH",
                 "Temporal subsystem tier B requires PhasedB execution policy"});
         }
-        if (temporalTierIt->second == ModelTier::C && temporalPolicy != TemporalPolicy::MultiRateC) {
+        if (temporalTierIt->second == ModelTier::Advanced && temporalPolicy != TemporalPolicy::MultiRateC) {
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_POLICY_MISMATCH",
@@ -219,14 +219,14 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
 
     bool hasAnyCTier = false;
     for (const auto& [subsystemName, tier] : tierBySubsystem) {
-        if (subsystemName != "temporal" && tier == ModelTier::C) {
+        if (subsystemName != "temporal" && tier == ModelTier::Advanced) {
             hasAnyCTier = true;
             break;
         }
     }
 
     if (hasAnyCTier) {
-        if (!profile.subsystemTiers.contains("temporal") || profile.subsystemTiers.at("temporal") != ModelTier::C) {
+        if (!profile.subsystemTiers.contains("temporal") || profile.subsystemTiers.at("temporal") != ModelTier::Advanced) {
             report.issues.push_back(AdmissionIssue{
                 AdmissionIssue::Severity::Error,
                 "TEMPORAL_TIER_REQUIRED",
@@ -289,12 +289,12 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
 
     if (temporalPolicy == TemporalPolicy::PhasedB) {
         for (const auto& source : report.nodes) {
-            if (source.tier != ModelTier::A) {
+            if (source.tier != ModelTier::Minimal) {
                 continue;
             }
 
             for (const auto& target : report.nodes) {
-                if (target.subsystemName == source.subsystemName || target.tier == ModelTier::A) {
+                if (target.subsystemName == source.subsystemName || target.tier == ModelTier::Minimal) {
                     continue;
                 }
                 report.edges.push_back(DependencyEdge{
@@ -313,7 +313,7 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
             if (name == "temporal") {
                 continue;
             }
-            if (tier == ModelTier::C) {
+            if (tier == ModelTier::Advanced) {
                 activeStrongCoupled.push_back(name);
             }
         }
@@ -362,8 +362,8 @@ AdmissionReport InteractionCoordinator::buildAdmissionReport(
             conflict.writersInPriorityOrder.begin(),
             conflict.writersInPriorityOrder.end(),
             [&](const std::string& left, const std::string& right) {
-                const auto leftTier = tierBySubsystem.contains(left) ? tierBySubsystem.at(left) : ModelTier::A;
-                const auto rightTier = tierBySubsystem.contains(right) ? tierBySubsystem.at(right) : ModelTier::A;
+                const auto leftTier = tierBySubsystem.contains(left) ? tierBySubsystem.at(left) : ModelTier::Minimal;
+                const auto rightTier = tierBySubsystem.contains(right) ? tierBySubsystem.at(right) : ModelTier::Minimal;
                 const std::uint64_t leftPriority = tierPriority(leftTier);
                 const std::uint64_t rightPriority = tierPriority(rightTier);
                 if (leftPriority != rightPriority) {

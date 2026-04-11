@@ -611,8 +611,8 @@ void drawStatusHeader() {
     if (running) {
         const auto& cfg = runtime_.config();
         runtimeTierIndex =
-            (cfg.tier == ModelTier::A) ? 0 :
-            (cfg.tier == ModelTier::B) ? 1 : 2;
+            (cfg.tier == ModelTier::Minimal) ? 0 :
+            (cfg.tier == ModelTier::Standard) ? 1 : 2;
         const std::string runtimeTemporal = app::temporalPolicyToString(cfg.temporalPolicy);
         runtimeTemporalIndex =
             (runtimeTemporal == "uniform") ? 0 :
@@ -1808,8 +1808,8 @@ void drawPlaybackSection() {
 
         const auto& cfg = runtime_.config();
         const int runtimeTierIndex =
-            (cfg.tier == ModelTier::A) ? 0 :
-            (cfg.tier == ModelTier::B) ? 1 : 2;
+            (cfg.tier == ModelTier::Minimal) ? 0 :
+            (cfg.tier == ModelTier::Standard) ? 1 : 2;
         const std::string runtimeTemporal = app::temporalPolicyToString(cfg.temporalPolicy);
         const int runtimeTemporalIndex =
             (runtimeTemporal == "uniform") ? 0 :
@@ -2481,8 +2481,8 @@ void drawConfirmationModals() {
 
                 const auto& cfg = runtime_.config();
                 const int runtimeTierIndex =
-                    (cfg.tier == ModelTier::A) ? 0 :
-                    (cfg.tier == ModelTier::B) ? 1 : 2;
+                    (cfg.tier == ModelTier::Minimal) ? 0 :
+                    (cfg.tier == ModelTier::Standard) ? 1 : 2;
                 const std::string runtimeTemporal = app::temporalPolicyToString(cfg.temporalPolicy);
                 const int runtimeTemporalIndex =
                     (runtimeTemporal == "uniform") ? 0 :
@@ -4616,7 +4616,7 @@ void syncPanelFromConfig() {
     panel_.useManualSeed  = true;
     panel_.gridWidth      = static_cast<int>(c.grid.width);
     panel_.gridHeight     = static_cast<int>(c.grid.height);
-    panel_.tierIndex      = (c.tier == ModelTier::A) ? 0 : (c.tier == ModelTier::B) ? 1 : 2;
+    panel_.tierIndex      = (c.tier == ModelTier::Minimal) ? 0 : (c.tier == ModelTier::Standard) ? 1 : 2;
     const std::string tmp = app::temporalPolicyToString(c.temporalPolicy);
     panel_.temporalIndex  = (tmp == "uniform") ? 0 : (tmp == "phased") ? 1 : 2;
 
@@ -4679,8 +4679,8 @@ void applyConfigFromPanel() {
     cfg.grid        = GridSpec{
         static_cast<std::uint32_t>(std::clamp(panel_.gridWidth,  1, 4096)),
         static_cast<std::uint32_t>(std::clamp(panel_.gridHeight, 1, 4096))};
-    cfg.tier        = (panel_.tierIndex == 0) ? ModelTier::A
-                    : (panel_.tierIndex == 1) ? ModelTier::B : ModelTier::C;
+    cfg.tier        = (panel_.tierIndex == 0) ? ModelTier::Minimal
+                    : (panel_.tierIndex == 1) ? ModelTier::Standard : ModelTier::Advanced;
     auto tp = app::parseTemporalPolicy(kTemporalPolicyTokens[panel_.temporalIndex]);
     if (tp.has_value()) cfg.temporalPolicy = *tp;
 

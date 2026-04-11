@@ -21,7 +21,7 @@ namespace ws::app {
 struct LaunchConfig {
     std::uint64_t seed = 42;
     GridSpec grid{128, 128};
-    ModelTier tier = ModelTier::A;
+    ModelTier tier = ModelTier::Minimal;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
     std::string timeIntegratorId = "explicit_euler";
     InitialConditionConfig initialConditions{};

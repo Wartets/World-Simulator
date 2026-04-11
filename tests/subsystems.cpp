@@ -192,7 +192,7 @@ ScenarioResult runScenario(const ws::ModelTier tier, const std::uint64_t seed) {
     ws::RuntimeConfig config;
     config.seed = seed;
     config.grid = ws::GridSpec{8, 8};
-    config.temporalPolicy = (tier == ws::ModelTier::B) ? ws::TemporalPolicy::PhasedB : ws::TemporalPolicy::UniformA;
+    config.temporalPolicy = (tier == ws::ModelTier::Standard) ? ws::TemporalPolicy::PhasedB : ws::TemporalPolicy::UniformA;
     config.profileInput = profileInputForTier(tier);
     config.modelExecutionSpec = *executionSpec;
 
@@ -263,8 +263,8 @@ void verifyOwnershipContracts() {
 }
 
 void verifyInitializationAndStepping() {
-    const ScenarioResult deterministicA1 = runScenario(ws::ModelTier::A, 777);
-    const ScenarioResult deterministicA2 = runScenario(ws::ModelTier::A, 777);
+    const ScenarioResult deterministicA1 = runScenario(ws::ModelTier::Minimal, 777);
+    const ScenarioResult deterministicA2 = runScenario(ws::ModelTier::Minimal, 777);
 
     assert(deterministicA1.identityHash == deterministicA2.identityHash);
     assert(deterministicA1.stateHash == deterministicA2.stateHash);
@@ -272,7 +272,7 @@ void verifyInitializationAndStepping() {
     assert(deterministicA1.avgTemperature == deterministicA2.avgTemperature);
     assert(deterministicA1.avgResources == deterministicA2.avgResources);
 
-    const ScenarioResult tierB = runScenario(ws::ModelTier::B, 777);
+    const ScenarioResult tierB = runScenario(ws::ModelTier::Standard, 777);
     assert(deterministicA1.identityHash != tierB.identityHash);
 
     assert(deterministicA1.avgWater >= 0.0f);

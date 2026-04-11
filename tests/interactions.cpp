@@ -146,7 +146,7 @@ void verifyTemporalAdmissionBlocksMismatch() {
     config.seed = 99;
     config.grid = ws::GridSpec{4, 4};
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
-    config.profileInput = makeProfileInput(ws::ModelTier::A, ws::ModelTier::B);
+    config.profileInput = makeProfileInput(ws::ModelTier::Minimal, ws::ModelTier::Standard);
     config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
@@ -171,8 +171,8 @@ void verifyNoHardcodedHydrologyEventsGate() {
     config.seed = 101;
     config.grid = ws::GridSpec{4, 4};
     config.temporalPolicy = ws::TemporalPolicy::UniformA;
-    config.profileInput = makeProfileInput(ws::ModelTier::A, ws::ModelTier::A);
-    config.profileInput.requestedSubsystemTiers["events"] = ws::ModelTier::B;
+    config.profileInput = makeProfileInput(ws::ModelTier::Minimal, ws::ModelTier::Minimal);
+    config.profileInput.requestedSubsystemTiers["events"] = ws::ModelTier::Standard;
     config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runtime(config);
@@ -193,7 +193,7 @@ void verifyDeterministicAdmissionGraph() {
     config.seed = 555;
     config.grid = ws::GridSpec{6, 6};
     config.temporalPolicy = ws::TemporalPolicy::PhasedB;
-    config.profileInput = makeProfileInput(ws::ModelTier::B, ws::ModelTier::B);
+    config.profileInput = makeProfileInput(ws::ModelTier::Standard, ws::ModelTier::Standard);
     config.modelExecutionSpec = *executionSpec;
 
     ws::Runtime runA(config);
@@ -248,8 +248,8 @@ void verifyObservedDataFlowEnforcement() {
     stateStore.allocateScalarField(ws::VariableSpec{2, "signal_b"});
 
     ws::ModelProfile profile;
-    profile.subsystemTiers["undeclared_reader"] = ws::ModelTier::A;
-    profile.subsystemTiers["temporal"] = ws::ModelTier::A;
+    profile.subsystemTiers["undeclared_reader"] = ws::ModelTier::Minimal;
+    profile.subsystemTiers["temporal"] = ws::ModelTier::Minimal;
     profile.compatibilityAssumptions = {"data_flow_enforcement"};
 
     ws::InteractionCoordinator coordinator;

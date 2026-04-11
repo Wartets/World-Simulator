@@ -71,9 +71,9 @@ private:
 ws::ProfileResolverInput baselineProfileInput() {
     ws::ProfileResolverInput input;
     for (const auto& subsystem : ws::ProfileResolver::requiredSubsystems()) {
-        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::A;
+        input.requestedSubsystemTiers[subsystem] = ws::ModelTier::Minimal;
     }
-    input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::A;
+    input.requestedSubsystemTiers["bootstrap"] = ws::ModelTier::Minimal;
     input.compatibilityAssumptions = {
         "execution_test",
         "deterministic_scheduler_order"
@@ -94,8 +94,8 @@ void verifyTemporalPoliciesAndContracts() {
     scheduler.registerSubsystem(std::make_shared<ConstantWriteSubsystem>("alpha", "alpha_v", 1.0f, &alphaCounters));
 
     ws::ModelProfile profile;
-    profile.subsystemTiers["alpha"] = ws::ModelTier::A;
-    profile.subsystemTiers["beta"] = ws::ModelTier::B;
+    profile.subsystemTiers["alpha"] = ws::ModelTier::Minimal;
+    profile.subsystemTiers["beta"] = ws::ModelTier::Standard;
     profile.compatibilityAssumptions.insert("phase3_test_profile");
 
     scheduler.initialize(stateStore, profile);
@@ -145,7 +145,7 @@ void verifyNumericalGuardrails() {
     scheduler.registerSubsystem(std::make_shared<ConstantWriteSubsystem>("signal_writer", "signal", 500.0f, nullptr));
 
     ws::ModelProfile profile;
-    profile.subsystemTiers["signal_writer"] = ws::ModelTier::A;
+    profile.subsystemTiers["signal_writer"] = ws::ModelTier::Minimal;
     profile.compatibilityAssumptions.insert("guardrail_test");
     profile.conservedVariables = {"signal"};
 
@@ -184,7 +184,7 @@ void verifyNaNFailFast() {
         nullptr));
 
     ws::ModelProfile profile;
-    profile.subsystemTiers["nan_writer"] = ws::ModelTier::A;
+    profile.subsystemTiers["nan_writer"] = ws::ModelTier::Minimal;
     profile.compatibilityAssumptions.insert("nan_failfast_test");
 
     scheduler.initialize(stateStore, profile);
@@ -215,8 +215,8 @@ void verifyCrossVariableConstraintEnforcement() {
     scheduler.registerSubsystem(std::make_shared<ConstantWriteSubsystem>("rhs_writer", "rhs_value", 2.0f, nullptr));
 
     ws::ModelProfile profile;
-    profile.subsystemTiers["lhs_writer"] = ws::ModelTier::A;
-    profile.subsystemTiers["rhs_writer"] = ws::ModelTier::A;
+    profile.subsystemTiers["lhs_writer"] = ws::ModelTier::Minimal;
+    profile.subsystemTiers["rhs_writer"] = ws::ModelTier::Minimal;
     ws::CrossVariableConstraint constraint;
     constraint.id = "lhs_lte_rhs";
     constraint.lhsVariable = "lhs_value";
@@ -267,7 +267,7 @@ ScenarioResult runBaselineScenario(const ws::TemporalPolicy temporalPolicy, cons
     config.temporalPolicy = temporalPolicy;
     config.profileInput = baselineProfileInput();
     if (temporalPolicy == ws::TemporalPolicy::PhasedB) {
-        config.profileInput.requestedSubsystemTiers["temporal"] = ws::ModelTier::B;
+        config.profileInput.requestedSubsystemTiers["temporal"] = ws::ModelTier::Standard;
     }
 
     ws::Runtime runtime(config);

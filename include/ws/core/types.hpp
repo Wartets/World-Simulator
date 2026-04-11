@@ -16,9 +16,9 @@ namespace ws {
 // and feature requirements. Used by the profile resolver to select appropriate
 // execution strategies.
 enum class ModelTier : std::uint8_t {
-    A = 0,
-    B = 1,
-    C = 2
+    Minimal = 0,
+    Standard = 1,
+    Advanced = 2
 };
 
 // =============================================================================
@@ -231,9 +231,9 @@ using VariableRegistry = std::vector<VariableSpec>;
 // Converts ModelTier enum to human-readable string.
 [[nodiscard]] inline std::string toString(const ModelTier tier) {
     switch (tier) {
-        case ModelTier::A: return "A";
-        case ModelTier::B: return "B";
-        case ModelTier::C: return "C";
+        case ModelTier::Minimal: return "minimal";
+        case ModelTier::Standard: return "standard";
+        case ModelTier::Advanced: return "advanced";
     }
     return "Unknown";
 }
