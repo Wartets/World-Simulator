@@ -1,3 +1,4 @@
 #include "world_simulator_icon_id.h"
 
 WS_GUI_ICON_RESOURCE_ID ICON "world_simulator.ico"
+1 RT_MANIFEST "world_simulator.manifest"
