@@ -95,9 +95,29 @@ std::vector<std::shared_ptr<ISubsystem>> selectCompatibleSubsystems(const std::o
 
 RuntimeService::RuntimeService() = default;
 
+app::LaunchConfig RuntimeService::config() const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return config_;
+}
+
+void RuntimeService::setConfig(const app::LaunchConfig& config) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    config_ = config;
+}
+
 void RuntimeService::setModelScope(ModelScopeContext context) {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     modelScope_ = std::move(context);
+}
+
+ModelScopeContext RuntimeService::modelScope() const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return modelScope_;
+}
+
+float RuntimeService::playbackSpeed() const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return playbackSpeed_;
 }
 
 std::filesystem::path RuntimeService::worldProfileRoot() {
@@ -132,6 +152,11 @@ std::string RuntimeService::currentModelKey() const {
 std::string RuntimeService::activeModelKey() const {
     const std::lock_guard<std::recursive_mutex> lock(mutex_);
     return currentModelKey();
+}
+
+std::string RuntimeService::activeWorldName() const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return activeWorldName_;
 }
 
 app::WorldModelMetadata RuntimeService::currentWorldModelMetadata() const {

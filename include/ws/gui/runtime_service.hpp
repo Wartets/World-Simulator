@@ -89,13 +89,20 @@ struct CheckpointInfo {
 // Central service managing runtime lifecycle, checkpoints, and world storage.
 class RuntimeService {
 public:
+    // Threading contract:
+    // - Mutation/control methods (start/stop/step/checkpoint/world/profile writes)
+    //   are serialized internally and intended to be invoked by the GUI owner thread.
+    // - Read/query methods are safe to call concurrently; methods returning snapshots
+    //   provide lock-backed copies to avoid exposing mutable internal state.
+    // - isRunning()/isPaused() are low-latency best-effort cache reads; they may
+    //   transiently lag behind the most recent mutation in contended scenarios.
     RuntimeService();
 
     // Configuration access
-    [[nodiscard]] const app::LaunchConfig& config() const noexcept { return config_; }
-    void setConfig(const app::LaunchConfig& config) { config_ = config; }
+    [[nodiscard]] app::LaunchConfig config() const;
+    void setConfig(const app::LaunchConfig& config);
     void setModelScope(ModelScopeContext context);
-    [[nodiscard]] const ModelScopeContext& modelScope() const noexcept { return modelScope_; }
+    [[nodiscard]] ModelScopeContext modelScope() const;
 
     // Runtime state
     [[nodiscard]] bool isRunning() const;
@@ -114,7 +121,7 @@ public:
     bool pause(std::string& message);
     bool resume(std::string& message);
     bool setPlaybackSpeed(float speed, std::string& message);
-    [[nodiscard]] float playbackSpeed() const noexcept { return playbackSpeed_; }
+    [[nodiscard]] float playbackSpeed() const;
     bool configureCheckpointTimeline(std::uint32_t intervalSteps, std::size_t retention, std::string& message);
 
     // Diagnostics and introspection
@@ -178,7 +185,7 @@ public:
     [[nodiscard]] bool exportWorld(const std::string& worldName, const std::filesystem::path& outputPath, std::string& message);
     [[nodiscard]] bool importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message);
 
-    [[nodiscard]] const std::string& activeWorldName() const noexcept { return activeWorldName_; }
+    [[nodiscard]] std::string activeWorldName() const;
     [[nodiscard]] std::string activeModelKey() const;
 
     bool applySettings(std::string& message);
