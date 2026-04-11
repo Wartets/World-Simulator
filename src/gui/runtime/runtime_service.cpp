@@ -1,5 +1,6 @@
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/error_context.hpp"
+#include "ws/gui/message_formatter.hpp"
 
 #include "ws/app/checkpoint_io.hpp"
 #include "ws/core/initialization_binding.hpp"
@@ -333,7 +334,7 @@ bool RuntimeService::applySettings(std::string& message) {
         message = "settings_applied " + restartMessage;
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("apply_settings_failed error=") + exception.what();
+        message = formatOperationFailure("apply_settings_failed", exception.what());
         return false;
     }
 }
@@ -356,7 +357,7 @@ bool RuntimeService::stop(std::string& message) {
         return true;
     } catch (const std::exception& exception) {
         refreshCachedStateNoLock();
-        message = std::string("stop_failed error=") + exception.what();
+        message = formatOperationFailure("stop_failed", exception.what());
         return false;
     }
 }
@@ -587,7 +588,7 @@ bool RuntimeService::saveActiveWorld(std::string& message) {
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("world_save_failed error=") + exception.what();
+        message = formatOperationFailure("world_save_failed", exception.what());
         return false;
     }
 }
@@ -656,7 +657,7 @@ bool RuntimeService::step(const std::uint32_t count, std::string& message) {
         return true;
     } catch (const std::exception& exception) {
         refreshCachedStateNoLock();
-        message = std::string("step_failed error=") + exception.what();
+        message = formatOperationFailure("step_failed", exception.what());
         return false;
     }
 }
@@ -676,7 +677,7 @@ bool RuntimeService::stepBackward(const std::uint32_t count, std::string& messag
         const std::uint64_t targetStep = (count >= currentStep) ? 0u : (currentStep - count);
         return seekStep(targetStep, message);
     } catch (const std::exception& exception) {
-        message = std::string("step_backward_failed error=") + exception.what();
+        message = formatOperationFailure("step_backward_failed", exception.what());
         return false;
     }
 }
@@ -712,7 +713,7 @@ bool RuntimeService::runUntil(const std::uint64_t targetStep, std::string& messa
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("rununtil_failed error=") + exception.what();
+        message = formatOperationFailure("rununtil_failed", exception.what());
         return false;
     }
 }
@@ -778,7 +779,7 @@ bool RuntimeService::seekStep(const std::uint64_t targetStep, std::string& messa
             " restored_step=" + std::to_string(*nearestDiskStep);
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("seek_failed error=") + exception.what();
+        message = formatOperationFailure("seek_failed", exception.what());
         return false;
     }
 }
@@ -795,7 +796,7 @@ bool RuntimeService::pause(std::string& message) {
         return true;
     } catch (const std::exception& exception) {
         refreshCachedStateNoLock();
-        message = std::string("pause_failed error=") + exception.what();
+        message = formatOperationFailure("pause_failed", exception.what());
         return false;
     }
 }
@@ -812,7 +813,7 @@ bool RuntimeService::resume(std::string& message) {
         return true;
     } catch (const std::exception& exception) {
         refreshCachedStateNoLock();
-        message = std::string("resume_failed error=") + exception.what();
+        message = formatOperationFailure("resume_failed", exception.what());
         return false;
     }
 }
@@ -880,7 +881,7 @@ bool RuntimeService::status(std::string& message) const {
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("status_failed error=") + exception.what();
+        message = formatOperationFailure("status_failed", exception.what());
         return false;
     }
 }
@@ -904,7 +905,7 @@ bool RuntimeService::metrics(std::string& message) const {
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("metrics_failed error=") + exception.what();
+        message = formatOperationFailure("metrics_failed", exception.what());
         return false;
     }
 }
@@ -925,7 +926,7 @@ bool RuntimeService::listFields(std::string& message) const {
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("fields_failed error=") + exception.what();
+        message = formatOperationFailure("fields_failed", exception.what());
         return false;
     }
 }
@@ -963,7 +964,7 @@ bool RuntimeService::summarizeField(const std::string& variableName, std::string
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("summary_failed error=") + exception.what();
+        message = formatOperationFailure("summary_failed", exception.what());
         return false;
     }
 }
@@ -979,7 +980,7 @@ bool RuntimeService::captureCheckpoint(RuntimeCheckpoint& checkpoint, std::strin
         message = "visualization_snapshot_ready";
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("visualization_failed error=") + exception.what();
+        message = formatOperationFailure("visualization_failed", exception.what());
         return false;
     }
 }
@@ -1000,7 +1001,7 @@ bool RuntimeService::fieldNames(std::vector<std::string>& names, std::string& me
         message = "field_names_ready";
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("field_names_failed error=") + exception.what();
+        message = formatOperationFailure("field_names_failed", exception.what());
         return false;
     }
 }
@@ -1030,7 +1031,7 @@ bool RuntimeService::parameterControls(std::vector<ParameterControl>& controls, 
         message = "parameter_controls_ready count=" + std::to_string(controls.size());
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("parameter_controls_failed error=") + exception.what();
+        message = formatOperationFailure("parameter_controls_failed", exception.what());
         return false;
     }
 }
@@ -1043,7 +1044,7 @@ bool RuntimeService::addProbe(const ProbeDefinition& definition, std::string& me
         }
         return runtime_->addProbe(definition, message);
     } catch (const std::exception& exception) {
-        message = std::string("add_probe_failed error=") + exception.what();
+        message = formatOperationFailure("add_probe_failed", exception.what());
         return false;
     }
 }
@@ -1056,7 +1057,7 @@ bool RuntimeService::removeProbe(const std::string& probeId, std::string& messag
         }
         return runtime_->removeProbe(probeId, message);
     } catch (const std::exception& exception) {
-        message = std::string("remove_probe_failed error=") + exception.what();
+        message = formatOperationFailure("remove_probe_failed", exception.what());
         return false;
     }
 }
@@ -1071,7 +1072,7 @@ bool RuntimeService::clearProbes(std::string& message) {
         message = "probes_cleared";
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("clear_probes_failed error=") + exception.what();
+        message = formatOperationFailure("clear_probes_failed", exception.what());
         return false;
     }
 }
@@ -1086,7 +1087,7 @@ bool RuntimeService::probeDefinitions(std::vector<ProbeDefinition>& definitions,
         message = "probe_definitions_ready count=" + std::to_string(definitions.size());
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("probe_definitions_failed error=") + exception.what();
+        message = formatOperationFailure("probe_definitions_failed", exception.what());
         return false;
     }
 }
@@ -1099,7 +1100,7 @@ bool RuntimeService::probeSeries(const std::string& probeId, ProbeSeries& series
         }
         return runtime_->probes().getSeries(probeId, series, message);
     } catch (const std::exception& exception) {
-        message = std::string("probe_series_failed error=") + exception.what();
+        message = formatOperationFailure("probe_series_failed", exception.what());
         return false;
     }
 }
@@ -1114,7 +1115,7 @@ bool RuntimeService::lastStepDiagnostics(StepDiagnostics& diagnostics, std::stri
         message = "step_diagnostics_ready";
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("step_diagnostics_failed error=") + exception.what();
+        message = formatOperationFailure("step_diagnostics_failed", exception.what());
         return false;
     }
 }
@@ -1127,7 +1128,7 @@ bool RuntimeService::setParameterValue(const std::string& parameterName, const f
         }
         return runtime_->setParameterValue(parameterName, value, note, message);
     } catch (const std::exception& exception) {
-        message = std::string("set_parameter_failed error=") + exception.what();
+        message = formatOperationFailure("set_parameter_failed", exception.what());
         return false;
     }
 }
@@ -1145,7 +1146,7 @@ bool RuntimeService::applyManualPatch(
         }
         return runtime_->applyManualPatch(variableName, cell, newValue, note, message);
     } catch (const std::exception& exception) {
-        message = std::string("manual_patch_failed error=") + exception.what();
+        message = formatOperationFailure("manual_patch_failed", exception.what());
         return false;
     }
 }
@@ -1158,7 +1159,7 @@ bool RuntimeService::undoLastManualPatch(std::string& message) {
         }
         return runtime_->undoLastManualPatch(message);
     } catch (const std::exception& exception) {
-        message = std::string("manual_patch_undo_failed error=") + exception.what();
+        message = formatOperationFailure("manual_patch_undo_failed", exception.what());
         return false;
     }
 }
@@ -1171,7 +1172,7 @@ bool RuntimeService::enqueuePerturbation(const PerturbationSpec& perturbation, s
         }
         return runtime_->enqueuePerturbation(perturbation, message);
     } catch (const std::exception& exception) {
-        message = std::string("enqueue_perturbation_failed error=") + exception.what();
+        message = formatOperationFailure("enqueue_perturbation_failed", exception.what());
         return false;
     }
 }
@@ -1186,7 +1187,7 @@ bool RuntimeService::manualEventLog(std::vector<ManualEventRecord>& events, std:
         message = "manual_event_log_ready count=" + std::to_string(events.size());
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("manual_event_log_failed error=") + exception.what();
+        message = formatOperationFailure("manual_event_log_failed", exception.what());
         return false;
     }
 }
@@ -1214,7 +1215,7 @@ bool RuntimeService::effectLedgerCounts(
             " manual_events=" + std::to_string(runtimeManualEventCount);
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("effect_ledger_counts_failed error=") + exception.what();
+        message = formatOperationFailure("effect_ledger_counts_failed", exception.what());
         return false;
     }
 }
@@ -1229,7 +1230,7 @@ bool RuntimeService::timelineCheckpointSteps(std::vector<std::uint64_t>& steps, 
         message = "timeline_checkpoint_steps_ready count=" + std::to_string(steps.size());
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("timeline_checkpoint_steps_failed error=") + exception.what();
+        message = formatOperationFailure("timeline_checkpoint_steps_failed", exception.what());
         return false;
     }
 }
@@ -1267,7 +1268,7 @@ bool RuntimeService::checkpointRecords(std::vector<CheckpointInfo>& records, std
         message = "checkpoint_records_ready count=" + std::to_string(records.size());
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("checkpoint_records_failed error=") + exception.what();
+        message = formatOperationFailure("checkpoint_records_failed", exception.what());
         return false;
     }
 }
@@ -1290,7 +1291,7 @@ bool RuntimeService::createCheckpoint(const std::string& label, std::string& mes
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("checkpoint_save_failed error=") + exception.what();
+        message = formatOperationFailure("checkpoint_save_failed", exception.what());
         return false;
     }
 }
@@ -1343,7 +1344,7 @@ bool RuntimeService::deleteCheckpoint(const std::string& label, std::string& mes
         message = "checkpoint_deleted label=" + label;
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("checkpoint_delete_failed error=") + exception.what();
+        message = formatOperationFailure("checkpoint_delete_failed", exception.what());
         return false;
     }
 }
@@ -1381,7 +1382,7 @@ bool RuntimeService::renameCheckpoint(const std::string& fromLabel, const std::s
         message = "checkpoint_renamed from=" + fromLabel + " to=" + toLabel;
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("checkpoint_rename_failed error=") + exception.what();
+        message = formatOperationFailure("checkpoint_rename_failed", exception.what());
         return false;
     }
 }
@@ -1423,7 +1424,7 @@ bool RuntimeService::saveProfile(const std::string& name, std::string& message) 
         message = "profile_saved name=" + name + " path=" + profileStore_.pathFor(name).string();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("profile_save_failed error=") + exception.what();
+        message = formatOperationFailure("profile_save_failed", exception.what());
         return false;
     }
 }
@@ -1446,7 +1447,7 @@ bool RuntimeService::loadProfile(const std::string& name, std::string& message) 
         message = output.str();
         return true;
     } catch (const std::exception& exception) {
-        message = std::string("profile_load_failed error=") + exception.what();
+        message = formatOperationFailure("profile_load_failed", exception.what());
         return false;
     }
 }

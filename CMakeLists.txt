@@ -448,6 +448,12 @@ add_executable(exception_message_test
 target_link_libraries(exception_message_test PRIVATE ws_core)
 add_test(NAME exception_message_test COMMAND exception_message_test)
 
+add_executable(message_formatter_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/message_formatter_test.cpp"
+)
+target_link_libraries(message_formatter_test PRIVATE ws_core)
+add_test(NAME message_formatter_test COMMAND message_formatter_test)
+
 add_executable(launch_options_test
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/launch_options_test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/launch_options.cpp"
