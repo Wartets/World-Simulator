@@ -127,27 +127,27 @@ public:
     bool applyManualPatch(const std::string& variableName, std::optional<Cell> cell, float newValue, const std::string& note, std::string& message);
     bool undoLastManualPatch(std::string& message);
     bool enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message);
-    bool manualEventLog(std::vector<ManualEventRecord>& events, std::string& message) const;
-    bool effectLedgerCounts(
+    [[nodiscard]] bool manualEventLog(std::vector<ManualEventRecord>& events, std::string& message) const;
+    [[nodiscard]] bool effectLedgerCounts(
         std::size_t& pendingImmediateWrites,
         std::size_t& queuedDeferredEvents,
         std::size_t& pendingScheduledPerturbations,
         std::size_t& runtimeManualEventCount,
         std::string& message) const;
-    bool timelineCheckpointSteps(std::vector<std::uint64_t>& steps, std::string& message) const;
+    [[nodiscard]] bool timelineCheckpointSteps(std::vector<std::uint64_t>& steps, std::string& message) const;
 
     // Checkpoint management
-    bool createCheckpoint(const std::string& label, std::string& message);
-    bool restoreCheckpoint(const std::string& label, std::string& message);
-    bool deleteCheckpoint(const std::string& label, std::string& message);
-    bool renameCheckpoint(const std::string& fromLabel, const std::string& toLabel, std::string& message);
-    bool checkpointRecords(std::vector<CheckpointInfo>& records, std::string& message) const;
-    bool listCheckpoints(std::string& message) const;
+    [[nodiscard]] bool createCheckpoint(const std::string& label, std::string& message);
+    [[nodiscard]] bool restoreCheckpoint(const std::string& label, std::string& message);
+    [[nodiscard]] bool deleteCheckpoint(const std::string& label, std::string& message);
+    [[nodiscard]] bool renameCheckpoint(const std::string& fromLabel, const std::string& toLabel, std::string& message);
+    [[nodiscard]] bool checkpointRecords(std::vector<CheckpointInfo>& records, std::string& message) const;
+    [[nodiscard]] bool listCheckpoints(std::string& message) const;
 
     // Profile management
-    bool saveProfile(const std::string& name, std::string& message);
-    bool loadProfile(const std::string& name, std::string& message);
-    bool listProfiles(std::string& message) const;
+    [[nodiscard]] bool saveProfile(const std::string& name, std::string& message);
+    [[nodiscard]] bool loadProfile(const std::string& name, std::string& message);
+    [[nodiscard]] bool listProfiles(std::string& message) const;
 
     // World management
     [[nodiscard]] std::vector<StoredWorldInfo> listStoredWorlds(std::string& message) const;
@@ -155,15 +155,15 @@ public:
     [[nodiscard]] std::string suggestNextWorldName() const;
     [[nodiscard]] std::string suggestWorldNameFromHint(const std::string& hint) const;
     [[nodiscard]] std::string normalizeWorldNameForUi(const std::string& worldName) const;
-    bool createWorld(const std::string& worldName, const app::LaunchConfig& config, std::string& message);
-    bool openWorld(const std::string& worldName, std::string& message);
-    bool openCheckpointFile(const std::filesystem::path& checkpointPath, std::string& message);
-    bool saveActiveWorld(std::string& message);
-    bool deleteWorld(const std::string& worldName, std::string& message);
-    bool renameWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message);
-    bool duplicateWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message);
-    bool exportWorld(const std::string& worldName, const std::filesystem::path& outputPath, std::string& message);
-    bool importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message);
+    [[nodiscard]] bool createWorld(const std::string& worldName, const app::LaunchConfig& config, std::string& message);
+    [[nodiscard]] bool openWorld(const std::string& worldName, std::string& message);
+    [[nodiscard]] bool openCheckpointFile(const std::filesystem::path& checkpointPath, std::string& message);
+    [[nodiscard]] bool saveActiveWorld(std::string& message);
+    [[nodiscard]] bool deleteWorld(const std::string& worldName, std::string& message);
+    [[nodiscard]] bool renameWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message);
+    [[nodiscard]] bool duplicateWorld(const std::string& fromWorldName, const std::string& toWorldName, std::string& message);
+    [[nodiscard]] bool exportWorld(const std::string& worldName, const std::filesystem::path& outputPath, std::string& message);
+    [[nodiscard]] bool importWorld(const std::filesystem::path& inputPath, std::string& importedWorldName, std::string& message);
 
     [[nodiscard]] const std::string& activeWorldName() const noexcept { return activeWorldName_; }
     [[nodiscard]] std::string activeModelKey() const;

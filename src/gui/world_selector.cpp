@@ -31,7 +31,7 @@ void WorldSelector::duplicateSelected(WorldSelectorState& state, std::string tar
 
     const auto& source = state.worlds[static_cast<std::size_t>(state.selectedIndex)].worldName;
     std::string message;
-    runtimeService_.duplicateWorld(source, std::move(targetName), message);
+    [[maybe_unused]] const bool duplicated = runtimeService_.duplicateWorld(source, std::move(targetName), message);
     state.statusLine = formatOperationMessageForDisplay(translateOperationMessage(message));
     state.needsRefresh = true;
 }
@@ -47,7 +47,7 @@ void WorldSelector::renameSelected(WorldSelectorState& state, std::string target
 
     const auto& source = state.worlds[static_cast<std::size_t>(state.selectedIndex)].worldName;
     std::string message;
-    runtimeService_.renameWorld(source, std::move(targetName), message);
+    [[maybe_unused]] const bool renamed = runtimeService_.renameWorld(source, std::move(targetName), message);
     state.statusLine = formatOperationMessageForDisplay(translateOperationMessage(message));
     state.needsRefresh = true;
 }
@@ -62,7 +62,7 @@ void WorldSelector::deleteSelected(WorldSelectorState& state) {
 
     const auto& selected = state.worlds[static_cast<std::size_t>(state.selectedIndex)].worldName;
     std::string message;
-    runtimeService_.deleteWorld(selected, message);
+    [[maybe_unused]] const bool deleted = runtimeService_.deleteWorld(selected, message);
     state.statusLine = formatOperationMessageForDisplay(translateOperationMessage(message));
     state.needsRefresh = true;
 }

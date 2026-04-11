@@ -466,17 +466,17 @@ public:
     [[nodiscard]] const AdmissionReport& admissionReport() const;
 
     // Sets a runtime parameter value by name.
-    bool setParameterValue(const std::string& parameterName, float value, std::string note, std::string& message);
+    [[nodiscard]] bool setParameterValue(const std::string& parameterName, float value, std::string note, std::string& message);
     // Applies a manual patch to a specific cell in a variable.
-    bool applyManualPatch(const std::string& variableName, std::optional<Cell> cell, float newValue, std::string note, std::string& message);
+    [[nodiscard]] bool applyManualPatch(const std::string& variableName, std::optional<Cell> cell, float newValue, std::string note, std::string& message);
     // Undoes the most recent manual patch.
-    bool undoLastManualPatch(std::string& message);
+    [[nodiscard]] bool undoLastManualPatch(std::string& message);
     // Enqueues a perturbation to be applied during simulation.
-    bool enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message);
+    [[nodiscard]] bool enqueuePerturbation(const PerturbationSpec& perturbation, std::string& message);
     // Adds a data collection probe.
-    bool addProbe(const ProbeDefinition& definition, std::string& message);
+    [[nodiscard]] bool addProbe(const ProbeDefinition& definition, std::string& message);
     // Removes a probe by identifier.
-    bool removeProbe(const std::string& probeId, std::string& message);
+    [[nodiscard]] bool removeProbe(const std::string& probeId, std::string& message);
     // Clears all registered probes.
     void clearProbes() noexcept;
 

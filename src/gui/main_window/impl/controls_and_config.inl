@@ -165,7 +165,7 @@ void handleKeyboardShortcuts() {
         if (!runtime_.activeWorldName().empty()) {
             saveDisplayPrefs();
             std::string msg;
-            runtime_.saveActiveWorld(msg);
+            [[maybe_unused]] const bool saved = runtime_.saveActiveWorld(msg);
             appendUserFacingOperationMessage(msg, "Active world save requested", "If save fails, verify storage paths and retry.");
         }
     }
@@ -223,7 +223,7 @@ void returnToModelSelector(const bool saveActiveWorld) {
     if (saveActiveWorld && running && !runtime_.activeWorldName().empty()) {
         saveDisplayPrefs();
         std::string saveMsg;
-        runtime_.saveActiveWorld(saveMsg);
+        [[maybe_unused]] const bool saved = runtime_.saveActiveWorld(saveMsg);
         appendUserFacingOperationMessage(saveMsg, "Save active world before returning", "Return to model selector after save confirmation.");
     }
 
@@ -364,7 +364,7 @@ void drawMainMenuBar() {
         if (ImGui::MenuItem("Save Active World", "Ctrl+S", false, running && hasWorld)) {
             saveDisplayPrefs();
             std::string msg;
-            runtime_.saveActiveWorld(msg);
+            [[maybe_unused]] const bool saved = runtime_.saveActiveWorld(msg);
             appendUserFacingOperationMessage(msg, "Active world save requested", "Continue simulation or return to models.");
         }
         if (ImGui::MenuItem(hasWorld ? "Save & Return to Models" : "Return to Models")) {
@@ -456,7 +456,7 @@ void drawMainMenuBar() {
         }
         if (ImGui::MenuItem("Store Quick Checkpoint", nullptr, false, running)) {
             std::string msg;
-            runtime_.createCheckpoint(panel_.checkpointLabel[0] != '\0' ? panel_.checkpointLabel : "quick", msg);
+            [[maybe_unused]] const bool created = runtime_.createCheckpoint(panel_.checkpointLabel[0] != '\0' ? panel_.checkpointLabel : "quick", msg);
             appendUserFacingOperationMessage(msg, "Quick checkpoint requested", "Use checkpoint restore to compare or roll back state.");
         }
         ImGui::EndMenu();
@@ -1269,7 +1269,7 @@ void drawParameterControlSection() {
                 : 0u;
             const std::string label = "replay_baseline_step_" + std::to_string(step);
             std::string checkpointMsg;
-            runtime_.createCheckpoint(label, checkpointMsg);
+            [[maybe_unused]] const bool created = runtime_.createCheckpoint(label, checkpointMsg);
             appendUserFacingOperationMessage(
                 checkpointMsg,
                 "Replay baseline checkpoint requested",
@@ -1799,7 +1799,7 @@ void drawPlaybackSection() {
     bool pendingRestart = false;
 
     if (running) {
-        runtime_.effectLedgerCounts(
+        [[maybe_unused]] const bool ledgerRead = runtime_.effectLedgerCounts(
             pendingImmediateWrites,
             queuedDeferredEvents,
             pendingScheduledPerturbations,
@@ -2282,7 +2282,7 @@ void drawCheckpointSection() {
     const float btnW = (ImGui::GetContentRegionAvail().x - 8.0f) / 3.0f;
     if (PrimaryButton("Store##cp", ImVec2(btnW, 26.0f))) {
         std::string msg;
-        runtime_.createCheckpoint(panel_.checkpointLabel, msg);
+        [[maybe_unused]] const bool created = runtime_.createCheckpoint(panel_.checkpointLabel, msg);
         appendUserFacingOperationMessage(msg, "Checkpoint store requested", "Use restore/list controls to manage saved state anchors.");
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -2291,7 +2291,7 @@ void drawCheckpointSection() {
     if (PrimaryButton("Restore##cp", ImVec2(btnW, 26.0f))) {
         cancelPendingSimulationSteps();
         std::string msg;
-        runtime_.restoreCheckpoint(panel_.checkpointLabel, msg);
+        [[maybe_unused]] const bool restored = runtime_.restoreCheckpoint(panel_.checkpointLabel, msg);
         appendUserFacingOperationMessage(msg, "Checkpoint restore requested", "Review restored state before applying new interventions.");
         requestSnapshotRefresh();
     }
@@ -2300,7 +2300,7 @@ void drawCheckpointSection() {
     ImGui::SameLine(0,4);
     if (SecondaryButton("List##cp", ImVec2(-1.0f, 26.0f))) {
         std::string msg;
-        runtime_.listCheckpoints(msg);
+        [[maybe_unused]] const bool queried = runtime_.listCheckpoints(msg);
         appendUserFacingOperationMessage(msg, "Checkpoint list requested", "Select a checkpoint to inspect, restore, rename, or delete.");
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
@@ -2472,7 +2472,7 @@ void drawConfirmationModals() {
             std::string effectLedgerMessage;
             bool pendingRestart = false;
             if (running) {
-                runtime_.effectLedgerCounts(
+                [[maybe_unused]] const bool ledgerRead = runtime_.effectLedgerCounts(
                     pendingImmediateWrites,
                     queuedDeferredEvents,
                     pendingScheduledPerturbations,
@@ -4062,7 +4062,7 @@ void drawProfilesSection() {
         "Profile name for save / load. Letters, digits, '_', '-' only.");
     const float w3 = (ImGui::GetContentRegionAvail().x - 8.0f) / 3.0f;
     if (PrimaryButton("Save##prof", ImVec2(w3, 26.0f))) {
-        std::string msg; runtime_.saveProfile(panel_.profileName, msg); appendLog(msg);
+        std::string msg; [[maybe_unused]] const bool saved = runtime_.saveProfile(panel_.profileName, msg); appendLog(msg);
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         ImGui::SetTooltip("Save the current launch configuration under this profile name.");
@@ -4080,7 +4080,7 @@ void drawProfilesSection() {
         ImGui::SetTooltip("Load a previously saved profile. Use Restart to apply it.");
     ImGui::SameLine(0,4);
     if (SecondaryButton("List##prof", ImVec2(-1.0f, 26.0f))) {
-        std::string msg; runtime_.listProfiles(msg); appendLog(msg);
+        std::string msg; [[maybe_unused]] const bool queried = runtime_.listProfiles(msg); appendLog(msg);
     }
 }
 

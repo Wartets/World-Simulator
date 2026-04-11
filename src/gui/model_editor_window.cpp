@@ -1652,7 +1652,7 @@ void ModelEditorWindow::runValidation() {
                     "formula:" + node->id +
                     " | Interaction formula is empty | Constraint: equation/operator nodes should define executable logic | Next: Provide a formula expression or remove the placeholder node.");
             } else {
-                validator->validateSyntax(node->formula_logic);
+                [[maybe_unused]] const bool validSyntax = validator->validateSyntax(node->formula_logic);
                 appendValidatorMessages();
             }
 
@@ -1666,15 +1666,15 @@ void ModelEditorWindow::runValidation() {
     }
 
     if (!variableNames.empty()) {
-        validator->validateTypes(variableNames);
+        [[maybe_unused]] const bool validTypes = validator->validateTypes(variableNames);
         appendValidatorMessages();
     }
     if (!unitTokens.empty()) {
-        validator->validateUnits(unitTokens);
+        [[maybe_unused]] const bool validUnits = validator->validateUnits(unitTokens);
         appendValidatorMessages();
     }
     if (!stageNames.empty()) {
-        validator->validateStructure(stageNames);
+        [[maybe_unused]] const bool validStructure = validator->validateStructure(stageNames);
         appendValidatorMessages();
     }
     
