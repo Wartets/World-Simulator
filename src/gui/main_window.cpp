@@ -27,6 +27,7 @@
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/session_manager/session_manager.hpp"
 #include "ws/gui/theme_bootstrap.hpp"
+#include "ws/gui/platform_display_scale.hpp"
 #include "ws/gui/time_control_panel.hpp"
 #include "ws/gui/timeseries_panel.hpp"
 #include "ws/gui/ui_components.hpp"
@@ -616,8 +617,52 @@ void applyApplicationIcon(GLFWwindow* window) {
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
     }
 }
+
+using DwmSetWindowAttributeFn = HRESULT (WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
+
+bool setDwmWindowAttribute(HWND hwnd, const DWORD attribute, const void* value, const DWORD size) {
+    static HMODULE dwmLibrary = LoadLibraryW(L"dwmapi.dll");
+    if (dwmLibrary == nullptr) {
+        return false;
+    }
+
+    static auto dwmSetWindowAttribute = reinterpret_cast<DwmSetWindowAttributeFn>(
+        GetProcAddress(dwmLibrary, "DwmSetWindowAttribute"));
+    if (dwmSetWindowAttribute == nullptr) {
+        return false;
+    }
+
+    return SUCCEEDED(dwmSetWindowAttribute(hwnd, attribute, value, size));
+}
+
+void applyWindowChromeTheme(GLFWwindow* window) {
+    if (!window) {
+        return;
+    }
+
+    HWND hwnd = glfwGetWin32Window(window);
+    if (hwnd == nullptr) {
+        return;
+    }
+
+    constexpr DWORD kDwmwaUseImmersiveDarkMode = 20;
+    constexpr DWORD kDwmwaUseImmersiveDarkModeLegacy = 19;
+    constexpr DWORD kDwmwaCaptionColor = 35;
+    constexpr DWORD kDwmwaTextColor = 36;
+
+    const BOOL useDarkMode = TRUE;
+    const COLORREF captionColor = RGB(28, 30, 36);
+    const COLORREF textColor = RGB(230, 232, 238);
+
+    if (!setDwmWindowAttribute(hwnd, kDwmwaUseImmersiveDarkMode, &useDarkMode, sizeof(useDarkMode))) {
+        setDwmWindowAttribute(hwnd, kDwmwaUseImmersiveDarkModeLegacy, &useDarkMode, sizeof(useDarkMode));
+    }
+    setDwmWindowAttribute(hwnd, kDwmwaCaptionColor, &captionColor, sizeof(captionColor));
+    setDwmWindowAttribute(hwnd, kDwmwaTextColor, &textColor, sizeof(textColor));
+}
 #else
 void applyApplicationIcon(GLFWwindow*) {}
+void applyWindowChromeTheme(GLFWwindow*) {}
 #endif
 
 // Aliases from detail_utils / color_utils
@@ -644,7 +689,10 @@ public:
         if (!window) { glfwTerminate(); return 1; }
 
         applyApplicationIcon(window);
+        applyWindowChromeTheme(window);
         main_window::applyWindowState(window, appStateData_.persistedWindowState);
+
+        accessibility_.uiScale = platform::computeEffectiveDisplayScale(window, accessibility_.uiScale);
 
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
@@ -655,7 +703,7 @@ public:
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // default on
 
         ThemeBootstrap::applyBaseTheme(ImGui::GetStyle(), accessibility_.uiScale);
-        ThemeBootstrap::configureFont(io, accessibility_.fontSizePx);
+        ThemeBootstrap::configureFont(io, accessibility_.fontSizePx * accessibility_.uiScale);
         ThemeBootstrap::applyAccessibility(io, ImGui::GetStyle(), accessibility_);
 
         ImGui_ImplGlfw_InitForOpenGL(window, true);

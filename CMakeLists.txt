@@ -176,6 +176,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/display_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/session_manager/session_manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/platform_display_scale.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/parameter_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/perturbation_panel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/event_logger.cpp
