@@ -32,7 +32,7 @@ This separation supports reproducible experiments across machines when model ide
 
 - **Strictly Typed IR**: High-performance Intermediate Representation for simulation logic
 - **Domain Constraints**: Physical validity checks and automatic clamping
-- **Time Integrators**: Built-in registry entries include `explicit_euler`, `rk2_midpoint`, `rk3_heun`, `semi_implicit_euler`, `velocity_verlet`, `crank_nicolson`, and `rk4` (with legacy-friendly aliases such as `Euler Explicit`, `RK2`, `Verlet`, and `RK4`)
+- **Time Integrators**: Built-in registry entries include `explicit_euler`, `rk2_midpoint`, `rk3_heun`, `semi_implicit_euler`, `velocity_verlet`, `crank_nicolson`, and `rk4` (with legacy-friendly aliases such as `Euler Explicit`, `RK2`, `Verlet`, and `RK4`); the active integrator can be switched live at runtime and is persisted in saved profiles/worlds.
 - **Spatial Operators**: Laplacian, gradient, advection, diffusion with configurable schemes
 - **Deterministic Execution**: Reproducible results across runs and platforms
 - **Performance Architecture**: Deterministic stepping, worker-based runtime/snapshot flow, and CPU vectorization-friendly layout

@@ -233,6 +233,17 @@ public:
     /// Returns the current playback speed multiplier.
     [[nodiscard]] float playbackSpeed() const;
 
+    /// Returns canonical ids of all currently registered time integrators.
+    [[nodiscard]] std::vector<std::string> availableTimeIntegrators() const;
+
+    /// Returns the currently selected time integrator id.
+    [[nodiscard]] std::string currentTimeIntegrator() const;
+
+    /// Switches the active time integrator without restarting the runtime.
+    /// - integratorId: canonical id or alias known to the integrator registry.
+    /// - Returns true on success, false when the id cannot be resolved.
+    bool setTimeIntegrator(const std::string& integratorId, std::string& message);
+
     /// Configures automatic checkpointing behavior.
     /// - intervalSteps: checkpoint every N steps (must be > 0).
     /// - retention: maximum number of checkpoints to keep in memory.

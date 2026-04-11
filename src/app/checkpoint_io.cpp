@@ -12,7 +12,7 @@ namespace {
 
 // Checkpoint file magic number and format version constants.
 constexpr std::uint64_t kCheckpointMagic = 0x315650435357ull; // "WSCPV1"
-constexpr std::uint32_t kCheckpointFormatVersion = 2;
+constexpr std::uint32_t kCheckpointFormatVersion = 3;
 
 // Writes a plain-old-data value to the output stream in binary form.
 template <typename T>
@@ -87,6 +87,7 @@ void writeCheckpointFile(const RuntimeCheckpoint& checkpoint, const std::filesys
     writePod(output, signature.boundaryMode());
     writePod(output, signature.unitRegime());
     writePod(output, signature.temporalPolicy());
+    writeString(output, signature.timeIntegratorId());
     writeString(output, signature.eventTimelineHash());
     writeString(output, signature.activeSubsystemSetHash());
     writePod(output, signature.profileFingerprint());
@@ -171,7 +172,7 @@ RuntimeCheckpoint readCheckpointFile(const std::filesystem::path& path) {
     }
 
     const auto version = readPod<std::uint32_t>(input);
-    if (version != 1u && version != kCheckpointFormatVersion) {
+    if (version != 1u && version != 2u && version != kCheckpointFormatVersion) {
         throw std::runtime_error("unsupported checkpoint file version");
     }
 
@@ -182,6 +183,10 @@ RuntimeCheckpoint readCheckpointFile(const std::filesystem::path& path) {
     const auto boundaryMode = readPod<BoundaryMode>(input);
     const auto unitRegime = readPod<UnitRegime>(input);
     const auto temporalPolicy = readPod<TemporalPolicy>(input);
+    std::string timeIntegratorId = "explicit_euler";
+    if (version >= 3u) {
+        timeIntegratorId = readString(input);
+    }
     const auto eventTimelineHash = readString(input);
     const auto activeSubsystemSetHash = readString(input);
     const auto profileFingerprint = readPod<std::uint64_t>(input);
@@ -196,6 +201,7 @@ RuntimeCheckpoint readCheckpointFile(const std::filesystem::path& path) {
         boundaryMode,
         unitRegime,
         temporalPolicy,
+        timeIntegratorId,
         eventTimelineHash,
         activeSubsystemSetHash,
         profileFingerprint,

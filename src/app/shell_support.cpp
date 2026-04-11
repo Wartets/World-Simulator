@@ -1,5 +1,6 @@
 #include "ws/app/shell_support.hpp"
 #include "ws/core/subsystems/subsystems.hpp"
+#include "ws/core/time_integrator.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -202,6 +203,26 @@ std::optional<float> parseFloat(const std::string& token) {
     }
 }
 
+std::string normalizeTimeIntegratorId(std::string token) {
+    token = trim(std::move(token));
+    for (char& ch : token) {
+        if (ch == ' ' || ch == '-' || ch == '/') {
+            ch = '_';
+        }
+    }
+    return toLower(std::move(token));
+}
+
+std::optional<std::string> resolveTimeIntegratorId(const std::string& token) {
+    const std::string normalized = normalizeTimeIntegratorId(token);
+    if (normalized.empty()) {
+        return std::nullopt;
+    }
+
+    const auto& registry = TimeIntegratorRegistry::instance();
+    return registry.resolveCanonicalId(normalized);
+}
+
 std::string normalizeModelKey(std::string value) {
     value = trim(std::move(value));
     if (value.empty()) {
@@ -289,6 +310,11 @@ RuntimeConfig makeRuntimeConfig(const LaunchConfig& launchConfig) {
     config.boundaryMode = BoundaryMode::Clamp;
     config.unitRegime = UnitRegime::Normalized;
     config.temporalPolicy = launchConfig.temporalPolicy;
+    if (const auto resolvedIntegratorId = resolveTimeIntegratorId(launchConfig.timeIntegratorId); resolvedIntegratorId.has_value()) {
+        config.timeIntegratorId = *resolvedIntegratorId;
+    } else {
+        config.timeIntegratorId = "explicit_euler";
+    }
     config.profileInput = buildProfileInput(launchConfig.tier);
     config.initialConditions = launchConfig.initialConditions;
     return config;

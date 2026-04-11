@@ -16,6 +16,7 @@ void verifyInitialConditionRoundTrip() {
     config.grid = ws::GridSpec{96, 64};
     config.tier = ws::ModelTier::C;
     config.temporalPolicy = ws::TemporalPolicy::MultiRateC;
+    config.timeIntegratorId = "RK4";
 
     config.initialConditions.type = ws::InitialConditionType::GrayScott;
     config.initialConditions.terrain.terrainBaseFrequency = 3.4f;
@@ -53,6 +54,7 @@ void verifyInitialConditionRoundTrip() {
     assert(loaded.grid.height == config.grid.height);
     assert(loaded.tier == config.tier);
     assert(loaded.temporalPolicy == config.temporalPolicy);
+    assert(loaded.timeIntegratorId == "rk4");
     assert(loaded.initialConditions.type == config.initialConditions.type);
 
     assert(loaded.initialConditions.conway.targetVariable == config.initialConditions.conway.targetVariable);

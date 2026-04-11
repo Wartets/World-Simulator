@@ -106,6 +106,7 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "height=" << config.grid.height << '\n';
     output << "tier=" << toString(config.tier) << '\n';
     output << "temporal=" << temporalPolicyToString(config.temporalPolicy) << '\n';
+    output << "integrator=" << config.timeIntegratorId << '\n';
     output << "gen.type=" << initialConditionTypeToString(config.initialConditions.type) << '\n';
     output << "gen.terrain_base_frequency=" << config.initialConditions.terrain.terrainBaseFrequency << '\n';
     output << "gen.terrain_detail_frequency=" << config.initialConditions.terrain.terrainDetailFrequency << '\n';
@@ -199,6 +200,12 @@ LaunchConfig ProfileStore::load(const std::string& profileName, const std::strin
     config.grid = GridSpec{*width, *height};
     config.tier = *tier;
     config.temporalPolicy = *temporal;
+
+    if (const auto integratorIt = kv.find("integrator"); integratorIt != kv.end()) {
+        if (const auto resolvedIntegrator = resolveTimeIntegratorId(integratorIt->second); resolvedIntegrator.has_value()) {
+            config.timeIntegratorId = *resolvedIntegrator;
+        }
+    }
 
     auto assignOptionalFloat = [&](const char* key, float& target) {
         const auto it = kv.find(key);

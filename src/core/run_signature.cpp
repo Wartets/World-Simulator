@@ -14,6 +14,7 @@ RunSignature::RunSignature(
     const BoundaryMode boundaryMode,
     const UnitRegime unitRegime,
     const TemporalPolicy temporalPolicy,
+    std::string timeIntegratorId,
     std::string eventTimelineHash,
     std::string activeSubsystemSetHash,
     const std::uint64_t profileFingerprint,
@@ -25,6 +26,7 @@ RunSignature::RunSignature(
       boundaryMode_(boundaryMode),
       unitRegime_(unitRegime),
       temporalPolicy_(temporalPolicy),
+    timeIntegratorId_(std::move(timeIntegratorId)),
       eventTimelineHash_(std::move(eventTimelineHash)),
       activeSubsystemSetHash_(std::move(activeSubsystemSetHash)),
       profileFingerprint_(profileFingerprint),
@@ -32,7 +34,10 @@ RunSignature::RunSignature(
       identityHash_(identityHash) {
     grid_.validate();
 
-    if (initializationParameterHash_.empty() || eventTimelineHash_.empty() || activeSubsystemSetHash_.empty()) {
+    if (initializationParameterHash_.empty() ||
+        timeIntegratorId_.empty() ||
+        eventTimelineHash_.empty() ||
+        activeSubsystemSetHash_.empty()) {
         throw std::invalid_argument("RunSignature immutable identity fields must not be empty");
     }
 }
@@ -52,6 +57,10 @@ RunSignature RunSignatureService::create(const RunIdentityInput& input) const {
         throw std::invalid_argument("RunIdentityInput.activeSubsystemSetHash must not be empty");
     }
 
+    if (input.timeIntegratorId.empty()) {
+        throw std::invalid_argument("RunIdentityInput.timeIntegratorId must not be empty");
+    }
+
     const std::uint64_t profileFingerprint = input.profile.fingerprint();
 
     std::uint64_t compatibilityFingerprint = DeterministicHash::offsetBasis;
@@ -69,6 +78,7 @@ RunSignature RunSignatureService::create(const RunIdentityInput& input) const {
     identityHash = DeterministicHash::combine(identityHash, static_cast<std::uint64_t>(input.boundaryMode));
     identityHash = DeterministicHash::combine(identityHash, static_cast<std::uint64_t>(input.unitRegime));
     identityHash = DeterministicHash::combine(identityHash, static_cast<std::uint64_t>(input.temporalPolicy));
+    identityHash = DeterministicHash::combine(identityHash, DeterministicHash::hashString(input.timeIntegratorId));
     identityHash = DeterministicHash::combine(identityHash, DeterministicHash::hashString(input.eventTimelineHash));
     identityHash = DeterministicHash::combine(identityHash, DeterministicHash::hashString(input.activeSubsystemSetHash));
     identityHash = DeterministicHash::combine(identityHash, profileFingerprint);
@@ -81,6 +91,7 @@ RunSignature RunSignatureService::create(const RunIdentityInput& input) const {
         input.boundaryMode,
         input.unitRegime,
         input.temporalPolicy,
+        input.timeIntegratorId,
         input.eventTimelineHash,
         input.activeSubsystemSetHash,
         profileFingerprint,

@@ -122,6 +122,35 @@ float RuntimeService::playbackSpeed() const {
     return playbackSpeed_;
 }
 
+std::vector<std::string> RuntimeService::availableTimeIntegrators() const {
+    return TimeIntegratorRegistry::instance().availableIds();
+}
+
+std::string RuntimeService::currentTimeIntegrator() const {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (runtime_) {
+        return runtime_->timeIntegratorId();
+    }
+    return config_.timeIntegratorId;
+}
+
+bool RuntimeService::setTimeIntegrator(const std::string& integratorId, std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const auto resolved = app::resolveTimeIntegratorId(integratorId);
+    if (!resolved.has_value()) {
+        message = "set_time_integrator_failed reason=unknown_integrator id=" + integratorId;
+        return false;
+    }
+
+    config_.timeIntegratorId = *resolved;
+    if (runtime_) {
+        return runtime_->setTimeIntegratorId(*resolved, message);
+    }
+
+    message = "time_integrator_configured id=" + *resolved;
+    return true;
+}
+
 std::filesystem::path RuntimeService::worldProfileRoot() {
     return std::filesystem::path("checkpoints") / "world_profiles";
 }
@@ -296,7 +325,8 @@ bool RuntimeService::start(std::string& message) {
         output << "session_started run_identity_hash=" << snapshot.runSignature.identityHash()
                << " grid=" << config_.grid.width << 'x' << config_.grid.height
                << " tier=" << toString(config_.tier)
-               << " temporal=" << app::temporalPolicyToString(config_.temporalPolicy);
+             << " temporal=" << app::temporalPolicyToString(config_.temporalPolicy)
+             << " integrator=" << runtime_->timeIntegratorId();
         refreshCachedStateNoLock();
         message = output.str();
         return true;
@@ -875,6 +905,7 @@ bool RuntimeService::status(std::string& message) const {
                << " step_index=" << snapshot.stateHeader.stepIndex
                << " state_hash=" << snapshot.stateHash
                << " run_identity_hash=" << snapshot.runSignature.identityHash()
+             << " integrator=" << runtime_->timeIntegratorId()
                << " reproducibility=" << toString(snapshot.reproducibilityClass)
                << " constraints=" << diagnostics.constraintViolations.size()
                << " stability_alerts=" << diagnostics.stabilityAlerts.size();
@@ -1443,7 +1474,8 @@ bool RuntimeService::loadProfile(const std::string& name, std::string& message) 
                << " seed=" << config_.seed
                << " grid=" << config_.grid.width << 'x' << config_.grid.height
                << " tier=" << toString(config_.tier)
-               << " temporal=" << app::temporalPolicyToString(config_.temporalPolicy);
+             << " temporal=" << app::temporalPolicyToString(config_.temporalPolicy)
+             << " integrator=" << config_.timeIntegratorId;
         message = output.str();
         return true;
     } catch (const std::exception& exception) {

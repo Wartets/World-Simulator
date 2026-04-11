@@ -172,6 +172,7 @@ private:
             << "  set grid <width> <height>            Configure grid (requires restart)\n"
             << "  set tier <A|B|C>                     Configure model tier (requires restart)\n"
             << "  set temporal <uniform|phased|multirate>  Configure temporal policy\n"
+            << "  set integrator <id|alias>            Configure time integrator (live when running)\n"
             << "  set init <terrain|conway|gray_scott|waves|blank>  Configure initialization mode\n"
             << "  preset                               List available built-in presets\n"
             << "  preset <name>                        Apply built-in preset (requires restart)\n"
@@ -983,6 +984,7 @@ private:
                           << ", grid=" << preset.config.grid.width << 'x' << preset.config.grid.height
                           << ", tier=" << toString(preset.config.tier)
                           << ", temporal=" << temporalPolicyToString(preset.config.temporalPolicy)
+                          << ", integrator=" << preset.config.timeIntegratorId
                           << ", init=" << initialConditionTypeToString(preset.config.initialConditions.type)
                           << ") : " << preset.description
                           << "\n";
@@ -1001,6 +1003,7 @@ private:
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
+                  << " integrator=" << launchConfig_.timeIntegratorId
                   << " init=" << initialConditionTypeToString(launchConfig_.initialConditions.type)
                   << " (use restart)\n";
     }
@@ -1046,6 +1049,7 @@ private:
                       << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                       << " tier=" << toString(launchConfig_.tier)
                       << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
+                      << " integrator=" << launchConfig_.timeIntegratorId
                       << " init=" << initialConditionTypeToString(launchConfig_.initialConditions.type)
                       << " (use restart)\n";
             return;
@@ -1060,7 +1064,7 @@ private:
         field = toLower(field);
 
         if (field.empty()) {
-            throw std::invalid_argument("usage: set <seed|grid|tier|temporal|init> ...");
+            throw std::invalid_argument("usage: set <seed|grid|tier|temporal|integrator|init> ...");
         }
 
         if (field == "seed") {
@@ -1126,6 +1130,30 @@ private:
             std::cout << "initial condition mode updated to "
                       << initialConditionTypeToString(launchConfig_.initialConditions.type)
                       << " (use restart)\n";
+            return;
+        }
+
+        if (field == "integrator") {
+            std::string token;
+            std::getline(input, token);
+            token = trim(token);
+            const auto resolvedIntegrator = resolveTimeIntegratorId(token);
+            if (!resolvedIntegrator.has_value()) {
+                throw std::invalid_argument("set integrator requires a known id or alias");
+            }
+
+            launchConfig_.timeIntegratorId = *resolvedIntegrator;
+
+            if (runtime_ && runtime_->status() == RuntimeStatus::Running) {
+                std::string runtimeMessage;
+                if (!runtime_->setTimeIntegratorId(*resolvedIntegrator, runtimeMessage)) {
+                    throw std::runtime_error(runtimeMessage);
+                }
+                std::cout << runtimeMessage << "\n";
+                return;
+            }
+
+            std::cout << "time integrator updated to " << launchConfig_.timeIntegratorId << " (use restart)\n";
             return;
         }
 
@@ -1196,6 +1224,7 @@ private:
                   << " step_index=" << snapshot.stateHeader.stepIndex
                   << " state_hash=" << snapshot.stateHash
                   << " run_identity_hash=" << snapshot.runSignature.identityHash()
+                  << " integrator=" << runtime_->timeIntegratorId()
                   << " reproducibility=" << toString(snapshot.reproducibilityClass)
                   << "\n";
 
@@ -1221,6 +1250,7 @@ private:
         std::cout << "grid              : " << launchConfig_.grid.width << 'x' << launchConfig_.grid.height << "\n";
         std::cout << "tier / temporal   : " << toString(launchConfig_.tier)
                   << " / " << temporalPolicyToString(launchConfig_.temporalPolicy) << "\n";
+        std::cout << "integrator        : " << runtime_->timeIntegratorId() << "\n";
         std::cout << "seed              : " << launchConfig_.seed << "\n";
         std::cout << "checkpoints(mem)  : " << checkpoints_.size() << "\n";
         std::cout << "constraints       : " << diagnostics.constraintViolations.size() << "\n";
@@ -1248,6 +1278,7 @@ private:
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
+                  << " integrator=" << launchConfig_.timeIntegratorId
                   << " init=" << initialConditionTypeToString(launchConfig_.initialConditions.type)
                   << "\n";
     }
@@ -1299,6 +1330,7 @@ private:
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
+                  << " integrator=" << runtime_->timeIntegratorId()
                   << "\n";
     }
 

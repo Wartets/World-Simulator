@@ -414,6 +414,7 @@ ws_add_test(subsystems_test tests/subsystems.cpp)
 ws_add_test(interactions_test tests/interactions.cpp)
 ws_add_test(model_parser_test tests/model_parser_test.cpp)
 ws_add_test(time_integrator_test tests/time_integrator.cpp)
+ws_add_test(runtime_integrator_switch_test tests/runtime_integrator_switch.cpp)
 ws_add_test(integration_multi_model_test tests/integration_multi_model.cpp)
 ws_add_test(conway_activity_test tests/conway_activity.cpp)
 ws_add_test(full_pipeline_multi_model_test tests/full_pipeline_multi_model.cpp)
@@ -430,6 +431,9 @@ target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )
 target_sources(shell_support_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
+)
+target_sources(runtime_integrator_switch_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
 )
 target_sources(profile_store_test PRIVATE

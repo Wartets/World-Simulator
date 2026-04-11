@@ -25,6 +25,7 @@
 #include "ws/core/run_signature.hpp"
 #include "ws/core/scheduler.hpp"
 #include "ws/core/state_store.hpp"
+#include "ws/core/time_integrator.hpp"
 
 // Standard library containers
 #include <deque>
@@ -321,6 +322,7 @@ struct RuntimeConfig {
     MemoryLayoutPolicy memoryLayoutPolicy{};
     UnitRegime unitRegime = UnitRegime::Normalized;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
+    std::string timeIntegratorId = "explicit_euler";
     ExecutionPolicyMode executionPolicyMode = ExecutionPolicyMode::StrictDeterministic;
     NumericGuardrailPolicy guardrailPolicy{};
     ProfileResolverInput profileInput{};
@@ -393,6 +395,7 @@ struct RuntimeCheckpoint {
         BoundaryMode::Clamp,
         UnitRegime::Normalized,
         TemporalPolicy::UniformA,
+        "explicit_euler",
         "none",
         "none",
         0,
@@ -616,6 +619,15 @@ public:
     /// Returns runtime performance metrics.
     /// Includes total execution time, steps completed, allocations, etc.
     [[nodiscard]] RuntimeMetrics metrics() const noexcept { return observability_.metrics(); }
+
+    /// Returns the currently selected time integrator id.
+    [[nodiscard]] const std::string& timeIntegratorId() const noexcept { return config_.timeIntegratorId; }
+
+    /// Switches the selected time integrator without restarting the runtime.
+    /// - requestedId: integrator canonical id or alias recognized by the registry.
+    /// - message: output diagnostic summary.
+    /// Returns true on success, false if id is unknown.
+    [[nodiscard]] bool setTimeIntegratorId(const std::string& requestedId, std::string& message);
 
     /// Returns the admission report from the last profile resolution.
     /// Indicates model compatibility and performance class.

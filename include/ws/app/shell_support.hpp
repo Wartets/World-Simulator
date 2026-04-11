@@ -23,6 +23,7 @@ struct LaunchConfig {
     GridSpec grid{128, 128};
     ModelTier tier = ModelTier::A;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
+    std::string timeIntegratorId = "explicit_euler";
     InitialConditionConfig initialConditions{};
 };
 
@@ -80,6 +81,8 @@ struct FieldSummary {
 // Parses a string into uint32_t.
 [[nodiscard]] std::optional<std::uint32_t> parseU32(const std::string& token);
 [[nodiscard]] std::optional<float> parseFloat(const std::string& token);
+[[nodiscard]] std::string normalizeTimeIntegratorId(std::string token);
+[[nodiscard]] std::optional<std::string> resolveTimeIntegratorId(const std::string& token);
 [[nodiscard]] std::string normalizeModelKey(std::string value);
 [[nodiscard]] std::vector<ModelCatalogEntry> listAvailableModels(
     const std::filesystem::path& modelsRoot = std::filesystem::path("models"));

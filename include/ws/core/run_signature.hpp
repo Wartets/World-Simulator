@@ -22,6 +22,7 @@ struct RunIdentityInput {
     BoundaryMode boundaryMode = BoundaryMode::Clamp;
     UnitRegime unitRegime = UnitRegime::Normalized;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
+    std::string timeIntegratorId = "explicit_euler";
     std::string eventTimelineHash;
     std::string activeSubsystemSetHash;
     ModelProfile profile;
@@ -43,6 +44,7 @@ public:
         BoundaryMode boundaryMode,
         UnitRegime unitRegime,
         TemporalPolicy temporalPolicy,
+        std::string timeIntegratorId,
         std::string eventTimelineHash,
         std::string activeSubsystemSetHash,
         std::uint64_t profileFingerprint,
@@ -61,6 +63,8 @@ public:
     [[nodiscard]] UnitRegime unitRegime() const noexcept { return unitRegime_; }
     // Returns the temporal policy.
     [[nodiscard]] TemporalPolicy temporalPolicy() const noexcept { return temporalPolicy_; }
+    // Returns the selected time integrator id.
+    [[nodiscard]] const std::string& timeIntegratorId() const noexcept { return timeIntegratorId_; }
     // Returns the hash of the event timeline.
     [[nodiscard]] const std::string& eventTimelineHash() const noexcept { return eventTimelineHash_; }
     // Returns the hash of the active subsystem set.
@@ -79,6 +83,7 @@ private:
     BoundaryMode boundaryMode_;
     UnitRegime unitRegime_;
     TemporalPolicy temporalPolicy_;
+    std::string timeIntegratorId_;
     std::string eventTimelineHash_;
     std::string activeSubsystemSetHash_;
     std::uint64_t profileFingerprint_;

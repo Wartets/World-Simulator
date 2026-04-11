@@ -116,15 +116,27 @@ void TimeIntegratorRegistry::registerAlias(const std::string& aliasId, const std
 
 // Retrieves an integrator by identifier; returns nullptr if not found.
 std::shared_ptr<TimeIntegrator> TimeIntegratorRegistry::get(const std::string& id) const {
-    const std::string normalizedId = normalizeIntegratorId(id);
-    auto aliasIt = aliases.find(normalizedId);
-    const std::string& lookupId = (aliasIt != aliases.end()) ? aliasIt->second : normalizedId;
+    const auto canonicalId = resolveCanonicalId(id);
+    if (!canonicalId.has_value()) {
+        return nullptr;
+    }
 
-    auto it = registry.find(lookupId);
+    auto it = registry.find(*canonicalId);
     if (it != registry.end()) {
         return it->second;
     }
     return nullptr;
+}
+
+std::optional<std::string> TimeIntegratorRegistry::resolveCanonicalId(const std::string& id) const {
+    const std::string normalizedId = normalizeIntegratorId(id);
+    auto aliasIt = aliases.find(normalizedId);
+    const std::string& lookupId = (aliasIt != aliases.end()) ? aliasIt->second : normalizedId;
+
+    if (registry.find(lookupId) == registry.end()) {
+        return std::nullopt;
+    }
+    return lookupId;
 }
 
 std::vector<std::string> TimeIntegratorRegistry::availableIds() const {

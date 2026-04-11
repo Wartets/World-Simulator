@@ -282,6 +282,7 @@ Runtime::Runtime(RuntimeConfig config)
                 BoundaryMode::Clamp,
                 UnitRegime::Normalized,
                 TemporalPolicy::UniformA,
+                "explicit_euler",
                 "none",
                 "none",
                 0,
@@ -290,6 +291,13 @@ Runtime::Runtime(RuntimeConfig config)
                 0,
                 StateHeader{},
                 0} {
+    if (const auto resolvedIntegratorId = TimeIntegratorRegistry::instance().resolveCanonicalId(config_.timeIntegratorId);
+        resolvedIntegratorId.has_value()) {
+        config_.timeIntegratorId = *resolvedIntegratorId;
+    } else {
+        config_.timeIntegratorId = "explicit_euler";
+    }
+
     config_.grid.validate();
     scheduler_.setExecutionPolicyMode(config_.executionPolicyMode);
 }
@@ -320,6 +328,47 @@ void Runtime::updateGuardrailPolicy(NumericGuardrailPolicy guardrailPolicy) {
         "runtime.config.guardrails_updated",
         "numeric guardrail policy updated",
         DeterministicHash::hashPod(runtimeGuardrailPolicy_.maxAbsDeltaPerStep));
+}
+
+bool Runtime::setTimeIntegratorId(const std::string& requestedId, std::string& message) {
+    const auto& registry = TimeIntegratorRegistry::instance();
+    const auto resolved = registry.resolveCanonicalId(requestedId);
+    if (!resolved.has_value()) {
+        message = "set_time_integrator_failed reason=unknown_integrator id=" + requestedId;
+        return false;
+    }
+
+    if (config_.timeIntegratorId == *resolved) {
+        message = "time_integrator_noop id=" + *resolved;
+        return true;
+    }
+
+    const std::string previousId = config_.timeIntegratorId;
+    config_.timeIntegratorId = *resolved;
+
+    if (status_ == RuntimeStatus::Running || status_ == RuntimeStatus::Terminated) {
+        const auto& priorSignature = snapshot_.runSignature;
+        snapshot_.runSignature = runSignatureService_.create(RunIdentityInput{
+            .globalSeed = priorSignature.globalSeed(),
+            .initializationParameterHash = priorSignature.initializationParameterHash(),
+            .grid = priorSignature.grid(),
+            .boundaryMode = priorSignature.boundaryMode(),
+            .unitRegime = priorSignature.unitRegime(),
+            .temporalPolicy = priorSignature.temporalPolicy(),
+            .timeIntegratorId = config_.timeIntegratorId,
+            .eventTimelineHash = priorSignature.eventTimelineHash(),
+            .activeSubsystemSetHash = priorSignature.activeSubsystemSetHash(),
+            .profile = resolvedProfile_});
+    }
+
+    trace(
+        TraceChannel::Configuration,
+        "runtime.config.time_integrator_switched",
+        "time integrator switched from " + previousId + " to " + config_.timeIntegratorId,
+        DeterministicHash::hashString(config_.timeIntegratorId));
+
+    message = "time_integrator_updated from=" + previousId + " to=" + config_.timeIntegratorId;
+    return true;
 }
 
 void Runtime::start() {
@@ -693,6 +742,7 @@ void Runtime::start() {
             .boundaryMode = config_.boundaryMode,
             .unitRegime = config_.unitRegime,
             .temporalPolicy = config_.temporalPolicy,
+            .timeIntegratorId = config_.timeIntegratorId,
             .eventTimelineHash = eventTimelineHash,
             .activeSubsystemSetHash = subsystemHash,
             .profile = resolvedProfile_});

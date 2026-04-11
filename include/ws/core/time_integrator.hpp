@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <map>
+#include <optional>
 #include <stdexcept>
 
 namespace ws {
@@ -115,6 +116,7 @@ public:
     void registerAlias(const std::string& aliasId, const std::string& canonicalId);
     // Retrieves an integrator by identifier.
     std::shared_ptr<TimeIntegrator> get(const std::string& id) const;
+    [[nodiscard]] std::optional<std::string> resolveCanonicalId(const std::string& id) const;
     [[nodiscard]] std::vector<std::string> availableIds() const;
     
 private:
