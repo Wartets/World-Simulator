@@ -1035,6 +1035,59 @@ void test_categorical_domain_loader() {
         std::cout << "Categorical domain loader test passed.\n";
 }
 
+    void test_model_execution_spec_cross_constraints() {
+        const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_execution_constraint_test";
+        const auto modelDir = tempRoot / "execution_constraint.simmodel";
+        std::filesystem::remove_all(tempRoot);
+        std::filesystem::create_directories(modelDir);
+
+        const std::string modelJson = R"JSON({
+        "id": "execution_constraint_fixture",
+        "version": "1.0.0",
+        "variables": [
+        { "id": "soil_water", "role": "state", "support": "cell", "type": "f32", "units": "1" },
+        { "id": "water_height", "role": "state", "support": "cell", "type": "f32", "units": "m" }
+        ],
+        "stages": [],
+        "cross_variable_constraints": [
+        {
+            "id": "soil_leq_water",
+            "lhs": "soil_water",
+            "rhs": "water_height",
+            "op": "<=",
+            "tolerance": 0.01,
+            "action": "clamp_lhs"
+        }
+        ]
+    })JSON";
+
+        {
+            std::ofstream out(modelDir / "model.json", std::ios::trunc);
+            out << modelJson;
+        }
+        {
+            std::ofstream out(modelDir / "logic.ir", std::ios::trunc);
+            out << "@global f32 dt = 1.0\n";
+        }
+
+        ModelExecutionSpec executionSpec;
+        std::string message;
+        const bool ok = initialization::loadModelExecutionSpec(modelDir, executionSpec, message);
+        assert(ok);
+        assert(executionSpec.crossVariableConstraints.size() == 1u);
+
+        const auto& constraint = executionSpec.crossVariableConstraints.front();
+        assert(constraint.id == "soil_leq_water");
+        assert(constraint.lhsVariable == "soil_water");
+        assert(constraint.rhsVariable == "water_height");
+        assert(constraint.relation == CrossVariableRelation::LessEqual);
+        assert(constraint.tolerance == 0.01f);
+        assert(constraint.autoClamp);
+
+        std::filesystem::remove_all(tempRoot);
+        std::cout << "Execution spec cross-constraint loader test passed.\n";
+    }
+
 int main() {
     test_unit_system();
     test_ir_parser();
@@ -1058,5 +1111,6 @@ int main() {
     test_model_binding_plan_uses_catalog_metadata();
     test_extended_variable_metadata_schema_loader();
     test_categorical_domain_loader();
+    test_model_execution_spec_cross_constraints();
     return 0;
 }

@@ -857,10 +857,13 @@ StepDiagnostics Scheduler::step(
     diagnostics.orderingLog.push_back("pipeline:constraint_pass");
     stateStore.clearAccessObserver();
 
+    const std::vector<CrossVariableConstraint>& crossConstraints = profile.crossVariableConstraints;
+
     // Skip full constraint writes when no guardrails are active — the NaN scan below
     // still runs as a safety net. This is the hot path for the single-pass and phased execution modes.
     const bool needsConstraintPass = guardrailPolicy.clampEnabled ||
-                                     guardrailPolicy.boundedIncrementEnabled;
+                                     guardrailPolicy.boundedIncrementEnabled ||
+                                     !crossConstraints.empty();
 
     if (needsConstraintPass) {
         StateStore::WriteSession constraintSession(stateStore, "constraint_pass", stateStore.variableNames());
@@ -909,6 +912,89 @@ StepDiagnostics Scheduler::step(
 
                 if (adjusted != currentValue) {
                     constraintSession.setScalar(variableName, stateStore.cellFromIndex(static_cast<std::uint64_t>(i)), adjusted);
+                }
+            }
+        }
+
+        for (const auto& constraint : crossConstraints) {
+            if (!stateStore.hasField(constraint.lhsVariable) || !stateStore.hasField(constraint.rhsVariable)) {
+                diagnostics.stabilityAlerts.push_back(
+                    "cross_constraint_missing_field:id=" + constraint.id +
+                    ":lhs=" + constraint.lhsVariable +
+                    ":rhs=" + constraint.rhsVariable);
+                continue;
+            }
+
+            const auto lhsCount = static_cast<std::size_t>(stateStore.logicalCellCount(constraint.lhsVariable));
+            const auto rhsCount = static_cast<std::size_t>(stateStore.logicalCellCount(constraint.rhsVariable));
+            const std::size_t logicalCount = std::min(lhsCount, rhsCount);
+            if (lhsCount != rhsCount) {
+                diagnostics.stabilityAlerts.push_back(
+                    "cross_constraint_size_mismatch:id=" + constraint.id +
+                    ":lhs_count=" + std::to_string(lhsCount) +
+                    ":rhs_count=" + std::to_string(rhsCount));
+            }
+
+            const auto& lhsField = stateStore.scalarField(constraint.lhsVariable);
+            const auto& rhsField = stateStore.scalarField(constraint.rhsVariable);
+            const float tolerance = std::max(0.0f, constraint.tolerance);
+
+            for (std::size_t i = 0; i < logicalCount; ++i) {
+                const float lhsValue = lhsField[i];
+                const float rhsTarget = rhsField[i] + constraint.offset;
+
+                bool violated = false;
+                switch (constraint.relation) {
+                    case CrossVariableRelation::LessEqual:
+                        violated = lhsValue > (rhsTarget + tolerance);
+                        break;
+                    case CrossVariableRelation::GreaterEqual:
+                        violated = lhsValue < (rhsTarget - tolerance);
+                        break;
+                    case CrossVariableRelation::Equal:
+                        violated = std::fabs(lhsValue - rhsTarget) > tolerance;
+                        break;
+                }
+
+                if (!violated) {
+                    continue;
+                }
+
+                diagnostics.constraintViolations.push_back(
+                    "cross_constraint:id=" + constraint.id +
+                    ":lhs=" + constraint.lhsVariable +
+                    ":rhs=" + constraint.rhsVariable +
+                    ":index=" + std::to_string(i));
+
+                if (!constraint.autoClamp) {
+                    continue;
+                }
+
+                float adjustedLhs = lhsValue;
+                switch (constraint.relation) {
+                    case CrossVariableRelation::LessEqual:
+                        adjustedLhs = rhsTarget + tolerance;
+                        break;
+                    case CrossVariableRelation::GreaterEqual:
+                        adjustedLhs = rhsTarget - tolerance;
+                        break;
+                    case CrossVariableRelation::Equal:
+                        adjustedLhs = rhsTarget;
+                        break;
+                }
+
+                if (!std::isfinite(adjustedLhs)) {
+                    std::ostringstream error;
+                    error << "Cross-variable constraint produced non-finite value for id='" << constraint.id
+                          << "' index=" << i;
+                    throw std::runtime_error(error.str());
+                }
+
+                if (adjustedLhs != lhsValue) {
+                    constraintSession.setScalar(
+                        constraint.lhsVariable,
+                        stateStore.cellFromIndex(static_cast<std::uint64_t>(i)),
+                        adjustedLhs);
                 }
             }
         }

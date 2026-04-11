@@ -5,12 +5,29 @@
 #include "ws/core/types.hpp"
 
 // Standard library
+#include <cstdint>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 
 namespace ws {
+
+enum class CrossVariableRelation : std::uint8_t {
+    LessEqual = 0,
+    GreaterEqual = 1,
+    Equal = 2
+};
+
+struct CrossVariableConstraint {
+    std::string id;
+    std::string lhsVariable;
+    std::string rhsVariable;
+    CrossVariableRelation relation = CrossVariableRelation::LessEqual;
+    float offset = 0.0f;
+    float tolerance = 0.0f;
+    bool autoClamp = true;
+};
 
 // =============================================================================
 // Model Profile
@@ -24,6 +41,8 @@ struct ModelProfile {
     std::set<std::string, std::less<>> compatibilityAssumptions;
     // List of variables that should be conserved during simulation.
     std::vector<std::string> conservedVariables;
+    // Cross-variable invariants enforced during constraint pass.
+    std::vector<CrossVariableConstraint> crossVariableConstraints;
 
     // Computes a fingerprint hash of the profile for identification.
     [[nodiscard]] std::uint64_t fingerprint() const noexcept;
@@ -41,6 +60,8 @@ struct ProfileResolverInput {
     std::set<std::string, std::less<>> compatibilityAssumptions;
     // Variables that must be conserved.
     std::vector<std::string> conservedVariables;
+    // Cross-variable invariants requested by model execution metadata.
+    std::vector<CrossVariableConstraint> crossVariableConstraints;
 };
 
 // =============================================================================

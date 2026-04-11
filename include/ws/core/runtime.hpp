@@ -292,6 +292,7 @@ struct ModelExecutionSpec {
     std::vector<std::string> cellScalarVariableIds;
     std::vector<std::string> stageOrder;
     std::vector<std::string> conservedVariables;
+    std::vector<CrossVariableConstraint> crossVariableConstraints;
     std::unordered_map<std::string, std::string> semanticFieldAliases;
     std::optional<BoundaryMode> preferredBoundaryMode;
 };

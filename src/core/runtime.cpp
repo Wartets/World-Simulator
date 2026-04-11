@@ -349,6 +349,41 @@ void Runtime::start() {
                     stateStore_.registerFieldAlias(semanticKey, variableId);
                 }
             }
+
+            resolvedProfile_.crossVariableConstraints = config_.modelExecutionSpec->crossVariableConstraints;
+            resolvedProfile_.crossVariableConstraints.erase(
+                std::remove_if(
+                    resolvedProfile_.crossVariableConstraints.begin(),
+                    resolvedProfile_.crossVariableConstraints.end(),
+                    [](const CrossVariableConstraint& constraint) {
+                        return constraint.lhsVariable.empty() || constraint.rhsVariable.empty();
+                    }),
+                resolvedProfile_.crossVariableConstraints.end());
+            std::sort(
+                resolvedProfile_.crossVariableConstraints.begin(),
+                resolvedProfile_.crossVariableConstraints.end(),
+                [](const CrossVariableConstraint& lhs, const CrossVariableConstraint& rhs) {
+                    if (lhs.lhsVariable != rhs.lhsVariable) return lhs.lhsVariable < rhs.lhsVariable;
+                    if (lhs.rhsVariable != rhs.rhsVariable) return lhs.rhsVariable < rhs.rhsVariable;
+                    if (lhs.relation != rhs.relation) return static_cast<std::uint8_t>(lhs.relation) < static_cast<std::uint8_t>(rhs.relation);
+                    if (lhs.offset != rhs.offset) return lhs.offset < rhs.offset;
+                    if (lhs.tolerance != rhs.tolerance) return lhs.tolerance < rhs.tolerance;
+                    if (lhs.autoClamp != rhs.autoClamp) return lhs.autoClamp < rhs.autoClamp;
+                    return lhs.id < rhs.id;
+                });
+            resolvedProfile_.crossVariableConstraints.erase(
+                std::unique(
+                    resolvedProfile_.crossVariableConstraints.begin(),
+                    resolvedProfile_.crossVariableConstraints.end(),
+                    [](const CrossVariableConstraint& lhs, const CrossVariableConstraint& rhs) {
+                        return lhs.lhsVariable == rhs.lhsVariable &&
+                            lhs.rhsVariable == rhs.rhsVariable &&
+                            lhs.relation == rhs.relation &&
+                            lhs.offset == rhs.offset &&
+                            lhs.tolerance == rhs.tolerance &&
+                            lhs.autoClamp == rhs.autoClamp;
+                    }),
+                resolvedProfile_.crossVariableConstraints.end());
         }
 
         initializeParameterControls();

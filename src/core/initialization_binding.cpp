@@ -194,6 +194,98 @@ std::optional<InitialConditionType> parseInitialConditionType(const std::string&
     return std::nullopt;
 }
 
+std::optional<CrossVariableRelation> parseCrossVariableRelationToken(const std::string& rawToken) {
+    const std::string token = toLowerCopy(rawToken);
+    if (token == "<=" || token == "le" || token == "less_equal" || token == "lte") {
+        return CrossVariableRelation::LessEqual;
+    }
+    if (token == ">=" || token == "ge" || token == "greater_equal" || token == "gte") {
+        return CrossVariableRelation::GreaterEqual;
+    }
+    if (token == "==" || token == "eq" || token == "equal") {
+        return CrossVariableRelation::Equal;
+    }
+    return std::nullopt;
+}
+
+bool appendCrossVariableConstraintsFromModel(
+    const json& parsed,
+    ModelExecutionSpec& executionSpec,
+    std::string& message) {
+    if (!parsed.contains("cross_variable_constraints")) {
+        return true;
+    }
+    if (!parsed["cross_variable_constraints"].is_array()) {
+        message = "model_execution_spec_failed reason=cross_variable_constraints_not_array";
+        return false;
+    }
+
+    auto readConstraintString = [](const json& object, std::initializer_list<const char*> keys) -> std::optional<std::string> {
+        for (const char* key : keys) {
+            if (object.contains(key) && object[key].is_string()) {
+                const std::string value = object[key].get<std::string>();
+                if (!value.empty()) {
+                    return value;
+                }
+            }
+        }
+        return std::nullopt;
+    };
+
+    for (const auto& rawConstraint : parsed["cross_variable_constraints"]) {
+        if (!rawConstraint.is_object()) {
+            message = "model_execution_spec_failed reason=cross_variable_constraint_not_object";
+            return false;
+        }
+
+        const auto lhs = readConstraintString(rawConstraint, {"lhs", "lhs_variable", "left"});
+        const auto rhs = readConstraintString(rawConstraint, {"rhs", "rhs_variable", "right"});
+        const auto relationToken = readConstraintString(rawConstraint, {"op", "operator", "relation"});
+
+        if (!lhs.has_value() || !rhs.has_value() || !relationToken.has_value()) {
+            message = "model_execution_spec_failed reason=cross_variable_constraint_missing_fields";
+            return false;
+        }
+
+        const auto relation = parseCrossVariableRelationToken(*relationToken);
+        if (!relation.has_value()) {
+            message = "model_execution_spec_failed reason=cross_variable_constraint_bad_relation value=" + *relationToken;
+            return false;
+        }
+
+        CrossVariableConstraint constraint;
+        constraint.id = readConstraintString(rawConstraint, {"id"}).value_or(*lhs + "_" + *rhs);
+        constraint.lhsVariable = *lhs;
+        constraint.rhsVariable = *rhs;
+        constraint.relation = *relation;
+
+        if (rawConstraint.contains("offset") &&
+            (rawConstraint["offset"].is_number_float() || rawConstraint["offset"].is_number_integer() || rawConstraint["offset"].is_number_unsigned())) {
+            constraint.offset = rawConstraint["offset"].get<float>();
+        }
+        if (rawConstraint.contains("tolerance") &&
+            (rawConstraint["tolerance"].is_number_float() || rawConstraint["tolerance"].is_number_integer() || rawConstraint["tolerance"].is_number_unsigned())) {
+            constraint.tolerance = std::max(0.0f, rawConstraint["tolerance"].get<float>());
+        }
+
+        if (const auto action = readConstraintString(rawConstraint, {"action", "enforcement"}); action.has_value()) {
+            const std::string normalizedAction = toLowerCopy(*action);
+            if (normalizedAction == "report_only") {
+                constraint.autoClamp = false;
+            } else if (normalizedAction == "clamp_lhs" || normalizedAction == "clamp" || normalizedAction == "enforce") {
+                constraint.autoClamp = true;
+            } else {
+                message = "model_execution_spec_failed reason=cross_variable_constraint_bad_action value=" + *action;
+                return false;
+            }
+        }
+
+        executionSpec.crossVariableConstraints.push_back(std::move(constraint));
+    }
+
+    return true;
+}
+
 int parseRestrictionMode(const json& value, const int fallback = 0) {
     if (value.is_number_integer()) {
         return std::clamp(value.get<int>(), 0, 5);
@@ -1163,6 +1255,10 @@ bool loadModelExecutionSpec(
             }
         }
 
+        if (!appendCrossVariableConstraintsFromModel(parsed, executionSpec, message)) {
+            return false;
+        }
+
         if (metadataParsed.is_object() &&
             metadataParsed.contains("runtime_field_aliases") &&
             metadataParsed["runtime_field_aliases"].is_object()) {
@@ -1345,6 +1441,10 @@ bool loadModelExecutionSpec(
                         }
                     }
                 }
+            }
+
+            if (!appendCrossVariableConstraintsFromModel(parsed, executionSpec, message)) {
+                return false;
             }
 
             if (metadataParsed.is_object() &&

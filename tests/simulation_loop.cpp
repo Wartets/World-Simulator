@@ -205,6 +205,55 @@ void verifyNaNFailFast() {
     assert(threw);
 }
 
+void verifyCrossVariableConstraintEnforcement() {
+    ws::StateStore stateStore(ws::GridSpec{1, 1});
+    stateStore.allocateScalarField(ws::VariableSpec{400, "lhs_value"});
+    stateStore.allocateScalarField(ws::VariableSpec{401, "rhs_value"});
+
+    ws::Scheduler scheduler;
+    scheduler.registerSubsystem(std::make_shared<ConstantWriteSubsystem>("lhs_writer", "lhs_value", 5.0f, nullptr));
+    scheduler.registerSubsystem(std::make_shared<ConstantWriteSubsystem>("rhs_writer", "rhs_value", 2.0f, nullptr));
+
+    ws::ModelProfile profile;
+    profile.subsystemTiers["lhs_writer"] = ws::ModelTier::A;
+    profile.subsystemTiers["rhs_writer"] = ws::ModelTier::A;
+    ws::CrossVariableConstraint constraint;
+    constraint.id = "lhs_lte_rhs";
+    constraint.lhsVariable = "lhs_value";
+    constraint.rhsVariable = "rhs_value";
+    constraint.relation = ws::CrossVariableRelation::LessEqual;
+    constraint.offset = 0.0f;
+    constraint.tolerance = 0.0f;
+    constraint.autoClamp = true;
+    profile.crossVariableConstraints.push_back(constraint);
+
+    scheduler.initialize(stateStore, profile);
+
+    ws::NumericGuardrailPolicy relaxedPolicy;
+    relaxedPolicy.clampEnabled = false;
+    relaxedPolicy.boundedIncrementEnabled = false;
+
+    const ws::StepDiagnostics diagnostics = scheduler.step(
+        stateStore,
+        profile,
+        ws::TemporalPolicy::UniformA,
+        relaxedPolicy,
+        0);
+
+    const auto lhsValue = stateStore.trySampleScalar("lhs_value", ws::CellSigned{0, 0});
+    const auto rhsValue = stateStore.trySampleScalar("rhs_value", ws::CellSigned{0, 0});
+    assert(lhsValue.has_value());
+    assert(rhsValue.has_value());
+    assert(*lhsValue <= *rhsValue);
+    assert(!diagnostics.constraintViolations.empty());
+    assert(std::any_of(
+        diagnostics.constraintViolations.begin(),
+        diagnostics.constraintViolations.end(),
+        [](const std::string& violation) {
+            return violation.find("cross_constraint:id=lhs_lte_rhs") != std::string::npos;
+        }));
+}
+
 struct ScenarioResult {
     std::uint64_t runIdentityHash = 0;
     std::uint64_t stateHash = 0;
@@ -295,6 +344,7 @@ int main() {
     verifyTemporalPoliciesAndContracts();
     verifyNumericalGuardrails();
     verifyNaNFailFast();
+    verifyCrossVariableConstraintEnforcement();
     verifyDeterministicReplayAndTemporalDistinction();
     verifyRuntimeInputAndEventPipeline();
     return 0;
