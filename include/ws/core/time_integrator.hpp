@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <string>
 #include <vector>
 #include <memory>
@@ -46,6 +47,46 @@ public:
     void step(StateBuffer& state, const std::vector<float>& derivatives, float dt) override;
 };
 
+// Second-order midpoint Runge-Kutta method.
+class RK2Midpoint : public TimeIntegrator {
+public:
+    std::string name() const override { return "RK2 Midpoint"; }
+    int order() const override { return 2; }
+    void step(StateBuffer& state, const std::vector<float>& derivatives, float dt) override;
+};
+
+// Third-order Runge-Kutta method.
+class RK3Heun : public TimeIntegrator {
+public:
+    std::string name() const override { return "RK3 Heun"; }
+    int order() const override { return 3; }
+    void step(StateBuffer& state, const std::vector<float>& derivatives, float dt) override;
+};
+
+// Semi-implicit Euler variant.
+class SemiImplicitEuler : public TimeIntegrator {
+public:
+    std::string name() const override { return "Semi-Implicit Euler"; }
+    int order() const override { return 1; }
+    void step(StateBuffer& state, const std::vector<float>& derivatives, float dt) override;
+};
+
+// Velocity Verlet variant.
+class VelocityVerlet : public TimeIntegrator {
+public:
+    std::string name() const override { return "Velocity Verlet"; }
+    int order() const override { return 2; }
+    void step(StateBuffer& state, const std::vector<float>& derivatives, float dt) override;
+};
+
+// Crank-Nicolson scheme.
+class CrankNicolson : public TimeIntegrator {
+public:
+    std::string name() const override { return "Crank-Nicolson"; }
+    int order() const override { return 2; }
+    void step(StateBuffer& state, const std::vector<float>& derivatives, float dt) override;
+};
+
 // =============================================================================
 // Runge-Kutta 4 Integrator
 // =============================================================================
@@ -70,12 +111,16 @@ public:
     
     // Registers an integrator with an identifier.
     void registerIntegrator(const std::string& id, std::unique_ptr<TimeIntegrator> integrator);
+    void registerIntegrator(const std::string& id, std::shared_ptr<TimeIntegrator> integrator);
+    void registerAlias(const std::string& aliasId, const std::string& canonicalId);
     // Retrieves an integrator by identifier.
     std::shared_ptr<TimeIntegrator> get(const std::string& id) const;
+    [[nodiscard]] std::vector<std::string> availableIds() const;
     
 private:
     TimeIntegratorRegistry();
     std::map<std::string, std::shared_ptr<TimeIntegrator>> registry;
+    std::map<std::string, std::string> aliases;
 };
 
 } // namespace ws
