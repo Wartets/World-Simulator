@@ -277,6 +277,12 @@ add_executable(model_validator_test
 target_link_libraries(model_validator_test PRIVATE ws_core)
 add_test(NAME model_validator_test COMMAND model_validator_test)
 
+add_executable(exception_message_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/exception_message_test.cpp"
+)
+target_link_libraries(exception_message_test PRIVATE ws_core)
+add_test(NAME exception_message_test COMMAND exception_message_test)
+
 target_sources(full_pipeline_multi_model_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/runtime/runtime_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/display_manager.cpp

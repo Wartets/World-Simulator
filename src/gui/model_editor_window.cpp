@@ -1,4 +1,5 @@
 #include "ws/gui/model_editor_window.hpp"
+#include "ws/gui/exception_message.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -345,7 +346,9 @@ void ModelEditorWindow::loadModel(const ModelContext& context) {
         appendStatusDetail("load=ok");
         appendStatusDetail("nodes=" + std::to_string(node_editor->getAllNodes().size()));
     } catch (const std::exception& e) {
-        error_message = std::string("Failed to load model: ") + e.what();
+        error_message = formatOperationMessageForDisplay(
+            translateExceptionMessage(e, "Failed to load model", "Check the model file or JSON snapshot and retry."));
+        appendStatusDetail("load_exception=translated");
         appendStatusDetail("load=error");
     }
 }
@@ -443,7 +446,8 @@ void ModelEditorWindow::showFileActionPopups() {
                     appendStatusDetail("open_path=" + std::string(open_model_path_buffer));
                     ImGui::CloseCurrentPopup();
                 } catch (const std::exception& e) {
-                    error_message = std::string("Open failed: invalid model JSON: ") + e.what();
+                    error_message = formatOperationMessageForDisplay(
+                        translateExceptionMessage(e, "Open failed: invalid model JSON", "Fix the JSON structure and retry open."));
                 }
             } else {
                 error_message = std::string("Open failed: cannot read file '") + open_model_path_buffer + "'";
@@ -1816,7 +1820,8 @@ void ModelEditorWindow::createNewModel() {
         history->clear();
         recordHistorySnapshot("Create new model");
     } catch (const std::exception& e) {
-        error_message = std::string("Failed to initialize new model: ") + e.what();
+        error_message = formatOperationMessageForDisplay(
+            translateExceptionMessage(e, "Failed to initialize new model", "Reset the editor state and retry creation."));
     }
     is_modified = false;
     status_message = "New model created";

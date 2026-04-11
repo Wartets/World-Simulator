@@ -3,6 +3,7 @@
 #include "ws/gui/main_window/platform_dialogs.hpp"
 #include "ws/gui/main_window/overlay_rendering.hpp"
 #include "ws/gui/main_window/session_wizard_helpers.hpp"
+#include "ws/gui/exception_message.hpp"
 #include "ws/gui/display_manager.hpp"
 #include "ws/gui/main_window/color_utils.hpp"
 #include "ws/gui/main_window/detail_utils.hpp"
@@ -643,7 +644,11 @@ public:
                 const ModelContext context = ws::ModelParser::load(modelPath);
                 modelEditor_.loadModel(context);
             } catch (const std::exception& strictError) {
-                appendLog(std::string(errorPrefix) + "_strict=" + strictError.what());
+                const auto translatedStrict = translateExceptionMessage(
+                    strictError,
+                    std::string(errorPrefix) + " strict model load failed",
+                    "Verify the model package contents and retry.");
+                appendLog(std::string(errorPrefix) + "_strict=" + translatedStrict.userMessage);
                 try {
                     ModelContext fallback;
                     if (std::filesystem::is_directory(modelPath)) {
@@ -654,7 +659,11 @@ public:
                     modelEditor_.loadModel(fallback);
                     appendLog(std::string(errorPrefix) + "_fallback=raw_context_loaded");
                 } catch (const std::exception& fallbackError) {
-                    appendLog(std::string(errorPrefix) + "_fallback_error=" + fallbackError.what());
+                    const auto translatedFallback = translateExceptionMessage(
+                        fallbackError,
+                        std::string(errorPrefix) + " fallback model load failed",
+                        "Confirm the package structure, then retry loading the model.");
+                    appendLog(std::string(errorPrefix) + "_fallback_error=" + translatedFallback.userMessage);
                     return;
                 }
             }
