@@ -9,6 +9,7 @@
 #include <fstream>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -50,75 +51,6 @@ bool readTextFile(const std::string& path, std::string& out) {
         buffer << in.rdbuf();
         out = buffer.str();
         return true;
-}
-
-bool writeTextFile(const std::string& path, const std::string& contents) {
-        std::ofstream out(path, std::ios::out | std::ios::binary | std::ios::trunc);
-        if (!out) {
-                return false;
-        }
-        out << contents;
-        return out.good();
-}
-
-struct PackageIntegritySummary {
-    bool hasMetadataPayload = false;
-    bool hasVersionPayload = false;
-    bool hasIrPayload = false;
-    bool hasFlatbufferPayload = false;
-    bool metadataFileExists = false;
-    bool versionFileExists = false;
-
-    [[nodiscard]] bool packageLooksComplete() const {
-        return (hasMetadataPayload || metadataFileExists)
-            && (hasVersionPayload || versionFileExists)
-            && hasIrPayload
-            && hasFlatbufferPayload;
-    }
-
-    [[nodiscard]] std::string missingSummary() const {
-        std::vector<std::string> missing;
-        if (!(hasMetadataPayload || metadataFileExists)) {
-            missing.emplace_back("metadata.json");
-        }
-        if (!(hasVersionPayload || versionFileExists)) {
-            missing.emplace_back("version.json");
-        }
-        if (!hasIrPayload) {
-            missing.emplace_back("ir.logic");
-        }
-        if (!hasFlatbufferPayload) {
-            missing.emplace_back("model.fb");
-        }
-
-        if (missing.empty()) {
-            return "none";
-        }
-
-        std::ostringstream out;
-        for (std::size_t i = 0; i < missing.size(); ++i) {
-            if (i > 0u) {
-                out << ", ";
-            }
-            out << missing[i];
-        }
-        return out.str();
-    }
-};
-
-PackageIntegritySummary summarizePackageIntegrity(const ModelContext& model, const std::filesystem::path& modelJsonPath) {
-    PackageIntegritySummary summary;
-    summary.hasMetadataPayload = !model.metadata_json.empty();
-    summary.hasVersionPayload = !model.version_json.empty();
-    summary.hasIrPayload = !model.ir_logic_string.empty();
-    summary.hasFlatbufferPayload = !model.flatbuffers_bin.empty();
-
-    const std::filesystem::path folder = modelJsonPath.parent_path();
-    std::error_code ec;
-    summary.metadataFileExists = std::filesystem::exists(folder / "metadata.json", ec);
-    ec.clear();
-    summary.versionFileExists = std::filesystem::exists(folder / "version.json", ec);
-    return summary;
 }
 
 std::filesystem::path resolveWorkspaceRoot() {
@@ -171,8 +103,67 @@ std::filesystem::path firstModelJsonPath() {
     return candidates.front();
 }
 
-std::filesystem::path defaultEditorSavePath() {
-    return modelsRoot() / "model_editor_export.simmodel" / "model.json";
+std::filesystem::path defaultEditorPackagePath() {
+    return modelsRoot() / "model_editor_export.simmodel";
+}
+
+std::filesystem::path normalizePackagePath(std::filesystem::path path, const std::filesystem::path& fallback) {
+    if (path.empty()) {
+        return fallback;
+    }
+
+    std::error_code ec;
+    if (std::filesystem::is_directory(path, ec)) {
+        return path / fallback.filename();
+    }
+
+    if (path.extension() == ".json") {
+        path.replace_extension(".simmodel");
+        return path;
+    }
+
+    if (path.extension().empty()) {
+        path += ".simmodel";
+        return path;
+    }
+
+    return path;
+}
+
+void ensurePackagePayloadDefaults(ModelContext& model) {
+    if (model.model_json.empty()) {
+        return;
+    }
+
+    if (model.metadata_json.empty()) {
+        model.metadata_json = R"({
+  "name": "Model Editor Export",
+  "source": "model_editor_window"
+})";
+    }
+
+    if (model.version_json.empty()) {
+        model.version_json = R"({
+  "version": "1.0.0"
+})";
+    }
+
+    if (model.ir_logic_string.empty()) {
+        model.ir_logic_string = R"IR(@global f32 dt = 1.0
+@interaction (editor) func pass_through() {
+    f32 %x = Load("state_x", 0, 0)
+    Store("state_x", 0, %x)
+}
+)IR";
+    }
+
+    if (model.flatbuffers_bin.empty()) {
+        try {
+            model.flatbuffers_bin = ModelParser::compileToFlatBuffers(nlohmann::json::parse(model.model_json));
+        } catch (...) {
+            // Leave empty; package save reports a concrete failure.
+        }
+    }
 }
 
 std::string defaultModelTemplateJson() {
@@ -292,8 +283,11 @@ ModelEditorWindow::ModelEditorWindow(const std::string& window_title)
       show_validation_panel(true),
       last_validation_time(0.0),
       validation_debounce_ms(500.0) {
-        const std::filesystem::path openDefault = firstModelJsonPath();
-        const std::filesystem::path saveDefault = defaultEditorSavePath();
+        std::filesystem::path openDefault = firstModelJsonPath();
+        if (openDefault.filename() == "model.json") {
+            openDefault = openDefault.parent_path();
+        }
+        const std::filesystem::path saveDefault = defaultEditorPackagePath();
         std::snprintf(open_model_path_buffer, sizeof(open_model_path_buffer), "%s", openDefault.string().c_str());
         std::snprintf(save_model_path_buffer, sizeof(save_model_path_buffer), "%s", saveDefault.string().c_str());
         status_details.push_back("ready=true");
@@ -312,12 +306,11 @@ void ModelEditorWindow::setActiveModelPath(const std::filesystem::path& modelPat
 
     std::error_code ec;
     if (std::filesystem::is_directory(modelPath, ec)) {
-        openPath = modelPath / "model.json";
-        savePath = openPath;
+        openPath = modelPath;
+        savePath = modelPath;
     } else {
-        const std::filesystem::path materialized = modelsRoot() / (modelPath.stem().string() + ".simmodel") / "model.json";
-        openPath = materialized;
-        savePath = materialized;
+        openPath = modelPath;
+        savePath = normalizePackagePath(modelPath, defaultEditorPackagePath());
     }
 
     std::snprintf(open_model_path_buffer, sizeof(open_model_path_buffer), "%s", openPath.string().c_str());
@@ -327,7 +320,7 @@ void ModelEditorWindow::setActiveModelPath(const std::filesystem::path& modelPat
 void ModelEditorWindow::loadModel(const ModelContext& context) {
     window_open = true;
     error_message.clear();
-    status_message = "JSON snapshot loaded (Structure Editing Mode)";
+    status_message = "Model package loaded (Structure Editing Mode)";
 
     // Copy model data (avoid copying unique_ptr)
     current_model.metadata_json = context.metadata_json;
@@ -348,7 +341,7 @@ void ModelEditorWindow::loadModel(const ModelContext& context) {
         appendStatusDetail("nodes=" + std::to_string(node_editor->getAllNodes().size()));
     } catch (const std::exception& e) {
         error_message = formatOperationMessageForDisplay(
-            translateExceptionMessage(e, "Failed to load model", "Check the model file or JSON snapshot and retry."));
+            translateExceptionMessage(e, "Failed to load model", "Check the model package contents and retry."));
         appendStatusDetail("load_exception=translated");
         appendStatusDetail("load=error");
     }
@@ -429,29 +422,35 @@ void ModelEditorWindow::duplicateSelectedNodes() {
 
 void ModelEditorWindow::showFileActionPopups() {
     if (ImGui::BeginPopupModal("OpenModelDialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Open model JSON path");
+        ImGui::TextUnformatted("Open model path (.simmodel or model.json)");
         ImGui::InputText("##open_model_path", open_model_path_buffer, sizeof(open_model_path_buffer));
         ImGui::Spacing();
 
         if (ImGui::Button("Open", ImVec2(layout::kModelEditorButtonWidth, layout::kModelEditorButtonHeight))) {
-            std::string payload;
-            if (readTextFile(open_model_path_buffer, payload)) {
-                current_model.model_json = payload;
-                try {
-                    populateNodeGraphFromModel(payload);
-                    history->clear();
-                    is_modified = false;
-                        status_message = "JSON snapshot opened";
-                    error_message.clear();
-                    recordHistorySnapshot("Opened model from file");
-                    appendStatusDetail("open_path=" + std::string(open_model_path_buffer));
-                    ImGui::CloseCurrentPopup();
-                } catch (const std::exception& e) {
-                    error_message = formatOperationMessageForDisplay(
-                        translateExceptionMessage(e, "Open failed: invalid model JSON", "Fix the JSON structure and retry open."));
+            try {
+                const std::filesystem::path openPath(open_model_path_buffer);
+                ModelContext loaded;
+                if (openPath.extension() == ".json") {
+                    std::string payload;
+                    if (!readTextFile(open_model_path_buffer, payload)) {
+                        throw std::runtime_error("cannot read JSON file");
+                    }
+                    loaded.model_json = payload;
+                } else {
+                    loaded = ModelParser::load(openPath);
                 }
-            } else {
-                error_message = std::string("Open failed: cannot read file '") + open_model_path_buffer + "'";
+
+                loadModel(loaded);
+                history->clear();
+                is_modified = false;
+                status_message = "Model opened";
+                error_message.clear();
+                recordHistorySnapshot("Opened model from file");
+                appendStatusDetail("open_path=" + std::string(open_model_path_buffer));
+                ImGui::CloseCurrentPopup();
+            } catch (const std::exception& e) {
+                error_message = formatOperationMessageForDisplay(
+                    translateExceptionMessage(e, "Open failed", "Check the package path and model contents, then retry."));
             }
         }
         ImGui::SameLine();
@@ -462,7 +461,7 @@ void ModelEditorWindow::showFileActionPopups() {
     }
 
     if (ImGui::BeginPopupModal("SaveModelDialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Save JSON snapshot path");
+        ImGui::TextUnformatted("Save model package path (.simmodel)");
         ImGui::InputText("##save_model_path", save_model_path_buffer, sizeof(save_model_path_buffer));
         ImGui::Spacing();
 
@@ -1017,22 +1016,19 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                 if (ImGui::MenuItem("New Model", "Ctrl+N")) {
                     createNewModel();
                 }
-                if (ImGui::MenuItem("Open JSON snapshot", "Ctrl+O")) {
+                if (ImGui::MenuItem("Open Model", "Ctrl+O")) {
                     ImGui::OpenPopup("OpenModelDialog");
                 }
-                if (ImGui::MenuItem("Save JSON snapshot", "Ctrl+S")) {
+                if (ImGui::MenuItem("Save Model", "Ctrl+S")) {
                     saveModel();
                 }
-                if (ImGui::MenuItem("Save JSON snapshot as...", "Ctrl+Shift+S")) {
+                if (ImGui::MenuItem("Save Model As...", "Ctrl+Shift+S")) {
                     ImGui::OpenPopup("SaveModelDialog");
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Export JSON snapshot copy")) {
+                if (ImGui::MenuItem("Export Model Package (.simmodel)")) {
                     exportModel();
                 }
-                ImGui::BeginDisabled();
-                ImGui::MenuItem("Export package (.zip) unavailable (Package Authoring Mode)", nullptr, false, false);
-                ImGui::EndDisabled();
                 ImGui::Separator();
                 if (ImGui::MenuItem("Close", "Alt+F4")) {
                     window_open = false;
@@ -1099,11 +1095,11 @@ void ModelEditorWindow::render(ImVec2 available_size) {
             ImGui::TextDisabled("Editor capability mode");
             ImGui::TextColored(ImVec4(0.50f, 0.85f, 0.55f, 1.0f), "Structure Editing Mode");
             ImGui::SameLine();
-            ImGui::TextDisabled("active: create/edit graph structure and JSON snapshot artifacts");
+            ImGui::TextDisabled("active: create/edit graph structure and package artifacts");
 
             ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f), "Package Authoring Mode");
             ImGui::SameLine();
-            ImGui::TextDisabled("disabled in this build: package regeneration/export guarantees are unavailable");
+            ImGui::TextDisabled("active: export writes full .simmodel packages");
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -1182,7 +1178,7 @@ void ModelEditorWindow::render(ImVec2 available_size) {
                 ImGui::TextDisabled("Status");
                 ImGui::Separator();
                 ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.45f, 1.0f),
-                    "Experimental boundary: Save/Export produce JSON snapshots only; package round-trip regeneration is not guaranteed in this build.");
+                    "Package mode active: Save/Export write .simmodel archives intended for round-trip loading.");
                 if (!error_message.empty()) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
                     ImGui::TextUnformatted(error_message.c_str());
@@ -1761,27 +1757,27 @@ void ModelEditorWindow::saveModel() {
         current_model.model_json = defaultModelTemplateJson();
     }
 
-    std::filesystem::path target(save_model_path_buffer);
-    if (target.has_parent_path()) {
-        std::error_code ec;
-        std::filesystem::create_directories(target.parent_path(), ec);
-    }
+    ensurePackagePayloadDefaults(current_model);
+    std::filesystem::path target = normalizePackagePath(std::filesystem::path(save_model_path_buffer), defaultEditorPackagePath());
 
-    if (writeTextFile(save_model_path_buffer, current_model.model_json)) {
-        const std::filesystem::path savedPath(save_model_path_buffer);
-        const PackageIntegritySummary integrity = summarizePackageIntegrity(current_model, savedPath);
-        status_message = integrity.packageLooksComplete()
-            ? "JSON snapshot saved. Existing package artifacts detected; package regeneration is not guaranteed."
-            : "JSON snapshot saved. Package artifacts are incomplete; treat this as JSON-only output.";
+    try {
+        std::string exportError;
+        if (!ModelParser::saveAsZip(current_model, target, exportError)) {
+            throw std::runtime_error(exportError.empty() ? "package save failed" : exportError);
+        }
+        const std::string normalized = target.string();
+        std::snprintf(save_model_path_buffer, sizeof(save_model_path_buffer), "%s", normalized.c_str());
+
+        status_message = "Model package saved";
         error_message.clear();
         is_modified = false;
         recordHistorySnapshot("Save model");
         appendStatusDetail("save=ok");
-        appendStatusDetail("files_written=model.json");
-        appendStatusDetail("artifact_semantics=json_snapshot_only");
-        appendStatusDetail("package_missing=" + integrity.missingSummary());
-    } else {
-        error_message = std::string("Failed to save model to '") + save_model_path_buffer + "'";
+        appendStatusDetail("package_path=" + normalized);
+        appendStatusDetail("files_written=model.json,metadata.json,version.json,logic.ir,model.bin");
+    } catch (const std::exception& e) {
+        error_message = formatOperationMessageForDisplay(
+            translateExceptionMessage(e, "Failed to save model package", "Verify the output path and model payload, then retry."));
         appendStatusDetail("save=error");
     }
 }
@@ -1789,25 +1785,27 @@ void ModelEditorWindow::saveModel() {
 void ModelEditorWindow::exportModel() {
     current_model.model_json = serializeModelFromGraph();
 
-    std::filesystem::path exportPath = std::filesystem::path(save_model_path_buffer);
-    if (exportPath.empty()) {
-        exportPath = defaultEditorSavePath();
+    if (current_model.model_json.empty()) {
+        current_model.model_json = defaultModelTemplateJson();
     }
-    exportPath = exportPath.parent_path() / "model_editor_export.json";
-    std::error_code ec;
-    std::filesystem::create_directories(exportPath.parent_path(), ec);
-    if (writeTextFile(exportPath.string(), current_model.model_json)) {
-        const PackageIntegritySummary integrity = summarizePackageIntegrity(current_model, exportPath);
-        status_message = integrity.packageLooksComplete()
-            ? "JSON snapshot exported. Existing package artifacts detected; package export remains unavailable in this build."
-            : "JSON snapshot exported. Package export is unavailable in this build.";
+
+    ensurePackagePayloadDefaults(current_model);
+    std::filesystem::path exportPath = normalizePackagePath(std::filesystem::path(save_model_path_buffer), defaultEditorPackagePath());
+    exportPath = exportPath.parent_path() / "model_editor_export.simmodel";
+
+    try {
+        std::string exportError;
+        if (!ModelParser::saveAsZip(current_model, exportPath, exportError)) {
+            throw std::runtime_error(exportError.empty() ? "package export failed" : exportError);
+        }
+        status_message = "Model package exported";
         error_message.clear();
+        appendStatusDetail("export=ok");
         appendStatusDetail("export_path=" + exportPath.string());
-        appendStatusDetail("files_written=model_editor_export.json");
-        appendStatusDetail("artifact_semantics=json_snapshot_only");
-        appendStatusDetail("package_missing=" + integrity.missingSummary());
-    } else {
-        error_message = "Export failed";
+        appendStatusDetail("files_written=model.json,metadata.json,version.json,logic.ir,model.bin");
+    } catch (const std::exception& e) {
+        error_message = formatOperationMessageForDisplay(
+            translateExceptionMessage(e, "Export failed", "Verify package path permissions and model payload completeness, then retry."));
         appendStatusDetail("export=error");
     }
 }

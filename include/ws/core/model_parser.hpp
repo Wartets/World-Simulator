@@ -35,6 +35,10 @@ public:
     
     static ModelContext loadFromDirectory(const std::filesystem::path& dirPath);
     static ModelContext loadFromZip(const std::filesystem::path& zipPath);
+
+    // Writes a .simmodel ZIP package from a model context.
+    // Returns true on success, false on failure and sets errorMessage.
+    static bool saveAsZip(const ModelContext& context, const std::filesystem::path& zipPath, std::string& errorMessage);
     
     // Translates the declarative JSON model into the compact FlatBuffers binary representation
     static std::vector<uint8_t> compileToFlatBuffers(const nlohmann::json& modelJson);

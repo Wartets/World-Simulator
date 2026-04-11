@@ -149,6 +149,99 @@ ModelContext ModelParser::load(const std::filesystem::path& path) {
     return ctx;
 }
 
+bool ModelParser::saveAsZip(const ModelContext& context, const std::filesystem::path& zipPath, std::string& errorMessage) {
+    errorMessage.clear();
+
+    const std::string metadata = context.metadata_json.empty()
+        ? std::string{"{\n  \"name\": \"model_editor_export\"\n}\n"}
+        : context.metadata_json;
+    const std::string version = context.version_json.empty()
+        ? std::string{"{\n  \"version\": \"1.0.0\"\n}\n"}
+        : context.version_json;
+
+    if (context.model_json.empty() && context.model_bin.empty()) {
+        errorMessage = "Package export requires model_json or model_bin";
+        return false;
+    }
+    if (context.ir_logic_string.empty()) {
+        errorMessage = "Package export requires logic.ir payload";
+        return false;
+    }
+
+    std::vector<std::uint8_t> modelBin = context.model_bin;
+    if (modelBin.empty()) {
+        if (!context.flatbuffers_bin.empty()) {
+            modelBin = context.flatbuffers_bin;
+        } else if (!context.model_json.empty()) {
+            try {
+                const auto j = nlohmann::json::parse(context.model_json);
+                modelBin = compileToFlatBuffers(j);
+            } catch (const std::exception& e) {
+                errorMessage = std::string{"Failed to compile model.json for package export: "} + e.what();
+                return false;
+            }
+        }
+    }
+
+    std::error_code ec;
+    if (zipPath.has_parent_path()) {
+        std::filesystem::create_directories(zipPath.parent_path(), ec);
+        if (ec) {
+            errorMessage = std::string{"Failed to create package directory: "} + ec.message();
+            return false;
+        }
+    }
+
+    mz_zip_archive zip{};
+    std::memset(&zip, 0, sizeof(zip));
+    if (!mz_zip_writer_init_file(&zip, zipPath.string().c_str(), 0)) {
+        errorMessage = "Failed to initialize ZIP writer";
+        return false;
+    }
+
+    auto addText = [&](const char* entryName, const std::string& text) -> bool {
+        return mz_zip_writer_add_mem(&zip, entryName, text.data(), text.size(), MZ_BEST_COMPRESSION) != 0;
+    };
+    auto addBinary = [&](const char* entryName, const std::vector<std::uint8_t>& bytes) -> bool {
+        if (bytes.empty()) {
+            return true;
+        }
+        return mz_zip_writer_add_mem(&zip, entryName, bytes.data(), bytes.size(), MZ_BEST_COMPRESSION) != 0;
+    };
+
+    bool ok = true;
+    ok = ok && addText("metadata.json", metadata);
+    ok = ok && addText("version.json", version);
+    if (!context.model_json.empty()) {
+        ok = ok && addText("model.json", context.model_json);
+    }
+    ok = ok && addText("logic.ir", context.ir_logic_string);
+    ok = ok && addBinary("model.bin", modelBin);
+    ok = ok && addBinary("layout.bin", context.layout_bin);
+    ok = ok && addBinary("logic.opt.bin", context.logic_opt_bin);
+    ok = ok && addBinary("logic.cpu.bin", context.logic_cpu_bin);
+    ok = ok && addBinary("logic.gpu.spv", context.logic_gpu_spv);
+
+    if (!ok) {
+        mz_zip_writer_end(&zip);
+        errorMessage = "Failed while writing package ZIP entries";
+        return false;
+    }
+
+    if (!mz_zip_writer_finalize_archive(&zip)) {
+        mz_zip_writer_end(&zip);
+        errorMessage = "Failed to finalize package ZIP archive";
+        return false;
+    }
+
+    if (!mz_zip_writer_end(&zip)) {
+        errorMessage = "Failed to close package ZIP archive";
+        return false;
+    }
+
+    return true;
+}
+
 std::vector<uint8_t> ModelParser::compileToFlatBuffers(const nlohmann::json& j) {
     flatbuffers::FlatBufferBuilder builder(1024);
     
