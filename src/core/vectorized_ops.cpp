@@ -41,46 +41,9 @@ inline std::uint32_t reflectIndex(const std::int64_t value, const std::uint32_t 
     return static_cast<std::uint32_t>(wrapped);
 }
 
-// Samples input array at specified coordinates with boundary handling.
-// Applies different strategies based on boundary condition enum.
-inline float sampleBoundary(
-    const float* input,
-    const std::uint32_t width,
-    const std::uint32_t height,
-    const std::int64_t x,
-    const std::int64_t y,
-    const BoundaryCondition boundaryCondition) noexcept {
-    const auto inside = [width, height](const std::int64_t ix, const std::int64_t iy) noexcept {
-        return ix >= 0 && iy >= 0 && ix < static_cast<std::int64_t>(width) && iy < static_cast<std::int64_t>(height);
-    };
 
-    if (inside(x, y)) {
-        return input[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)];
-    }
 
-    switch (boundaryCondition) {
-        case BoundaryCondition::Periodic: {
-            const auto rx = wrapIndex(x, width);
-            const auto ry = wrapIndex(y, height);
-            return input[static_cast<std::size_t>(ry) * width + rx];
-        }
-        case BoundaryCondition::Reflecting: {
-            const auto rx = reflectIndex(x, width);
-            const auto ry = reflectIndex(y, height);
-            return input[static_cast<std::size_t>(ry) * width + rx];
-        }
-        case BoundaryCondition::Dirichlet:
-        case BoundaryCondition::Absorbing:
-            return 0.0f;
-        case BoundaryCondition::Neumann: {
-            const auto rx = static_cast<std::uint32_t>(std::clamp<std::int64_t>(x, 0, static_cast<std::int64_t>(width) - 1));
-            const auto ry = static_cast<std::uint32_t>(std::clamp<std::int64_t>(y, 0, static_cast<std::int64_t>(height) - 1));
-            return input[static_cast<std::size_t>(ry) * width + rx];
-        }
-    }
-
-    return 0.0f;
-}
+// sampleBoundary is now defined inline in the header as a thin wrapper.
 
 // Computes 5-point Laplacian for interior row cells.
 // Uses centered difference approximation for second derivatives.

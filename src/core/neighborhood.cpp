@@ -1,4 +1,6 @@
+
 #include "ws/core/neighborhood.hpp"
+#include "ws/core/vectorized_ops.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -127,44 +129,7 @@ float BoundaryHandler::sampleWithBoundary(
     std::uint32_t height,
     std::int64_t x,
     std::int64_t y) const noexcept {
-    if (data == nullptr || width == 0 || height == 0) {
-        return boundaryValue_;
-    }
-
-    const auto inside = [width, height](std::int64_t ix, std::int64_t iy) noexcept {
-        return ix >= 0 && iy >= 0 && ix < static_cast<std::int64_t>(width) && iy < static_cast<std::int64_t>(height);
-    };
-
-    if (inside(x, y)) {
-        return data[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)];
-    }
-
-    switch (bc_) {
-        case BoundaryCondition::Periodic: {
-            const auto rx = wrapIndex(x, width);
-            const auto ry = wrapIndex(y, height);
-            return data[static_cast<std::size_t>(ry) * width + rx];
-        }
-
-        case BoundaryCondition::Reflecting: {
-            const auto rx = reflectIndex(x, width);
-            const auto ry = reflectIndex(y, height);
-            return data[static_cast<std::size_t>(ry) * width + rx];
-        }
-
-        case BoundaryCondition::Dirichlet:
-        case BoundaryCondition::Absorbing:
-            return boundaryValue_;
-
-        case BoundaryCondition::Neumann: {
-            // Zero-flux: return the edge value (clamp coordinates)
-            const auto cx = static_cast<std::uint32_t>(std::clamp<std::int64_t>(x, 0, static_cast<std::int64_t>(width) - 1));
-            const auto cy = static_cast<std::uint32_t>(std::clamp<std::int64_t>(y, 0, static_cast<std::int64_t>(height) - 1));
-            return data[static_cast<std::size_t>(cy) * width + cx];
-        }
-    }
-
-    return boundaryValue_;
+    return ws::vectorized::detail::sampleBoundaryImpl(data, width, height, x, y, bc_, boundaryValue_);
 }
 
 NeighborhoodStencil::NeighborhoodStencil(

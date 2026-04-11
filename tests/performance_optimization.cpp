@@ -10,6 +10,8 @@
 
 namespace {
 
+
+// Use the unified helper for test reference as well
 float sampleBoundary(
     const std::vector<float>& input,
     std::uint32_t width,
@@ -17,50 +19,7 @@ float sampleBoundary(
     std::int64_t x,
     std::int64_t y,
     ws::BoundaryCondition bc) {
-    const auto inside = [width, height](std::int64_t ix, std::int64_t iy) {
-        return ix >= 0 && iy >= 0 && ix < static_cast<std::int64_t>(width) && iy < static_cast<std::int64_t>(height);
-    };
-
-    if (inside(x, y)) {
-        return input[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)];
-    }
-
-    switch (bc) {
-        case ws::BoundaryCondition::Periodic: {
-            const auto wrap = [](std::int64_t value, std::uint32_t extent) {
-                const std::int64_t mod = static_cast<std::int64_t>(extent);
-                return static_cast<std::uint32_t>(((value % mod) + mod) % mod);
-            };
-            return input[static_cast<std::size_t>(wrap(y, height)) * width + wrap(x, width)];
-        }
-        case ws::BoundaryCondition::Reflecting: {
-            const auto reflect = [](std::int64_t value, std::uint32_t extent) {
-                if (extent == 1u) {
-                    return 0u;
-                }
-                const std::int64_t period = static_cast<std::int64_t>(2u * extent - 2u);
-                std::int64_t wrapped = value % period;
-                if (wrapped < 0) {
-                    wrapped += period;
-                }
-                if (wrapped >= static_cast<std::int64_t>(extent)) {
-                    wrapped = period - wrapped;
-                }
-                return static_cast<std::uint32_t>(wrapped);
-            };
-            return input[static_cast<std::size_t>(reflect(y, height)) * width + reflect(x, width)];
-        }
-        case ws::BoundaryCondition::Dirichlet:
-        case ws::BoundaryCondition::Absorbing:
-            return 0.0f;
-        case ws::BoundaryCondition::Neumann: {
-            const auto cx = static_cast<std::uint32_t>(std::clamp<std::int64_t>(x, 0, static_cast<std::int64_t>(width) - 1));
-            const auto cy = static_cast<std::uint32_t>(std::clamp<std::int64_t>(y, 0, static_cast<std::int64_t>(height) - 1));
-            return input[static_cast<std::size_t>(cy) * width + cx];
-        }
-    }
-
-    return 0.0f;
+    return ws::vectorized::detail::sampleBoundaryImpl(input.data(), width, height, x, y, bc, 0.0f);
 }
 
 std::vector<float> referenceLaplacian(const std::vector<float>& input, std::uint32_t width, std::uint32_t height, ws::BoundaryCondition bc) {
