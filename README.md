@@ -275,6 +275,8 @@ Define your simulation by specifying:
 4. **Stages**: Ordered execution stages for one timestep
 5. **Interactions**: Mathematical logic in IR format
 
+Current runtime scope is **2D Cartesian**. Model compilation accepts `grid.dimensions` as either two explicit extents (for example `[256, 256]`) or legacy scalar `2`; higher-dimensional declarations are rejected with a validation error.
+
 Example variable definition:
 
 ```json
