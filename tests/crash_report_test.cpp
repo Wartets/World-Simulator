@@ -1,4 +1,5 @@
 #include "ws/gui/crash_report.hpp"
+#include "ws/gui/build_info.hpp"
 
 #include <iostream>
 #include <stdexcept>
@@ -13,7 +14,7 @@ void expect(bool condition, const std::string& message) {
 
 void testCrashReportFormattingIncludesRequiredFields() {
     const ws::gui::crash::CrashReportInput input{
-        "0.1.0",
+        ws::gui::kApplicationVersion,
         "gui",
         "startup",
         "std_exception",
@@ -25,7 +26,7 @@ void testCrashReportFormattingIncludesRequiredFields() {
 
     expect(report.find("world_simulator_crash_report") != std::string::npos, "missing report header");
     expect(report.find("timestamp_unix=1700000000") != std::string::npos, "missing timestamp");
-    expect(report.find("version=0.1.0") != std::string::npos, "missing version");
+    expect(report.find(std::string{"version="} + ws::gui::kApplicationVersion) != std::string::npos, "missing version");
     expect(report.find("subsystem=gui") != std::string::npos, "missing subsystem");
     expect(report.find("stage=startup") != std::string::npos, "missing stage");
     expect(report.find("handled=yes") != std::string::npos, "handled status mismatch");

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(WorldSimulator VERSION 0.1.0 LANGUAGES CXX)
+project(WorldSimulator VERSION 0.1.1 LANGUAGES CXX)
 
 if(WIN32)
     enable_language(RC)
@@ -28,11 +28,35 @@ endif()
 
 include(FetchContent)
 
+set(WS_GUI_ICON_RC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_icon.rc")
+set(WS_GUI_MANIFEST_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator.manifest")
+
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_version.rc.in
     ${CMAKE_CURRENT_BINARY_DIR}/world_simulator_version.rc
     @ONLY
 )
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator.manifest.in")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator.manifest.in
+        ${CMAKE_CURRENT_BINARY_DIR}/world_simulator.manifest
+        @ONLY
+    )
+    set(WS_GUI_MANIFEST_FILE "${CMAKE_CURRENT_BINARY_DIR}/world_simulator.manifest")
+endif()
+
+set(WS_GUI_ICON_ID_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_icon_id.h")
+set(WS_GUI_ICON_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator.ico")
+set(WS_GUI_VERSION_RC_FILE "${CMAKE_CURRENT_BINARY_DIR}/world_simulator_version.rc")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_icon.rc.in")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_icon.rc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/world_simulator_icon.rc
+        @ONLY
+    )
+    set(WS_GUI_ICON_RC_FILE "${CMAKE_CURRENT_BINARY_DIR}/world_simulator_icon.rc")
+endif()
 
 option(WS_ENABLE_OPENMP "Enable OpenMP acceleration for eligible simulation loops" OFF)
 
@@ -89,6 +113,7 @@ target_include_directories(ws_core PUBLIC
     include
     ${CMAKE_CURRENT_BINARY_DIR}
 )
+target_compile_definitions(ws_core PUBLIC WS_PROJECT_VERSION="${PROJECT_VERSION}")
 
 if(WS_ENABLE_OPENMP)
     find_package(OpenMP)
@@ -219,7 +244,7 @@ add_executable(world_sim_gui WIN32
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/render_rule_editor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/vector_renderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/presentation/contour_renderer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_icon.rc
+    ${WS_GUI_ICON_RC_FILE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/shell_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/profile_store.cpp
@@ -238,7 +263,6 @@ target_include_directories(world_sim_gui PRIVATE
 )
 target_link_libraries(world_sim_gui PRIVATE ws_core imgui_backend OpenGL::GL glfw)
 target_compile_definitions(world_sim_gui PRIVATE IMGUI_ENABLE_DOCKING)
-target_compile_definitions(world_sim_gui PRIVATE WS_PROJECT_VERSION="${PROJECT_VERSION}")
 
 if(MSVC)
     target_compile_options(world_sim PRIVATE $<$<CONFIG:Release>:/Zi>)
