@@ -6,6 +6,15 @@
 #include <fstream>
 #include <sstream>
 
+#if WS_ENABLE_GEOTIFF
+#include "gdal.h"
+#include "gdal_priv.h"
+#endif
+
+#if WS_ENABLE_NETCDF
+#include "netcdf.hh"
+#endif
+
 namespace ws::app {
 namespace {
 
@@ -165,14 +174,162 @@ bool DataImporter::importImage(const std::filesystem::path& path, ImportedGridDa
     return true;
 }
 
-bool DataImporter::importGeoTiff(const std::filesystem::path&, ImportedGridData&, std::string& message) {
-    message = "geotiff_import_unavailable reason=requires_gdal_scaffolding";
+bool DataImporter::importGeoTiff(const std::filesystem::path& path, ImportedGridData& output, std::string& message) {
+#if !WS_ENABLE_GEOTIFF
+    message = "geotiff_import_unavailable reason=requires_gdal_compiled_support";
     return false;
+#else
+    try {
+        GDALAllRegister();
+        GDALDataset* dataset = static_cast<GDALDataset*>(GDALOpen(path.string().c_str(), GA_ReadOnly));
+        if (!dataset) {
+            message = "geotiff_import_failed error=open_failed";
+            return false;
+        }
+
+        const int rasterCount = dataset->GetRasterCount();
+        if (rasterCount == 0) {
+            GDALClose(dataset);
+            message = "geotiff_import_failed error=no_rasters";
+            return false;
+        }
+
+        const int width = dataset->GetRasterXSize();
+        const int height = dataset->GetRasterYSize();
+        if (width <= 0 || height <= 0) {
+            GDALClose(dataset);
+            message = "geotiff_import_failed error=invalid_dimensions";
+            return false;
+        }
+
+        // Use first raster band
+        GDALRasterBand* band = dataset->GetRasterBand(1);
+        if (!band) {
+            GDALClose(dataset);
+            message = "geotiff_import_failed error=band_read_failed";
+            return false;
+        }
+
+        output.width = static_cast<std::size_t>(width);
+        output.height = static_cast<std::size_t>(height);
+        output.values.assign(width * height, 0.0f);
+
+        // Read raster data as floats
+        CPLErr readErr = band->RasterIO(
+            GF_Read,
+            0, 0, width, height,
+            output.values.data(), width, height,
+            GDT_Float32, 0, 0);
+
+        GDALClose(dataset);
+
+        if (readErr != CE_None) {
+            message = "geotiff_import_failed error=data_read_failed";
+            return false;
+        }
+
+        message = "geotiff_import_ok width=" + std::to_string(width) + " height=" + std::to_string(height);
+        return true;
+    } catch (const std::exception& e) {
+        message = std::string("geotiff_import_failed error=exception msg=") + e.what();
+        return false;
+    } catch (...) {
+        message = "geotiff_import_failed error=unknown_exception";
+        return false;
+    }
+#endif
 }
 
-bool DataImporter::importNetCdf(const std::filesystem::path&, ImportedGridData&, std::string& message) {
-    message = "netcdf_import_unavailable reason=requires_netcdf_scaffolding";
+bool DataImporter::importNetCdf(const std::filesystem::path& path, ImportedGridData& output, std::string& message) {
+#if !WS_ENABLE_NETCDF
+    message = "netcdf_import_unavailable reason=requires_netcdf_compiled_support";
     return false;
+#else
+    try {
+        netCDF::NcFile datafile(path.string(), netCDF::NcFile::read);
+        
+        // Get all dimensions; assume 2D data with dims named x/lon and y/lat or y/x
+        std::vector<netCDF::NcDim> dims = datafile.getDims();
+        if (dims.size() < 2) {
+            message = "netcdf_import_failed error=insufficient_dimensions";
+            return false;
+        }
+
+        // Try to find x and y dimensions by name pattern
+        netCDF::NcDim xDim, yDim;
+        bool foundX = false, foundY = false;
+        
+        for (const auto& dim : dims) {
+            std::string dimName = dim.getName();
+            // Convert to lowercase for comparison
+            std::transform(dimName.begin(), dimName.end(), dimName.begin(), ::tolower);
+            
+            if (!foundX && (dimName == "x" || dimName == "lon" || dimName == "longitude")) {
+                xDim = dim;
+                foundX = true;
+            } else if (!foundY && (dimName == "y" || dimName == "lat" || dimName == "latitude")) {
+                yDim = dim;
+                foundY = true;
+            }
+        }
+
+        if (!foundX || !foundY) {
+            // Fallback: use first two dimensions
+            xDim = dims[0];
+            yDim = dims[1];
+        }
+
+        const int width = xDim.getSize();
+        const int height = yDim.getSize();
+        if (width <= 0 || height <= 0) {
+            message = "netcdf_import_failed error=invalid_dimensions";
+            return false;
+        }
+
+        // Find first numeric variable with matching dimensions
+        std::vector<netCDF::NcVar> vars = datafile.getVars();
+        netCDF::NcVar dataVar;
+        bool varFound = false;
+        
+        for (const auto& var : vars) {
+            if (var.isNull() || var.getVarType().getName() == "char" || var.getVarType().getName() == "string") {
+                continue;
+            }
+            std::vector<netCDF::NcDim> varDims = var.getDims();
+            if (varDims.size() >= 2) {
+                dataVar = var;
+                varFound = true;
+                break;
+            }
+        }
+
+        if (!varFound) {
+            message = "netcdf_import_failed error=no_numeric_variable";
+            return false;
+        }
+
+        output.width = static_cast<std::size_t>(width);
+        output.height = static_cast<std::size_t>(height);
+        output.values.assign(width * height, 0.0f);
+
+        // Read data
+        std::vector<std::size_t> start = {0, 0};
+        std::vector<std::size_t> count = {static_cast<std::size_t>(height), static_cast<std::size_t>(width)};
+        dataVar.getVar(start, count, output.values.data());
+
+        message = "netcdf_import_ok width=" + std::to_string(width) + " height=" + std::to_string(height);
+        return true;
+    } catch (const netCDF::exceptions::NcException& e) {
+        message = std::string("netcdf_import_failed error=netcdf_error msg=") + e.what();
+        return false;
+    } catch (const std::exception& e) {
+        message = std::string("netcdf_import_failed error=exception msg=") + e.what();
+        return false;
+    } catch (...) {
+        message = "netcdf_import_failed error=unknown_exception";
+        return false;
+    }
+#endif
 }
 
 ImportedGridData DataImporter::resample(const ImportedGridData& input, const std::size_t targetWidth, const std::size_t targetHeight) {

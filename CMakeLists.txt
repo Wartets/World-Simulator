@@ -59,6 +59,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/gui/resources/world_simulator_icon.rc
 endif()
 
 option(WS_ENABLE_OPENMP "Enable OpenMP acceleration for eligible simulation loops" OFF)
+option(WS_ENABLE_GEOTIFF "Enable GeoTIFF import support (requires GDAL)" OFF)
+option(WS_ENABLE_NETCDF "Enable NetCDF import support (requires NetCDF C++)" OFF)
 
 # --- Lexer & Parser Generation ---
 find_package(BISON REQUIRED)
@@ -126,6 +128,34 @@ if(WS_ENABLE_OPENMP)
     endif()
 else()
     target_compile_definitions(ws_core PUBLIC WS_ENABLE_OPENMP=0)
+endif()
+
+if(WS_ENABLE_GEOTIFF)
+    find_package(GDAL)
+    if(GDAL_FOUND)
+        target_link_libraries(ws_core PUBLIC GDAL::GDAL)
+        target_compile_definitions(ws_core PUBLIC WS_ENABLE_GEOTIFF=1)
+        message(STATUS "GeoTIFF support enabled (GDAL found)")
+    else()
+        message(WARNING "WS_ENABLE_GEOTIFF was requested, but GDAL was not found. Building without GeoTIFF support.")
+        target_compile_definitions(ws_core PUBLIC WS_ENABLE_GEOTIFF=0)
+    endif()
+else()
+    target_compile_definitions(ws_core PUBLIC WS_ENABLE_GEOTIFF=0)
+endif()
+
+if(WS_ENABLE_NETCDF)
+    find_package(netCDF)
+    if(netCDF_FOUND)
+        target_link_libraries(ws_core PUBLIC netCDF::netcdf_cxx4)
+        target_compile_definitions(ws_core PUBLIC WS_ENABLE_NETCDF=1)
+        message(STATUS "NetCDF support enabled (NetCDF C++ found)")
+    else()
+        message(WARNING "WS_ENABLE_NETCDF was requested, but NetCDF C++ was not found. Building without NetCDF support.")
+        target_compile_definitions(ws_core PUBLIC WS_ENABLE_NETCDF=0)
+    endif()
+else()
+    target_compile_definitions(ws_core PUBLIC WS_ENABLE_NETCDF=0)
 endif()
 
 # --- Dependencies Fetching ---
@@ -428,6 +458,7 @@ ws_add_test(model_history_test tests/model_history.cpp)
 ws_add_test(performance_optimization_test tests/performance_optimization.cpp)
 ws_add_test(advanced_features_test tests/advanced_features.cpp)
 ws_add_test(noise_generator_test tests/noise_generator_test.cpp)
+ws_add_test(data_importer_test tests/data_importer_test.cpp)
 target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )
@@ -446,6 +477,9 @@ target_sources(model_history_test PRIVATE
 )
 target_sources(noise_generator_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/noise_generator.cpp
+)
+target_sources(data_importer_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/data_importer.cpp
 )
 
 add_executable(viewport_manager_test

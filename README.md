@@ -234,8 +234,12 @@ Use it as an experimental authoring surface and structure viewer unless your wor
 
 ### External data import formats
 
-- Supported now: **CSV**, **PGM image (`P2`/`P5`)**.
-- Not yet available in this build: **GeoTIFF**, **NetCDF**.
+- Supported formats: **CSV**, **PGM image (`P2`/`P5`)**, **GeoTIFF** (requires GDAL, optional), **NetCDF** (requires NetCDF C++, optional).
+- CSV: Comma-separated numeric grid data.
+- PGM: Portable Graymap image format (both ASCII `P2` and binary `P5` modes).
+- GeoTIFF: Geospatial tagged image format (build with `-DWS_ENABLE_GEOTIFF=ON` if GDAL is available).
+- NetCDF: Network Common Data Form (build with `-DWS_ENABLE_NETCDF=ON` if NetCDF C++ is available).
+- Imported grids are automatically resampled to match model dimensions and normalized to parameter domain ranges.
 
 ### Shortcut behavior
 
