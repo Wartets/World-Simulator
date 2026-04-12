@@ -400,6 +400,77 @@ void test_model_parser_binary_first_archive() {
     std::cout << "Binary-first model parser test passed.\n";
 }
 
+void test_model_parser_save_zip_round_trip() {
+    const auto tempRoot = std::filesystem::temp_directory_path() / "world_simulator_model_save_round_trip_test";
+    std::filesystem::remove_all(tempRoot);
+    std::filesystem::create_directories(tempRoot);
+
+    const auto packagePath = tempRoot / "round_trip_fixture.simmodel";
+
+    ModelContext context;
+    context.metadata_json = R"JSON({
+        "name": "round_trip_fixture"
+    })JSON";
+    context.version_json = R"JSON({
+        "version": "1.0.0"
+    })JSON";
+    context.model_json = R"JSON({
+        "name": "round_trip_fixture",
+        "version": "1.0.0",
+        "grid": {
+            "dimensions": [16, 16],
+            "topology": "Cartesian2D"
+        },
+        "numerics": {
+            "dt_ref": 0.05,
+            "time_integrator": "Euler"
+        },
+        "variables": [
+            {
+                "id": "state_x",
+                "role": "state",
+                "support": "cell",
+                "type": "f32",
+                "units": "1",
+                "initial_value": 0.0
+            }
+        ],
+        "stages": []
+    })JSON";
+    context.ir_logic_string = R"IR(
+        @global f32 dt = 1.0
+        @interaction (physics) func tick() {
+            f32 %x = Load("state_x", 0, 0)
+            Store("state_x", 0, %x)
+        }
+    )IR";
+
+    std::string saveMessage;
+    const bool saveOk = ModelParser::saveAsZip(context, packagePath, saveMessage);
+    assert(saveOk);
+    assert(saveMessage.empty());
+
+    ModelContext reloaded;
+    try {
+        reloaded = ModelParser::load(packagePath);
+    } catch (const std::exception& e) {
+        std::cerr << "Model parser save/load round-trip test failed: " << e.what() << "\n";
+        assert(false);
+    }
+
+    assert(!reloaded.model_json.empty());
+    assert(!reloaded.ir_logic_string.empty());
+    assert(!reloaded.model_bin.empty());
+    assert(!reloaded.flatbuffers_bin.empty());
+    assert(reloaded.ir_program != nullptr);
+
+    const auto parsed = nlohmann::json::parse(reloaded.model_json);
+    assert(parsed.value("name", std::string{}) == "round_trip_fixture");
+
+    std::filesystem::remove_all(tempRoot);
+    std::cout << "Model parser save/load round-trip test passed.\n";
+}
+
 void test_model_parameter_controls_loader() {
     const std::filesystem::path sourceModelDir = resolveModelDir("environmental_model_2d.simmodel");
     if (!std::filesystem::exists(sourceModelDir)) {
@@ -1198,6 +1269,7 @@ int main() {
     test_all_shipped_models_parse();
     test_model_variable_catalog_loader();
     test_model_parser_binary_first_archive();
+    test_model_parser_save_zip_round_trip();
     test_model_parameter_controls_loader();
     test_model_execution_spec_loader();
     test_forest_fire_execution_aliases();

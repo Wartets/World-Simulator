@@ -40,6 +40,8 @@ public:
     [[nodiscard]] bool validateTypes(const std::vector<std::string>& variables);
     [[nodiscard]] bool validateUnits(const std::vector<std::string>& units);
     [[nodiscard]] bool validateDependencies(const std::vector<std::string>& variables);
+    [[nodiscard]] bool validateDependencies(const std::vector<std::string>& formulas,
+                                            const std::vector<std::string>& variables);
     [[nodiscard]] bool validateStructure(const std::vector<std::string>& stage_names);
     
     // Get validation results

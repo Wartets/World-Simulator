@@ -56,5 +56,29 @@ int main() {
         assert(message.suggestion.find("Rename") != std::string::npos);
     }
 
+    {
+        ModelValidator validator;
+        const bool ok = validator.validateDependencies(
+            {"state_x = state_x + forcing_u"},
+            {"state_x", "forcing_u"});
+        assert(ok);
+        const auto& messages = validator.getMessages();
+        assert(messages.empty());
+    }
+
+    {
+        ModelValidator validator;
+        const bool ok = validator.validateDependencies(
+            {"state_x = state_x + forcng_u"},
+            {"state_x", "forcing_u"});
+        assert(!ok);
+        const auto& messages = validator.getMessages();
+        assert(!messages.empty());
+        const auto& message = messages.front();
+        assert(message.severity == ValidationMessage::Severity::Warning);
+        assert(message.message.find("undeclared variable") != std::string::npos);
+        assert(!message.suggestion.empty());
+    }
+
     return 0;
 }

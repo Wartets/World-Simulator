@@ -23,7 +23,7 @@ This separation supports reproducible experiments across machines when model ide
 
 - **Multi-Physics Simulation**: Support for diverse simulation types including fluid dynamics, reaction-diffusion systems, ecological models, atmospheric science, urban climate, and more
 - **Interactive Runtime**: Real-time parameter modification, perturbation injection, and live visualization
-- **Model Editor (Experimental)**: Graph-oriented structure editor for inspection and early-stage editing workflows
+- **Model Editor**: Graph-oriented visual+text authoring surface with package round-trip verification and integrated validation
 - **World Generator**: Procedural terrain and state initialization using Perlin/Simplex/Worley/Wavelet noise
 - **Checkpoints & Replay**: Runtime checkpoints, event logging, replay support, and per-variable checkpoint cadence policies (e.g., persist A every 50 steps, B every 200, freeze unspecified variables)
 - **Live Patching**: Modify simulation parameters and inject perturbations during runtime
@@ -229,14 +229,14 @@ Resume behavior depends on available artifacts (checkpoint-backed resume vs prof
 
 ### Model Editor scope
 
-The model editor currently provides strong structural inspection and basic graph editing, but some authoring workflows are still maturing.
+The model editor provides graph editing, package authoring, and validation loops suitable for end-to-end `.simmodel` workflows.
 
-- JSON snapshot export is available from the editor; full packaged `.simmodel` ZIP-style export is not available in this build.
-- Save/export actions now report a package-integrity summary (for example, missing `metadata.json`, `version.json`, `ir.logic`, or `model.fb`) so JSON-only writes are explicit.
+- Save/export writes packaged `.simmodel` archives.
+- Save/export performs package round-trip verification by reloading and validating required payloads (`model.json`, `logic.ir`, compiled model binary) before reporting success.
 - Undo/redo restores serialized graph snapshots captured in the editor history.
-- Validation includes useful checks, while deeper package-level validation remains in progress.
+- Validation includes syntax, units, structure, and dependency checks for undeclared formula identifiers.
 
-Use it as an experimental authoring surface and structure viewer unless your workflow is validated end-to-end for your model package.
+Use this flow for normal authoring when your model package requirements align with the current runtime scope.
 
 ### Shader/render rule authoring
 

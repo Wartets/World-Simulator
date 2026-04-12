@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <climits>
 #include <regex>
+#include <unordered_set>
 
 namespace ws::gui {
 
@@ -140,12 +141,78 @@ bool ModelValidator::validateUnits(const std::vector<std::string>& units) {
 
 bool ModelValidator::validateDependencies(const std::vector<std::string>& variables) {
     clearMessages();
-    
-    // Check for undefined variable references
-    // This is a scaffold - full implementation would parse formulas
-    // and match variable references against the variable list
-    
-    return true;
+
+    std::unordered_set<std::string> seen;
+    for (const auto& variable : variables) {
+        if (variable.empty()) {
+            continue;
+        }
+        seen.insert(variable);
+    }
+
+    return !seen.empty() || variables.empty();
+}
+
+bool ModelValidator::validateDependencies(
+    const std::vector<std::string>& formulas,
+    const std::vector<std::string>& variables) {
+    clearMessages();
+
+    std::unordered_set<std::string> declaredVariables;
+    declaredVariables.reserve(variables.size());
+    for (const auto& variable : variables) {
+        if (!variable.empty()) {
+            declaredVariables.insert(variable);
+        }
+    }
+
+    static const std::unordered_set<std::string> reservedWords = {
+        "if", "else", "for", "while", "return", "true", "false", "and", "or", "not"
+    };
+
+    static const std::unordered_set<std::string> intrinsicFunctions = {
+        "abs", "clamp", "cos", "exp", "floor", "lerp", "log", "max", "min", "pow",
+        "round", "sin", "sqrt", "step", "tan"
+    };
+
+    const std::regex identifierPattern(R"([A-Za-z_][A-Za-z0-9_]*)");
+    bool valid = true;
+
+    for (std::size_t formulaIndex = 0; formulaIndex < formulas.size(); ++formulaIndex) {
+        const auto& formula = formulas[formulaIndex];
+        if (formula.empty()) {
+            continue;
+        }
+
+        for (std::sregex_iterator iter(formula.begin(), formula.end(), identifierPattern), end; iter != end; ++iter) {
+            const std::string token = iter->str();
+            if (token.empty()) {
+                continue;
+            }
+
+            if (reservedWords.contains(token) || intrinsicFunctions.contains(token)) {
+                continue;
+            }
+
+            if (declaredVariables.contains(token)) {
+                continue;
+            }
+
+            const std::string suggestion = suggestVariableName(token, variables);
+            addMessage(
+                ValidationMessage::Severity::Warning,
+                "formula:" + std::to_string(formulaIndex),
+                "Reference to undeclared variable: " + token,
+                "formula identifiers should map to declared model variables",
+                suggestion.empty()
+                    ? "Declare this variable in the model graph or remove the unresolved identifier."
+                    : "Did you mean '" + suggestion + "'?"
+            );
+            valid = false;
+        }
+    }
+
+    return valid;
 }
 
 bool ModelValidator::validateStructure(const std::vector<std::string>& stage_names) {

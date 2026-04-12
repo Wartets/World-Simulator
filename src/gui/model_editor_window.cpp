@@ -166,6 +166,34 @@ void ensurePackagePayloadDefaults(ModelContext& model) {
     }
 }
 
+bool verifyPackageRoundTrip(const std::filesystem::path& packagePath, std::string& message) {
+    try {
+        ModelContext loaded = ModelParser::load(packagePath);
+        if (loaded.model_json.empty()) {
+            message = "round-trip load missing model.json payload";
+            return false;
+        }
+        if (loaded.ir_logic_string.empty()) {
+            message = "round-trip load missing logic.ir payload";
+            return false;
+        }
+        if (loaded.flatbuffers_bin.empty()) {
+            message = "round-trip load missing compiled model payload";
+            return false;
+        }
+        if (!loaded.ir_program) {
+            message = "round-trip load failed to parse logic.ir";
+            return false;
+        }
+    } catch (const std::exception& e) {
+        message = e.what();
+        return false;
+    }
+
+    message.clear();
+    return true;
+}
+
 std::string defaultModelTemplateJson() {
         return R"({
     "domains": {
@@ -1650,6 +1678,7 @@ void ModelEditorWindow::runValidation() {
     std::vector<std::string> variableNames;
     std::vector<std::string> unitTokens;
     std::vector<std::string> stageNames;
+    std::vector<std::string> formulas;
     
     // Check for unconnected nodes
     const auto& nodes = node_editor->getAllNodes();
@@ -1684,6 +1713,7 @@ void ModelEditorWindow::runValidation() {
                     "formula:" + node->id +
                     " | Interaction formula is empty | Constraint: equation/operator nodes should define executable logic | Next: Provide a formula expression or remove the placeholder node.");
             } else {
+                formulas.push_back(node->formula_logic);
                 [[maybe_unused]] const bool validSyntax = validator->validateSyntax(node->formula_logic);
                 appendValidatorMessages();
             }
@@ -1700,6 +1730,11 @@ void ModelEditorWindow::runValidation() {
     if (!variableNames.empty()) {
         [[maybe_unused]] const bool validTypes = validator->validateTypes(variableNames);
         appendValidatorMessages();
+
+        if (!formulas.empty()) {
+            [[maybe_unused]] const bool validDependencies = validator->validateDependencies(formulas, variableNames);
+            appendValidatorMessages();
+        }
     }
     if (!unitTokens.empty()) {
         [[maybe_unused]] const bool validUnits = validator->validateUnits(unitTokens);
@@ -1801,6 +1836,14 @@ void ModelEditorWindow::saveModel() {
         if (!ModelParser::saveAsZip(current_model, target, exportError)) {
             throw std::runtime_error(exportError.empty() ? "package save failed" : exportError);
         }
+
+        std::string roundTripMessage;
+        if (!verifyPackageRoundTrip(target, roundTripMessage)) {
+            throw std::runtime_error(
+                "package round-trip verification failed: " +
+                (roundTripMessage.empty() ? std::string{"unknown verification error"} : roundTripMessage));
+        }
+
         const std::string normalized = target.string();
         std::snprintf(save_model_path_buffer, sizeof(save_model_path_buffer), "%s", normalized.c_str());
 
@@ -1811,6 +1854,7 @@ void ModelEditorWindow::saveModel() {
         appendStatusDetail("save=ok");
         appendStatusDetail("package_path=" + normalized);
         appendStatusDetail("files_written=model.json,metadata.json,version.json,logic.ir,model.bin");
+        appendStatusDetail("round_trip=verified");
     } catch (const std::exception& e) {
         error_message = formatOperationMessageForDisplay(
             translateExceptionMessage(e, "Failed to save model package", "Verify the output path and model payload, then retry."));
@@ -1834,11 +1878,20 @@ void ModelEditorWindow::exportModel() {
         if (!ModelParser::saveAsZip(current_model, exportPath, exportError)) {
             throw std::runtime_error(exportError.empty() ? "package export failed" : exportError);
         }
+
+        std::string roundTripMessage;
+        if (!verifyPackageRoundTrip(exportPath, roundTripMessage)) {
+            throw std::runtime_error(
+                "package round-trip verification failed: " +
+                (roundTripMessage.empty() ? std::string{"unknown verification error"} : roundTripMessage));
+        }
+
         status_message = "Model package exported";
         error_message.clear();
         appendStatusDetail("export=ok");
         appendStatusDetail("export_path=" + exportPath.string());
         appendStatusDetail("files_written=model.json,metadata.json,version.json,logic.ir,model.bin");
+        appendStatusDetail("round_trip=verified");
     } catch (const std::exception& e) {
         error_message = formatOperationMessageForDisplay(
             translateExceptionMessage(e, "Export failed", "Verify package path permissions and model payload completeness, then retry."));
