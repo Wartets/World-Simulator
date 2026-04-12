@@ -170,6 +170,7 @@ private:
             << "  config                               Show launch configuration\n"
             << "  set seed <u64>                       Configure seed (requires restart)\n"
             << "  set grid <width> <height>            Configure grid (requires restart)\n"
+            << "  set boundary <mode>                  Configure boundary mode (clamp|wrap|reflect; aliases accepted)\n"
             << "  set tier <A|B|C>                     Configure model tier (requires restart)\n"
             << "  set temporal <uniform|phased|multirate>  Configure temporal policy\n"
             << "  set integrator <id|alias>            Configure time integrator (live when running)\n"
@@ -982,6 +983,7 @@ private:
                 std::cout << "  - " << preset.name
                           << " (seed=" << preset.config.seed
                           << ", grid=" << preset.config.grid.width << 'x' << preset.config.grid.height
+                          << ", boundary=" << boundaryModeToString(preset.config.boundaryMode)
                           << ", tier=" << toString(preset.config.tier)
                           << ", temporal=" << temporalPolicyToString(preset.config.temporalPolicy)
                           << ", integrator=" << preset.config.timeIntegratorId
@@ -1001,6 +1003,7 @@ private:
         std::cout << "preset_applied name=" << preset->name
                   << " seed=" << launchConfig_.seed
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
+                  << " boundary=" << boundaryModeToString(launchConfig_.boundaryMode)
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
                   << " integrator=" << launchConfig_.timeIntegratorId
@@ -1064,7 +1067,7 @@ private:
         field = toLower(field);
 
         if (field.empty()) {
-            throw std::invalid_argument("usage: set <seed|grid|tier|temporal|integrator|init> ...");
+            throw std::invalid_argument("usage: set <seed|grid|boundary|tier|temporal|integrator|init> ...");
         }
 
         if (field == "seed") {
@@ -1103,6 +1106,19 @@ private:
             }
             launchConfig_.tier = *tier;
             std::cout << "tier updated to " << toString(launchConfig_.tier) << " (use restart)\n";
+            return;
+        }
+
+        if (field == "boundary") {
+            std::string token;
+            input >> token;
+            const auto mode = parseBoundaryMode(token);
+            if (!mode.has_value()) {
+                throw std::invalid_argument("set boundary requires clamp, wrap, or reflect (aliases accepted)");
+            }
+            launchConfig_.boundaryMode = *mode;
+            std::cout << "boundary mode updated to " << boundaryModeToString(launchConfig_.boundaryMode)
+                      << " (use restart)\n";
             return;
         }
 
@@ -1248,6 +1264,7 @@ private:
         std::cout << "model_key         : " << currentModelKey() << "\n";
         std::cout << "reproducibility   : " << toString(snapshot.reproducibilityClass) << "\n";
         std::cout << "grid              : " << launchConfig_.grid.width << 'x' << launchConfig_.grid.height << "\n";
+        std::cout << "boundary          : " << boundaryModeToString(launchConfig_.boundaryMode) << "\n";
         std::cout << "tier / temporal   : " << toString(launchConfig_.tier)
                   << " / " << temporalPolicyToString(launchConfig_.temporalPolicy) << "\n";
         std::cout << "integrator        : " << runtime_->timeIntegratorId() << "\n";
@@ -1276,6 +1293,7 @@ private:
                   << " model_key=" << currentModelKey()
                   << " seed=" << launchConfig_.seed
                   << " grid=" << launchConfig_.grid.width << 'x' << launchConfig_.grid.height
+                  << " boundary=" << boundaryModeToString(launchConfig_.boundaryMode)
                   << " tier=" << toString(launchConfig_.tier)
                   << " temporal=" << temporalPolicyToString(launchConfig_.temporalPolicy)
                   << " integrator=" << launchConfig_.timeIntegratorId

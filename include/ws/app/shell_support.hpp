@@ -21,6 +21,7 @@ namespace ws::app {
 struct LaunchConfig {
     std::uint64_t seed = 42;
     GridSpec grid{128, 128};
+    BoundaryMode boundaryMode = BoundaryMode::Clamp;
     ModelTier tier = ModelTier::Minimal;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
     std::string timeIntegratorId = "explicit_euler";
@@ -70,6 +71,10 @@ struct FieldSummary {
 [[nodiscard]] std::string temporalPolicyToString(TemporalPolicy policy);
 // Parses a string into TemporalPolicy.
 [[nodiscard]] std::optional<TemporalPolicy> parseTemporalPolicy(const std::string& token);
+// Converts BoundaryMode to string.
+[[nodiscard]] std::string boundaryModeToString(BoundaryMode mode);
+// Parses a string into BoundaryMode.
+[[nodiscard]] std::optional<BoundaryMode> parseBoundaryMode(const std::string& token);
 // Converts InitialConditionType to string.
 [[nodiscard]] std::string initialConditionTypeToString(InitialConditionType type);
 // Parses a string into InitialConditionType.

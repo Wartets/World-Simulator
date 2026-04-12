@@ -88,6 +88,26 @@ void verifyBoundaryValidityAndOverlayContracts() {
     assert(metadata.front().alignmentBytes == 64);
 }
 
+void verifyReflectBoundarySamplingContracts() {
+    ws::StateStore stateStore(
+        ws::GridSpec{5, 1},
+        ws::BoundaryMode::Reflect,
+        ws::GridTopologyBackend::Cartesian2D,
+        ws::MemoryLayoutPolicy{64, 5, 1});
+
+    stateStore.allocateScalarField(ws::VariableSpec{1, "probe"});
+    ws::StateStore::WriteSession writer(stateStore, "reflect_contract_test", {"probe"});
+
+    for (std::uint32_t x = 0; x < 5; ++x) {
+        writer.setScalar("probe", ws::Cell{x, 0}, static_cast<float>(x));
+    }
+
+    const auto left = stateStore.trySampleScalar("probe", ws::CellSigned{-1, 0});
+    const auto right = stateStore.trySampleScalar("probe", ws::CellSigned{5, 0});
+    assert(left.has_value() && *left == 1.0f);
+    assert(right.has_value() && *right == 3.0f);
+}
+
 void verifyDynamicLayoutScaffolding() {
     ws::StateStore stateStore(
         ws::GridSpec{3, 2},
@@ -119,6 +139,7 @@ void verifyDynamicLayoutScaffolding() {
 int main() {
     verifySnapshotReplayDeterminism();
     verifyBoundaryValidityAndOverlayContracts();
+    verifyReflectBoundarySamplingContracts();
     verifyDynamicLayoutScaffolding();
     return 0;
 }

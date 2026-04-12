@@ -277,6 +277,8 @@ Define your simulation by specifying:
 
 Current runtime scope is **2D Cartesian**. Model compilation accepts `grid.dimensions` as either two explicit extents (for example `[256, 256]`) or legacy scalar `2`; higher-dimensional declarations are rejected with a validation error.
 
+Global runtime boundary modes currently support `clamp`, `wrap`, and `reflect` (including common aliases such as `periodic`, `fixed`, `dirichlet`, `neumann`, and `reflecting`).
+
 Example variable definition:
 
 ```json

@@ -40,11 +40,28 @@ void testListAvailableModels() {
     std::filesystem::remove_all(tempRoot);
 }
 
+void testBoundaryModeParsingAndRuntimeConfig() {
+    const auto wrap = ws::app::parseBoundaryMode("periodic");
+    assert(wrap.has_value() && *wrap == ws::BoundaryMode::Wrap);
+
+    const auto reflect = ws::app::parseBoundaryMode("reflecting");
+    assert(reflect.has_value() && *reflect == ws::BoundaryMode::Reflect);
+
+    const auto clamp = ws::app::parseBoundaryMode("dirichlet");
+    assert(clamp.has_value() && *clamp == ws::BoundaryMode::Clamp);
+
+    ws::app::LaunchConfig config;
+    config.boundaryMode = ws::BoundaryMode::Reflect;
+    const auto runtimeConfig = ws::app::makeRuntimeConfig(config);
+    assert(runtimeConfig.boundaryMode == ws::BoundaryMode::Reflect);
+}
+
 } // namespace
 
 int main() {
     testNormalizeModelKey();
     testListAvailableModels();
+    testBoundaryModeParsingAndRuntimeConfig();
     std::cout << "shell_support tests passed.\n";
     return 0;
 }

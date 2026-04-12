@@ -30,7 +30,8 @@ enum class ModelTier : std::uint8_t {
 // Wrap: Wraps indices around the grid (toroidal topology)
 enum class BoundaryMode : std::uint8_t {
     Clamp = 0,
-    Wrap = 1
+    Wrap = 1,
+    Reflect = 2
 };
 
 // =============================================================================
@@ -236,6 +237,16 @@ using VariableRegistry = std::vector<VariableSpec>;
         case ModelTier::Advanced: return "advanced";
     }
     return "Unknown";
+}
+
+// Converts BoundaryMode enum to human-readable string.
+[[nodiscard]] inline std::string toString(const BoundaryMode mode) {
+    switch (mode) {
+        case BoundaryMode::Clamp: return "clamp";
+        case BoundaryMode::Wrap: return "wrap";
+        case BoundaryMode::Reflect: return "reflect";
+    }
+    return "unknown";
 }
 
 // Converts ReproducibilityClass enum to human-readable string.

@@ -92,6 +92,29 @@ std::optional<TemporalPolicy> parseTemporalPolicy(const std::string& token) {
     return std::nullopt;
 }
 
+std::string boundaryModeToString(const BoundaryMode mode) {
+    switch (mode) {
+        case BoundaryMode::Clamp: return "clamp";
+        case BoundaryMode::Wrap: return "wrap";
+        case BoundaryMode::Reflect: return "reflect";
+    }
+    return "unknown";
+}
+
+std::optional<BoundaryMode> parseBoundaryMode(const std::string& token) {
+    const std::string normalized = toLower(token);
+    if (normalized == "clamp" || normalized == "fixed" || normalized == "dirichlet" || normalized == "neumann" || normalized == "absorbing") {
+        return BoundaryMode::Clamp;
+    }
+    if (normalized == "wrap" || normalized == "wrapped" || normalized == "periodic" || normalized == "toroidal") {
+        return BoundaryMode::Wrap;
+    }
+    if (normalized == "reflect" || normalized == "reflecting" || normalized == "mirror" || normalized == "mirrored") {
+        return BoundaryMode::Reflect;
+    }
+    return std::nullopt;
+}
+
 std::string initialConditionTypeToString(const InitialConditionType type) {
     switch (type) {
         case InitialConditionType::Terrain: return "terrain";
@@ -307,7 +330,7 @@ RuntimeConfig makeRuntimeConfig(const LaunchConfig& launchConfig) {
     RuntimeConfig config;
     config.seed = launchConfig.seed;
     config.grid = launchConfig.grid;
-    config.boundaryMode = BoundaryMode::Clamp;
+    config.boundaryMode = launchConfig.boundaryMode;
     config.unitRegime = UnitRegime::Normalized;
     config.temporalPolicy = launchConfig.temporalPolicy;
     if (const auto resolvedIntegratorId = resolveTimeIntegratorId(launchConfig.timeIntegratorId); resolvedIntegratorId.has_value()) {
@@ -322,11 +345,11 @@ RuntimeConfig makeRuntimeConfig(const LaunchConfig& launchConfig) {
 
 const std::vector<LaunchPreset>& allPresets() {
     static const std::vector<LaunchPreset> presets = {
-        {"baseline", LaunchConfig{42, GridSpec{128, 128}, ModelTier::Minimal, TemporalPolicy::UniformA}, "Balanced default deterministic setup (square high-context grid)"},
-        {"phased_b", LaunchConfig{777, GridSpec{160, 160}, ModelTier::Standard, TemporalPolicy::PhasedB}, "Intermediate coupling with phased policy"},
-        {"dense_c", LaunchConfig{2026, GridSpec{192, 192}, ModelTier::Advanced, TemporalPolicy::MultiRateC}, "Advanced coupling stress-oriented profile"},
+        {"baseline", LaunchConfig{42, GridSpec{128, 128}, BoundaryMode::Clamp, ModelTier::Minimal, TemporalPolicy::UniformA}, "Balanced default deterministic setup (square high-context grid)"},
+        {"phased_b", LaunchConfig{777, GridSpec{160, 160}, BoundaryMode::Clamp, ModelTier::Standard, TemporalPolicy::PhasedB}, "Intermediate coupling with phased policy"},
+        {"dense_c", LaunchConfig{2026, GridSpec{192, 192}, BoundaryMode::Clamp, ModelTier::Advanced, TemporalPolicy::MultiRateC}, "Advanced coupling stress-oriented profile"},
         {"conway", [] {
-            LaunchConfig cfg{31415, GridSpec{128, 128}, ModelTier::Minimal, TemporalPolicy::UniformA};
+            LaunchConfig cfg{31415, GridSpec{128, 128}, BoundaryMode::Clamp, ModelTier::Minimal, TemporalPolicy::UniformA};
             cfg.initialConditions.type = InitialConditionType::Conway;
             cfg.initialConditions.conway.targetVariable = "vegetation_v";
             cfg.initialConditions.conway.aliveProbability = 0.35f;
@@ -336,7 +359,7 @@ const std::vector<LaunchPreset>& allPresets() {
             return cfg;
         }(), "Conway-style random binary seeding on vegetation_v with smoothing"},
         {"gray_scott", [] {
-            LaunchConfig cfg{27182, GridSpec{192, 192}, ModelTier::Minimal, TemporalPolicy::UniformA};
+            LaunchConfig cfg{27182, GridSpec{192, 192}, BoundaryMode::Clamp, ModelTier::Minimal, TemporalPolicy::UniformA};
             cfg.initialConditions.type = InitialConditionType::GrayScott;
             cfg.initialConditions.grayScott.targetVariableA = "resource_stock_r";
             cfg.initialConditions.grayScott.targetVariableB = "vegetation_v";
@@ -350,7 +373,7 @@ const std::vector<LaunchPreset>& allPresets() {
             return cfg;
         }(), "Gray-Scott style dual-field spot initialization with jitter"},
         {"waves", [] {
-            LaunchConfig cfg{16180, GridSpec{192, 192}, ModelTier::Minimal, TemporalPolicy::UniformA};
+            LaunchConfig cfg{16180, GridSpec{192, 192}, BoundaryMode::Clamp, ModelTier::Minimal, TemporalPolicy::UniformA};
             cfg.initialConditions.type = InitialConditionType::Waves;
             cfg.initialConditions.waves.targetVariable = "surface_water_w";
             cfg.initialConditions.waves.baseline = 0.0f;
@@ -362,7 +385,7 @@ const std::vector<LaunchPreset>& allPresets() {
             return cfg;
         }(), "Multi-drop wave initialization centered on surface_water_w"},
         {"blank", [] {
-            LaunchConfig cfg{1234, GridSpec{128, 128}, ModelTier::Minimal, TemporalPolicy::UniformA};
+            LaunchConfig cfg{1234, GridSpec{128, 128}, BoundaryMode::Clamp, ModelTier::Minimal, TemporalPolicy::UniformA};
             cfg.initialConditions.type = InitialConditionType::Blank;
             return cfg;
         }(), "Zero-initialized canonical fields"}

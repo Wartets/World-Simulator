@@ -104,6 +104,7 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "seed=" << config.seed << '\n';
     output << "width=" << config.grid.width << '\n';
     output << "height=" << config.grid.height << '\n';
+    output << "boundary=" << boundaryModeToString(config.boundaryMode) << '\n';
     output << "tier=" << toString(config.tier) << '\n';
     output << "temporal=" << temporalPolicyToString(config.temporalPolicy) << '\n';
     output << "integrator=" << config.timeIntegratorId << '\n';
@@ -189,15 +190,17 @@ LaunchConfig ProfileStore::load(const std::string& profileName, const std::strin
     const auto seed = parseU64(seedIt->second);
     const auto width = parseU32(widthIt->second);
     const auto height = parseU32(heightIt->second);
+    const auto boundary = (kv.contains("boundary") ? parseBoundaryMode(kv.at("boundary")) : std::optional<BoundaryMode>{BoundaryMode::Clamp});
     const auto tier = parseTier(tierIt->second);
     const auto temporal = parseTemporalPolicy(temporalIt->second);
 
-    if (!seed.has_value() || !width.has_value() || !height.has_value() || !tier.has_value() || !temporal.has_value()) {
+    if (!seed.has_value() || !width.has_value() || !height.has_value() || !boundary.has_value() || !tier.has_value() || !temporal.has_value()) {
         throw std::runtime_error("profile file has invalid value types");
     }
 
     config.seed = *seed;
     config.grid = GridSpec{*width, *height};
+    config.boundaryMode = *boundary;
     config.tier = *tier;
     config.temporalPolicy = *temporal;
 

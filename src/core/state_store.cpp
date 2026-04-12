@@ -305,18 +305,34 @@ Cell StateStore::resolveBoundary(const CellSigned cell) const {
     const auto height = static_cast<std::int64_t>(grid_.height);
 
     auto resolveAxis = [](const std::int64_t value, const std::int64_t extent, const BoundaryMode mode) -> std::uint32_t {
-        if (mode == BoundaryMode::Clamp) {
-            if (value < 0) {
-                return 0;
+        switch (mode) {
+            case BoundaryMode::Clamp: {
+                if (value < 0) {
+                    return 0;
+                }
+                if (value >= extent) {
+                    return static_cast<std::uint32_t>(extent - 1);
+                }
+                return static_cast<std::uint32_t>(value);
             }
-            if (value >= extent) {
-                return static_cast<std::uint32_t>(extent - 1);
+            case BoundaryMode::Wrap: {
+                const std::int64_t wrapped = ((value % extent) + extent) % extent;
+                return static_cast<std::uint32_t>(wrapped);
             }
-            return static_cast<std::uint32_t>(value);
+            case BoundaryMode::Reflect: {
+                if (extent <= 1) {
+                    return 0;
+                }
+                const std::int64_t period = (extent - 1) * 2;
+                const std::int64_t folded = ((value % period) + period) % period;
+                if (folded < extent) {
+                    return static_cast<std::uint32_t>(folded);
+                }
+                return static_cast<std::uint32_t>(period - folded);
+            }
         }
 
-        const std::int64_t wrapped = ((value % extent) + extent) % extent;
-        return static_cast<std::uint32_t>(wrapped);
+        throw std::invalid_argument("Unsupported BoundaryMode");
     };
 
     return Cell{

@@ -1198,7 +1198,10 @@ bool loadModelExecutionSpec(
                     if (token == "periodic" || token == "wrap" || token == "wrapped") {
                         return std::optional<BoundaryMode>(BoundaryMode::Wrap);
                     }
-                    if (token == "clamp" || token == "fixed" || token == "dirichlet") {
+                    if (token == "reflect" || token == "reflecting" || token == "mirror" || token == "mirrored") {
+                        return std::optional<BoundaryMode>(BoundaryMode::Reflect);
+                    }
+                    if (token == "clamp" || token == "fixed" || token == "dirichlet" || token == "neumann" || token == "absorbing") {
                         return std::optional<BoundaryMode>(BoundaryMode::Clamp);
                     }
                     return std::optional<BoundaryMode>{};
@@ -1209,6 +1212,7 @@ bool loadModelExecutionSpec(
                 } else if (boundary.is_object()) {
                     bool sawWrap = false;
                     bool sawClamp = false;
+                    bool sawReflect = false;
                     for (auto it = boundary.begin(); it != boundary.end(); ++it) {
                         if (!it.value().is_string()) {
                             continue;
@@ -1219,14 +1223,19 @@ bool loadModelExecutionSpec(
                         }
                         if (*parsedMode == BoundaryMode::Wrap) {
                             sawWrap = true;
+                        } else if (*parsedMode == BoundaryMode::Reflect) {
+                            sawReflect = true;
                         } else {
                             sawClamp = true;
                         }
                     }
-                    if (sawWrap && !sawClamp) {
+                    const int modeCount = static_cast<int>(sawWrap) + static_cast<int>(sawClamp) + static_cast<int>(sawReflect);
+                    if (modeCount == 1 && sawWrap) {
                         executionSpec.preferredBoundaryMode = BoundaryMode::Wrap;
-                    } else if (sawClamp && !sawWrap) {
+                    } else if (modeCount == 1 && sawClamp) {
                         executionSpec.preferredBoundaryMode = BoundaryMode::Clamp;
+                    } else if (modeCount == 1 && sawReflect) {
+                        executionSpec.preferredBoundaryMode = BoundaryMode::Reflect;
                     }
                 }
             }
@@ -1386,7 +1395,10 @@ bool loadModelExecutionSpec(
                         if (token == "periodic" || token == "wrap" || token == "wrapped") {
                             return std::optional<BoundaryMode>(BoundaryMode::Wrap);
                         }
-                        if (token == "clamp" || token == "fixed" || token == "dirichlet") {
+                        if (token == "reflect" || token == "reflecting" || token == "mirror" || token == "mirrored") {
+                            return std::optional<BoundaryMode>(BoundaryMode::Reflect);
+                        }
+                        if (token == "clamp" || token == "fixed" || token == "dirichlet" || token == "neumann" || token == "absorbing") {
                             return std::optional<BoundaryMode>(BoundaryMode::Clamp);
                         }
                         return std::optional<BoundaryMode>{};
@@ -1397,6 +1409,7 @@ bool loadModelExecutionSpec(
                     } else if (boundary.is_object()) {
                         bool sawWrap = false;
                         bool sawClamp = false;
+                        bool sawReflect = false;
                         for (auto it = boundary.begin(); it != boundary.end(); ++it) {
                             if (!it.value().is_string()) {
                                 continue;
@@ -1407,14 +1420,19 @@ bool loadModelExecutionSpec(
                             }
                             if (*parsedMode == BoundaryMode::Wrap) {
                                 sawWrap = true;
+                            } else if (*parsedMode == BoundaryMode::Reflect) {
+                                sawReflect = true;
                             } else {
                                 sawClamp = true;
                             }
                         }
-                        if (sawWrap && !sawClamp) {
+                        const int modeCount = static_cast<int>(sawWrap) + static_cast<int>(sawClamp) + static_cast<int>(sawReflect);
+                        if (modeCount == 1 && sawWrap) {
                             executionSpec.preferredBoundaryMode = BoundaryMode::Wrap;
-                        } else if (sawClamp && !sawWrap) {
+                        } else if (modeCount == 1 && sawClamp) {
                             executionSpec.preferredBoundaryMode = BoundaryMode::Clamp;
+                        } else if (modeCount == 1 && sawReflect) {
+                            executionSpec.preferredBoundaryMode = BoundaryMode::Reflect;
                         }
                     }
                 }

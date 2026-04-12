@@ -14,6 +14,7 @@ void verifyInitialConditionRoundTrip() {
     ws::app::LaunchConfig config;
     config.seed = 123456789ULL;
     config.grid = ws::GridSpec{96, 64};
+    config.boundaryMode = ws::BoundaryMode::Reflect;
     config.tier = ws::ModelTier::Advanced;
     config.temporalPolicy = ws::TemporalPolicy::MultiRateC;
     config.timeIntegratorId = "RK4";
@@ -52,6 +53,7 @@ void verifyInitialConditionRoundTrip() {
     assert(loaded.seed == config.seed);
     assert(loaded.grid.width == config.grid.width);
     assert(loaded.grid.height == config.grid.height);
+    assert(loaded.boundaryMode == ws::BoundaryMode::Reflect);
     assert(loaded.tier == config.tier);
     assert(loaded.temporalPolicy == config.temporalPolicy);
     assert(loaded.timeIntegratorId == "rk4");
