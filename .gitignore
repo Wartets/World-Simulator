@@ -25,6 +25,7 @@
 *.app
 
 /docs
+docs
 roadmap.md
 template.md
 
