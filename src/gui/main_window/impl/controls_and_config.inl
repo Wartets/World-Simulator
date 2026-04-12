@@ -53,8 +53,9 @@ void navigateAppStateHistory(const int direction) {
 // Handles global keyboard shortcuts (F1 for help, etc.).
 // Processes key presses that work regardless of current panel focus.
 [[nodiscard]] const std::array<std::pair<const char*, const char*>, 10>& shortcutReferenceRows() const {
-    static constexpr std::array<std::pair<const char*, const char*>, 10> kRows = {{
+    static constexpr std::array<std::pair<const char*, const char*>, 11> kRows = {{
         {"F1", "Open keyboard shortcut reference"},
+        {"Shift+F1", "Open guided onboarding tutorial"},
         {"Alt+Left", "Navigate to previous application state"},
         {"Alt+Right", "Navigate to next application state"},
         {"Space", "Toggle play / pause"},
@@ -83,7 +84,10 @@ void drawShortcutReferenceTable(const char* tableId) const {
 
 void handleGlobalKeyboardShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
-    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false) && io.KeyShift) {
+        showOnboardingTutorialModal_ = true;
+        onboardingTutorialSeen_ = true;
+    } else if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
         showShortcutHelpModal_ = true;
     }
 
@@ -121,12 +125,126 @@ void drawShortcutHelpModal() {
     drawShortcutReferenceTable("shortcuthelpcols");
     ImGui::Spacing();
 
+    if (SecondaryButton("Start guided onboarding", ImVec2(220.0f, 0.0f))) {
+        showOnboardingTutorialModal_ = true;
+        onboardingTutorialSeen_ = true;
+    }
+    ImGui::SameLine();
+
     if (PrimaryButton("Close", ImVec2(120.0f, 0.0f))) {
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
 
     if (!popupOpen) {
+        ImGui::CloseCurrentPopup();
+    }
+}
+
+void navigateToOnboardingTutorialStep() {
+    const auto& step = onboardingTutorial_.current();
+    switch (step.recommendedState) {
+        case AppState::ModelSelector:
+            appState_ = AppState::ModelSelector;
+            modelEditor_.close();
+            modelSelector_.open();
+            return;
+        case AppState::ModelEditor:
+            appState_ = AppState::ModelSelector;
+            modelSelector_.open();
+            return;
+        case AppState::SessionManager:
+            appState_ = (sessionUi_.selectedModelName[0] != '\0') ? AppState::SessionManager : AppState::ModelSelector;
+            sessionUi_.needsRefresh = true;
+            return;
+        case AppState::NewWorldWizard:
+            if (sessionUi_.selectedModelName[0] == '\0') {
+                appState_ = AppState::ModelSelector;
+                modelSelector_.open();
+                return;
+            }
+
+            syncPanelFromConfig();
+            panel_.useManualSeed = false;
+            panel_.seed = generateRandomSeed();
+            sessionUi_.wizardStepIndex = 0;
+            appState_ = AppState::NewWorldWizard;
+            return;
+        case AppState::Simulation:
+            appState_ = runtime_.isRunning() ? AppState::Simulation : AppState::SessionManager;
+            return;
+    }
+}
+
+void drawOnboardingTutorialModal() {
+    if (showOnboardingTutorialModal_) {
+        ImGui::OpenPopup("Guided Onboarding Tutorial");
+        showOnboardingTutorialModal_ = false;
+        onboardingTutorialSeen_ = true;
+    }
+
+    bool popupOpen = true;
+    if (!ImGui::BeginPopupModal("Guided Onboarding Tutorial", &popupOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    const auto& step = onboardingTutorial_.current();
+    const int stepNumber = static_cast<int>(onboardingTutorial_.index()) + 1;
+    const int stepTotal = static_cast<int>(onboardingTutorial_.stepCount());
+
+    ImGui::TextDisabled("Step %d / %d", stepNumber, stepTotal);
+    ImGui::ProgressBar(
+        static_cast<float>(stepNumber) / static_cast<float>(std::max(1, stepTotal)),
+        ImVec2(320.0f, 0.0f));
+    ImGui::Separator();
+
+    ImGui::Text("%s", step.title);
+    ImGui::TextWrapped("Objective: %s", step.objective);
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s", step.guidance);
+    ImGui::Spacing();
+    ImGui::TextDisabled("Recommended destination: %s", appStateLabel(static_cast<int>(step.recommendedState)));
+    if (SecondaryButton("Take me there", ImVec2(140.0f, 0.0f))) {
+        navigateToOnboardingTutorialStep();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    if (SecondaryButton("Back", ImVec2(96.0f, 0.0f))) {
+        onboardingTutorial_.back();
+    }
+    ImGui::SameLine();
+
+    if (!onboardingTutorial_.atLast()) {
+        if (PrimaryButton("Next", ImVec2(96.0f, 0.0f))) {
+            onboardingTutorial_.advance();
+        }
+        ImGui::SameLine();
+    }
+
+    if (onboardingTutorial_.atLast()) {
+        if (PrimaryButton("Finish", ImVec2(120.0f, 0.0f))) {
+            onboardingTutorial_.advance();
+            onboardingTutorial_.reset();
+            ImGui::CloseCurrentPopup();
+        }
+    } else {
+        if (SecondaryButton("Restart", ImVec2(120.0f, 0.0f))) {
+            onboardingTutorial_.reset();
+        }
+    }
+
+    ImGui::SameLine();
+    if (SecondaryButton("Close", ImVec2(96.0f, 0.0f))) {
+        onboardingTutorial_.reset();
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+
+    if (!popupOpen) {
+        onboardingTutorial_.reset();
         ImGui::CloseCurrentPopup();
     }
 }

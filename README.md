@@ -238,6 +238,15 @@ The model editor provides graph editing, package authoring, and validation loops
 
 Use this flow for normal authoring when your model package requirements align with the current runtime scope.
 
+### Interactive onboarding tutorial
+
+An in-app guided onboarding tutorial is available from:
+
+- `Shift+F1` (direct tutorial launch)
+- `F1` shortcut help modal via **Start guided onboarding**
+
+The tutorial provides step-by-step guidance across model selection, world setup, wizard preflight, runtime controls, and persistence workflow. Each step includes a **Take me there** action to jump to the recommended UI state.
+
 ### Shader/render rule authoring
 
 An experimental GLSL shader editor is available for advanced rendering customization:

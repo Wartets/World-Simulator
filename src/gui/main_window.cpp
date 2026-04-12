@@ -23,6 +23,7 @@
 #include "ws/gui/model_editor_window.hpp"
 #include "ws/gui/model_selector.hpp"
 #include "ws/gui/data_operation_contract.hpp"
+#include "ws/gui/onboarding_tutorial.hpp"
 #include "ws/core/model_parser.hpp"
 #include "ws/gui/runtime_service.hpp"
 #include "ws/gui/session_manager/session_manager.hpp"
@@ -848,6 +849,9 @@ public:
         };
 
         applyStartupLaunchRequest(selectModelForSession, openModelInEditor);
+        if (!onboardingTutorialSeen_) {
+            showOnboardingTutorialModal_ = true;
+        }
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -888,6 +892,7 @@ public:
 
             recordAppStateHistory();
             drawShortcutHelpModal();
+            drawOnboardingTutorialModal();
             drawToasts();
 
             ImGui::Render();
@@ -1191,10 +1196,12 @@ private:
     bool& appStateHistoryTraversalInProgress_ = appStateData_.workflow.historyTraversalInProgress;
     bool& taskRailAnalyzeSelected_ = appStateData_.workflow.taskRailAnalyzeSelected;
     bool& showShortcutHelpModal_ = appStateData_.workflow.showShortcutHelpModal;
+    bool& showOnboardingTutorialModal_ = appStateData_.workflow.showOnboardingTutorialModal;
     bool& showStopResetConfirm_ = appStateData_.workflow.showStopResetConfirm;
     bool& showCheckpointDeleteConfirm_ = appStateData_.workflow.showCheckpointDeleteConfirm;
     bool& showWizardResetConfirm_ = appStateData_.workflow.showWizardResetConfirm;
     bool& workflowRailAdvancedMode_ = appStateData_.workflow.workflowRailAdvancedMode;
+    bool& onboardingTutorialSeen_ = appStateData_.workflow.onboardingTutorialSeen;
     std::unordered_map<std::string, std::vector<std::string>> fieldDisplayTags_{};
 
 // inlined implementation files
@@ -1213,6 +1220,7 @@ private:
     std::vector<std::string> logs_;
     std::vector<ToastItem> toasts_;
     std::vector<ToastItem> toastHistory_;
+    OnboardingTutorial onboardingTutorial_{};
 
     struct DeferredWizardInitialization {
         bool active = false;

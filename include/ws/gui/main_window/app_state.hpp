@@ -22,10 +22,12 @@ struct WorkflowState {
 
     bool taskRailAnalyzeSelected = false;
     bool showShortcutHelpModal = false;
+    bool showOnboardingTutorialModal = false;
     bool showStopResetConfirm = false;
     bool showCheckpointDeleteConfirm = false;
     bool showWizardResetConfirm = false;
     bool workflowRailAdvancedMode = false;
+    bool onboardingTutorialSeen = false;
 };
 
 struct MainWindowAppState {
