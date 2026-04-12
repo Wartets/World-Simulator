@@ -24,7 +24,7 @@ This separation supports reproducible experiments across machines when model ide
 - **Multi-Physics Simulation**: Support for diverse simulation types including fluid dynamics, reaction-diffusion systems, ecological models, atmospheric science, urban climate, and more
 - **Interactive Runtime**: Real-time parameter modification, perturbation injection, and live visualization
 - **Model Editor (Experimental)**: Graph-oriented structure editor for inspection and early-stage editing workflows
-- **World Generator**: Procedural terrain and state initialization using Perlin/Simplex noise
+- **World Generator**: Procedural terrain and state initialization using Perlin/Simplex/Worley/Wavelet noise
 - **Checkpoints & Replay**: Runtime checkpoints, event logging, and replay support
 - **Live Patching**: Modify simulation parameters and inject perturbations during runtime
 

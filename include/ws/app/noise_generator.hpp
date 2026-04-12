@@ -16,6 +16,7 @@ enum class NoiseType : std::uint8_t {
     Perlin = 0,    // Perlin noise algorithm.
     Simplex = 1,   // Simplex noise algorithm.
     Worley = 2,    // Worley (cellular) noise algorithm.
+    Wavelet = 3,   // Wavelet noise algorithm.
 };
 
 // =============================================================================

@@ -167,6 +167,55 @@ float sampleWorley(const float x, const float y, const std::uint64_t seed) {
     return (1.0f - normalized) * 2.0f - 1.0f;
 }
 
+// Samples wavelet noise at (x, y).
+// Uses randomized basis functions at multiple scales for smooth variation.
+// Adapted from Perlin's wavelet noise approach.
+float sampleWavelet(const float x, const float y, const std::uint64_t seed) {
+    constexpr int kTileSize = 256;
+    
+    float result = 0.0f;
+    
+    // Sample from multiple scales (coarse to fine).
+    // Each scale contributes scaled basis functions.
+    for (int scale = 0; scale < 3; ++scale) {
+        const float scaleFactor = std::pow(2.0f, static_cast<float>(scale));
+        const float sx = x * scaleFactor;
+        const float sy = y * scaleFactor;
+        
+        const auto ix0 = static_cast<std::int64_t>(std::floor(sx));
+        const auto iy0 = static_cast<std::int64_t>(std::floor(sy));
+        const auto ix1 = ix0 + 1;
+        const auto iy1 = iy0 + 1;
+        
+        const float fx = sx - static_cast<float>(ix0);
+        const float fy = sy - static_cast<float>(iy0);
+        
+        // Use fade function for smooth interpolation.
+        const float u = fade(fx);
+        const float v = fade(fy);
+        
+        // Sample four corners with per-scale seed variation.
+        const std::uint64_t scaleSeed = mix64(seed ^ static_cast<std::uint64_t>(scale) * 0x85ebca6b);
+        
+        const float n00 = (toUnitFloat(hash2(ix0, iy0, scaleSeed)) * 2.0f) - 1.0f;
+        const float n10 = (toUnitFloat(hash2(ix1, iy0, scaleSeed)) * 2.0f) - 1.0f;
+        const float n01 = (toUnitFloat(hash2(ix0, iy1, scaleSeed)) * 2.0f) - 1.0f;
+        const float n11 = (toUnitFloat(hash2(ix1, iy1, scaleSeed)) * 2.0f) - 1.0f;
+        
+        // Bilinear interpolation.
+        const float nx0 = lerp(n00, n10, u);
+        const float nx1 = lerp(n01, n11, u);
+        const float nxy = lerp(nx0, nx1, v);
+        
+        // Accumulate with decreasing amplitude per scale.
+        const float amplitude = 1.0f / (1.0f + static_cast<float>(scale));
+        result += nxy * amplitude;
+    }
+    
+    // Normalize to [-1, 1] range.
+    return std::clamp(result / 1.833f, -1.0f, 1.0f);
+}
+
 // Dispatches to the appropriate noise sampling function based on type.
 float sampleOne(const NoiseType type, const float x, const float y, const std::uint64_t seed) {
     switch (type) {
@@ -174,6 +223,8 @@ float sampleOne(const NoiseType type, const float x, const float y, const std::u
             return sampleSimplexApprox(x, y, seed);
         case NoiseType::Worley:
             return sampleWorley(x, y, seed);
+        case NoiseType::Wavelet:
+            return sampleWavelet(x, y, seed);
         case NoiseType::Perlin:
         default:
             return samplePerlin(x, y, seed);

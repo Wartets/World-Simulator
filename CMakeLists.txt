@@ -427,6 +427,7 @@ ws_add_test(profile_store_test tests/profile_store.cpp)
 ws_add_test(model_history_test tests/model_history.cpp)
 ws_add_test(performance_optimization_test tests/performance_optimization.cpp)
 ws_add_test(advanced_features_test tests/advanced_features.cpp)
+ws_add_test(noise_generator_test tests/noise_generator_test.cpp)
 target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )
@@ -442,6 +443,9 @@ target_sources(profile_store_test PRIVATE
 )
 target_sources(model_history_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/model_history.cpp
+)
+target_sources(noise_generator_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/noise_generator.cpp
 )
 
 add_executable(viewport_manager_test
