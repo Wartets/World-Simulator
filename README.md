@@ -273,6 +273,12 @@ The shader editor is provided as an experimental pathway; production use should 
 - `F1` is reserved for global help/shortcut reference.
 - Prefer avoiding `F1` for custom viewport-local bindings to prevent context conflicts.
 
+### Unit expression policy
+
+- Runtime and model tooling continue to accept practical unit expressions.
+- Validation now flags derived-unit aliases (for example `Pa`, `N`, `J`) and suggests SI base-unit expansions.
+- Preferred authoring format in model files is explicit SI base units (for example `kg/(m*s^2)` instead of `Pa`).
+
 ---
 
 ## Simulation Models

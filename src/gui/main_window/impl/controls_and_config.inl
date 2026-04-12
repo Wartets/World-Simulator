@@ -52,7 +52,7 @@ void navigateAppStateHistory(const int direction) {
 
 // Handles global keyboard shortcuts (F1 for help, etc.).
 // Processes key presses that work regardless of current panel focus.
-[[nodiscard]] const std::array<std::pair<const char*, const char*>, 10>& shortcutReferenceRows() const {
+[[nodiscard]] const std::array<std::pair<const char*, const char*>, 11>& shortcutReferenceRows() const {
     static constexpr std::array<std::pair<const char*, const char*>, 11> kRows = {{
         {"F1", "Open keyboard shortcut reference"},
         {"Shift+F1", "Open guided onboarding tutorial"},

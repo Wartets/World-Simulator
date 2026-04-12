@@ -100,6 +100,7 @@ add_library(ws_core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/initialization_strategy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/probe.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/unit_system.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/unit_lint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/time_integrator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/spatial_scheme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/vectorized_ops.cpp
@@ -462,6 +463,7 @@ ws_add_test(data_importer_test tests/data_importer_test.cpp)
 ws_add_test(shader_editor_test tests/shader_editor_test.cpp)
 ws_add_test(checkpoint_variable_cadence_test tests/checkpoint_variable_cadence.cpp)
 ws_add_test(onboarding_tutorial_test tests/onboarding_tutorial_test.cpp)
+ws_add_test(unit_lint_test tests/unit_lint_test.cpp)
 target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )

@@ -1,4 +1,5 @@
 #include "ws/gui/model_validator.hpp"
+#include "ws/core/unit_lint.hpp"
 
 #include <cctype>
 #include <algorithm>
@@ -112,6 +113,17 @@ bool ModelValidator::validateUnits(const std::vector<std::string>& units) {
     
     for (const auto& unit : units) {
         if (unit.empty()) continue;
+
+        const auto aliasFindings = detectDerivedUnitAliases(unit);
+        for (const auto& finding : aliasFindings) {
+            addMessage(
+                ValidationMessage::Severity::Warning,
+                "unit:" + unit,
+                "Derived-unit alias detected: " + finding.alias,
+                "preferred model-file policy is SI base-unit expressions for reproducibility and portability",
+                "Replace '" + finding.alias + "' with '" + finding.recommendedBaseExpression + "'."
+            );
+        }
         
         // Allow basic combinations
         bool found = std::find(valid_units.begin(), valid_units.end(), unit) != valid_units.end();

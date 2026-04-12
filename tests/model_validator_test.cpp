@@ -46,6 +46,23 @@ int main() {
 
     {
         ModelValidator validator;
+        const bool ok = validator.validateUnits({"Pa/s"});
+        assert(ok);
+        const auto& messages = validator.getMessages();
+        assert(!messages.empty());
+        bool foundAliasWarning = false;
+        for (const auto& message : messages) {
+            if (message.message.find("Derived-unit alias detected: Pa") != std::string::npos) {
+                foundAliasWarning = true;
+                assert(message.constraint.find("SI base-unit expressions") != std::string::npos);
+                assert(message.suggestion.find("kg/(m*s^2)") != std::string::npos);
+            }
+        }
+        assert(foundAliasWarning);
+    }
+
+    {
+        ModelValidator validator;
         const bool ok = validator.validateStructure({"stage_main", "stage_main"});
         assert(!ok);
         const auto& messages = validator.getMessages();
