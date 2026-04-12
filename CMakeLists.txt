@@ -459,6 +459,7 @@ ws_add_test(performance_optimization_test tests/performance_optimization.cpp)
 ws_add_test(advanced_features_test tests/advanced_features.cpp)
 ws_add_test(noise_generator_test tests/noise_generator_test.cpp)
 ws_add_test(data_importer_test tests/data_importer_test.cpp)
+ws_add_test(shader_editor_test tests/shader_editor_test.cpp)
 target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )
@@ -480,6 +481,9 @@ target_sources(noise_generator_test PRIVATE
 )
 target_sources(data_importer_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/data_importer.cpp
+)
+target_sources(shader_editor_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/shader_editor.cpp
 )
 
 add_executable(viewport_manager_test

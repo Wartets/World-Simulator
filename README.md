@@ -232,6 +232,18 @@ The model editor currently provides strong structural inspection and basic graph
 
 Use it as an experimental authoring surface and structure viewer unless your workflow is validated end-to-end for your model package.
 
+### Shader/render rule authoring
+
+An experimental GLSL shader editor is available for advanced rendering customization:
+
+- **Sandboxed compilation**: Shaders are validated before execution with security constraints (no file I/O, max complexity/uniform limits).
+- **Live preview mode**: Enable real-time shader compilation and preview without requiring restart.
+- **Error recovery**: Failed shader compilations automatically revert to the last known-good version.
+- **Resource detection**: Uniforms and attribute bindings are automatically detected and listed.
+- **Limitations**: Current implementation focuses on fragment/vertex shader validation; advanced features (geometry shaders, compute shaders) are not yet supported.
+
+The shader editor is provided as an experimental pathway; production use should be validated with your specific rendering requirements.
+
 ### External data import formats
 
 - Supported formats: **CSV**, **PGM image (`P2`/`P5`)**, **GeoTIFF** (requires GDAL, optional), **NetCDF** (requires NetCDF C++, optional).
