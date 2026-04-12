@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(WorldSimulator VERSION 0.1.1 LANGUAGES CXX)
+project(WorldSimulator VERSION 0.1.2 LANGUAGES CXX)
 
 if(WIN32)
     enable_language(RC)

@@ -3,7 +3,7 @@
   <assemblyIdentity
     type="win32"
     name="WorldSimulator.world_sim_gui"
-    version="0.1.1.0"
+    version="0.1.2.0"
     processorArchitecture="*" />
   <description>World Simulator GUI Application</description>
 
