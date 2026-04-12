@@ -1009,14 +1009,14 @@ RuntimeCheckpoint Runtime::createCheckpoint(const std::string& label, const bool
     }
 
     const std::uint64_t profileFingerprint = resolvedProfile_.fingerprint();
-    RuntimeCheckpoint checkpoint{
-        snapshot_.runSignature,
+    RuntimeCheckpoint checkpoint;
+    checkpoint.runSignature = snapshot_.runSignature;
+    checkpoint.profileFingerprint = profileFingerprint;
+    checkpoint.stateSnapshot = stateStore_.createSnapshot(
+        snapshot_.runSignature.identityHash(),
         profileFingerprint,
-        stateStore_.createSnapshot(
-            snapshot_.runSignature.identityHash(),
-            profileFingerprint,
-            label,
-            computeHash)};
+        label,
+        computeHash);
     checkpoint.manualEventLog = eventQueue_.manualEvents();
     return checkpoint;
 }

@@ -2,9 +2,11 @@
 
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 namespace ws::app {
 
@@ -12,7 +14,7 @@ namespace {
 
 // Checkpoint file magic number and format version constants.
 constexpr std::uint64_t kCheckpointMagic = 0x315650435357ull; // "WSCPV1"
-constexpr std::uint32_t kCheckpointFormatVersion = 3;
+constexpr std::uint32_t kCheckpointFormatVersion = 4;
 
 // Writes a plain-old-data value to the output stream in binary form.
 template <typename T>
@@ -96,6 +98,22 @@ void writeCheckpointFile(const RuntimeCheckpoint& checkpoint, const std::filesys
 
     writePod(output, checkpoint.profileFingerprint);
 
+    std::vector<std::pair<std::string, std::uint32_t>> cadenceEntries;
+    cadenceEntries.reserve(checkpoint.variableCheckpointIntervalSteps.size());
+    for (const auto& [variableName, interval] : checkpoint.variableCheckpointIntervalSteps) {
+        cadenceEntries.emplace_back(variableName, interval);
+    }
+    std::sort(cadenceEntries.begin(), cadenceEntries.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.first < rhs.first;
+    });
+
+    writePod(output, static_cast<std::uint8_t>(checkpoint.checkpointIncludeUnspecifiedVariables ? 1u : 0u));
+    writePod(output, static_cast<std::uint64_t>(cadenceEntries.size()));
+    for (const auto& [variableName, interval] : cadenceEntries) {
+        writeString(output, variableName);
+        writePod(output, interval);
+    }
+
     const auto& snapshot = checkpoint.stateSnapshot;
     writePod(output, snapshot.header.stepIndex);
     writePod(output, snapshot.header.timestampTicks);
@@ -172,7 +190,7 @@ RuntimeCheckpoint readCheckpointFile(const std::filesystem::path& path) {
     }
 
     const auto version = readPod<std::uint32_t>(input);
-    if (version != 1u && version != 2u && version != kCheckpointFormatVersion) {
+    if (version != 1u && version != 2u && version != 3u && version != kCheckpointFormatVersion) {
         throw std::runtime_error("unsupported checkpoint file version");
     }
 
@@ -209,6 +227,20 @@ RuntimeCheckpoint readCheckpointFile(const std::filesystem::path& path) {
         identityHash);
 
     checkpoint.profileFingerprint = readPod<std::uint64_t>(input);
+
+    if (version >= 4u) {
+        checkpoint.checkpointIncludeUnspecifiedVariables = (readPod<std::uint8_t>(input) != 0u);
+        const auto cadenceCount = readPod<std::uint64_t>(input);
+        checkpoint.variableCheckpointIntervalSteps.clear();
+        for (std::uint64_t cadenceIndex = 0; cadenceIndex < cadenceCount; ++cadenceIndex) {
+            const auto variableName = readString(input);
+            const auto interval = readPod<std::uint32_t>(input);
+            checkpoint.variableCheckpointIntervalSteps[variableName] = interval;
+        }
+    } else {
+        checkpoint.checkpointIncludeUnspecifiedVariables = true;
+        checkpoint.variableCheckpointIntervalSteps.clear();
+    }
 
     auto& snapshot = checkpoint.stateSnapshot;
     snapshot.header.stepIndex = readPod<std::uint64_t>(input);

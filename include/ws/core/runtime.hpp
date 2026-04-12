@@ -402,6 +402,8 @@ struct RuntimeCheckpoint {
         0,
         0);
     std::uint64_t profileFingerprint = 0;
+    std::unordered_map<std::string, std::uint32_t> variableCheckpointIntervalSteps;
+    bool checkpointIncludeUnspecifiedVariables = true;
     StateStoreSnapshot stateSnapshot{};
     std::vector<ManualEventRecord> manualEventLog;
 };

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ws::app {
@@ -25,6 +26,10 @@ struct LaunchConfig {
     ModelTier tier = ModelTier::Minimal;
     TemporalPolicy temporalPolicy = TemporalPolicy::UniformA;
     std::string timeIntegratorId = "explicit_euler";
+    std::uint32_t checkpointIntervalSteps = 100;
+    std::size_t checkpointRetention = 64;
+    bool checkpointIncludeUnspecifiedVariables = true;
+    std::unordered_map<std::string, std::uint32_t> checkpointVariableIntervalSteps;
     InitialConditionConfig initialConditions{};
 };
 

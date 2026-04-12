@@ -18,6 +18,13 @@ void verifyInitialConditionRoundTrip() {
     config.tier = ws::ModelTier::Advanced;
     config.temporalPolicy = ws::TemporalPolicy::MultiRateC;
     config.timeIntegratorId = "RK4";
+    config.checkpointIntervalSteps = 25u;
+    config.checkpointRetention = 12u;
+    config.checkpointIncludeUnspecifiedVariables = false;
+    config.checkpointVariableIntervalSteps = {
+        {"temperature", 50u},
+        {"pressure", 200u},
+        {"humidity", 0u}};
 
     config.initialConditions.type = ws::InitialConditionType::GrayScott;
     config.initialConditions.terrain.terrainBaseFrequency = 3.4f;
@@ -57,6 +64,13 @@ void verifyInitialConditionRoundTrip() {
     assert(loaded.tier == config.tier);
     assert(loaded.temporalPolicy == config.temporalPolicy);
     assert(loaded.timeIntegratorId == "rk4");
+    assert(loaded.checkpointIntervalSteps == config.checkpointIntervalSteps);
+    assert(loaded.checkpointRetention == config.checkpointRetention);
+    assert(loaded.checkpointIncludeUnspecifiedVariables == config.checkpointIncludeUnspecifiedVariables);
+    assert(loaded.checkpointVariableIntervalSteps.size() == config.checkpointVariableIntervalSteps.size());
+    assert(loaded.checkpointVariableIntervalSteps.at("temperature") == 50u);
+    assert(loaded.checkpointVariableIntervalSteps.at("pressure") == 200u);
+    assert(loaded.checkpointVariableIntervalSteps.at("humidity") == 0u);
     assert(loaded.initialConditions.type == config.initialConditions.type);
 
     assert(loaded.initialConditions.conway.targetVariable == config.initialConditions.conway.targetVariable);

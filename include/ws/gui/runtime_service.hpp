@@ -250,6 +250,15 @@ public:
     /// - Returns true on success; false if interval is zero or retention invalid.
     bool configureCheckpointTimeline(std::uint32_t intervalSteps, std::size_t retention, std::string& message);
 
+    /// Configures per-variable checkpoint cadence policy.
+    /// - variableIntervalSteps: map of field name -> cadence in steps (0 means freeze after baseline).
+    /// - includeUnspecifiedVariables: true keeps unspecified fields updated every checkpoint; false freezes them after baseline.
+    /// - Returns true on success.
+    bool configureVariableCheckpointCadence(
+        const std::unordered_map<std::string, std::uint32_t>& variableIntervalSteps,
+        bool includeUnspecifiedVariables,
+        std::string& message);
+
     // =========================================================================
     // Diagnostics and Introspection
     // =========================================================================

@@ -25,7 +25,7 @@ This separation supports reproducible experiments across machines when model ide
 - **Interactive Runtime**: Real-time parameter modification, perturbation injection, and live visualization
 - **Model Editor (Experimental)**: Graph-oriented structure editor for inspection and early-stage editing workflows
 - **World Generator**: Procedural terrain and state initialization using Perlin/Simplex/Worley/Wavelet noise
-- **Checkpoints & Replay**: Runtime checkpoints, event logging, and replay support
+- **Checkpoints & Replay**: Runtime checkpoints, event logging, replay support, and per-variable checkpoint cadence policies (e.g., persist A every 50 steps, B every 200, freeze unspecified variables)
 - **Live Patching**: Modify simulation parameters and inject perturbations during runtime
 
 ### Technical Features

@@ -460,6 +460,7 @@ ws_add_test(advanced_features_test tests/advanced_features.cpp)
 ws_add_test(noise_generator_test tests/noise_generator_test.cpp)
 ws_add_test(data_importer_test tests/data_importer_test.cpp)
 ws_add_test(shader_editor_test tests/shader_editor_test.cpp)
+ws_add_test(checkpoint_variable_cadence_test tests/checkpoint_variable_cadence.cpp)
 target_sources(live_patching_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/checkpoint_io.cpp
 )

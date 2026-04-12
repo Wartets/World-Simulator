@@ -314,6 +314,18 @@ bool RuntimeService::start(std::string& message) {
             runtime_ = std::move(runtime);
         }
 
+        checkpointManager_.configure(CheckpointManagerConfig{
+            true,
+            std::max<std::uint32_t>(config_.checkpointIntervalSteps, 1u),
+            std::max<std::size_t>(config_.checkpointRetention, 1u),
+            config_.checkpointVariableIntervalSteps,
+            config_.checkpointIncludeUnspecifiedVariables});
+        checkpointStorage_.configure(app::CheckpointStoragePolicy{
+            true,
+            std::max<std::uint32_t>(config_.checkpointIntervalSteps, 1u),
+            std::max<std::size_t>(config_.checkpointRetention, 1u),
+            std::filesystem::path("checkpoints") / "timeline"});
+
         checkpointManager_.clear();
         checkpointStorage_.clearIndex();
 
@@ -874,18 +886,45 @@ bool RuntimeService::configureCheckpointTimeline(
         return false;
     }
 
+    config_.checkpointIntervalSteps = intervalSteps;
+    config_.checkpointRetention = std::max<std::size_t>(retention, 1u);
+
     checkpointManager_.configure(CheckpointManagerConfig{
         true,
         intervalSteps,
-        std::max<std::size_t>(retention, 1u)});
+        config_.checkpointRetention,
+        config_.checkpointVariableIntervalSteps,
+        config_.checkpointIncludeUnspecifiedVariables});
     checkpointStorage_.configure(app::CheckpointStoragePolicy{
         true,
         intervalSteps,
-        std::max<std::size_t>(retention, 1u),
+        config_.checkpointRetention,
         std::filesystem::path("checkpoints") / "timeline"});
 
     message = "timeline_configured interval_steps=" + std::to_string(intervalSteps) +
-        " retention=" + std::to_string(std::max<std::size_t>(retention, 1u));
+        " retention=" + std::to_string(config_.checkpointRetention);
+    return true;
+}
+
+bool RuntimeService::configureVariableCheckpointCadence(
+    const std::unordered_map<std::string, std::uint32_t>& variableIntervalSteps,
+    const bool includeUnspecifiedVariables,
+    std::string& message) {
+    const std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    config_.checkpointVariableIntervalSteps = variableIntervalSteps;
+    config_.checkpointIncludeUnspecifiedVariables = includeUnspecifiedVariables;
+
+    checkpointManager_.configure(CheckpointManagerConfig{
+        true,
+        std::max<std::uint32_t>(config_.checkpointIntervalSteps, 1u),
+        std::max<std::size_t>(config_.checkpointRetention, 1u),
+        config_.checkpointVariableIntervalSteps,
+        config_.checkpointIncludeUnspecifiedVariables});
+
+    message = "timeline_variable_cadence_configured variable_count=" +
+        std::to_string(config_.checkpointVariableIntervalSteps.size()) +
+        " include_unspecified=" + (config_.checkpointIncludeUnspecifiedVariables ? "true" : "false");
     return true;
 }
 
@@ -1528,9 +1567,13 @@ bool RuntimeService::captureTimelineCheckpointNoLock(const char* context, std::s
         return false;
     }
 
-    const auto diskCheckpoint = runtime_->createCheckpoint("timeline_step_" + std::to_string(step), true /* computeHash */);
+    const auto diskCheckpoint = checkpointManager_.checkpointAtStep(step);
+    if (!diskCheckpoint.has_value()) {
+        message = "timeline_capture_failed reason=manager_checkpoint_not_found step=" + std::to_string(step);
+        return false;
+    }
     std::string storageMessage;
-    if (!checkpointStorage_.store(diskCheckpoint, storageMessage)) {
+    if (!checkpointStorage_.store(*diskCheckpoint, storageMessage)) {
         message = storageMessage;
         return false;
     }

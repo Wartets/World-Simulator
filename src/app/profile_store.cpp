@@ -5,6 +5,8 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <unordered_map>
 
 namespace ws::app {
@@ -108,6 +110,22 @@ void ProfileStore::save(const std::string& profileName, const LaunchConfig& conf
     output << "tier=" << toString(config.tier) << '\n';
     output << "temporal=" << temporalPolicyToString(config.temporalPolicy) << '\n';
     output << "integrator=" << config.timeIntegratorId << '\n';
+    output << "checkpoint.interval_steps=" << config.checkpointIntervalSteps << '\n';
+    output << "checkpoint.retention=" << config.checkpointRetention << '\n';
+    output << "checkpoint.include_unspecified=" << (config.checkpointIncludeUnspecifiedVariables ? "true" : "false") << '\n';
+
+    std::vector<std::tuple<std::string, std::uint32_t>> variableCadenceEntries;
+    variableCadenceEntries.reserve(config.checkpointVariableIntervalSteps.size());
+    for (const auto& [variableName, interval] : config.checkpointVariableIntervalSteps) {
+        variableCadenceEntries.emplace_back(variableName, interval);
+    }
+    std::sort(variableCadenceEntries.begin(), variableCadenceEntries.end(), [](const auto& lhs, const auto& rhs) {
+        return std::get<0>(lhs) < std::get<0>(rhs);
+    });
+    for (const auto& [variableName, interval] : variableCadenceEntries) {
+        output << "checkpoint.variable_interval." << variableName << '=' << interval << '\n';
+    }
+
     output << "gen.type=" << initialConditionTypeToString(config.initialConditions.type) << '\n';
     output << "gen.terrain_base_frequency=" << config.initialConditions.terrain.terrainBaseFrequency << '\n';
     output << "gen.terrain_detail_frequency=" << config.initialConditions.terrain.terrainDetailFrequency << '\n';
@@ -207,6 +225,42 @@ LaunchConfig ProfileStore::load(const std::string& profileName, const std::strin
     if (const auto integratorIt = kv.find("integrator"); integratorIt != kv.end()) {
         if (const auto resolvedIntegrator = resolveTimeIntegratorId(integratorIt->second); resolvedIntegrator.has_value()) {
             config.timeIntegratorId = *resolvedIntegrator;
+        }
+    }
+
+    if (const auto checkpointIntervalIt = kv.find("checkpoint.interval_steps"); checkpointIntervalIt != kv.end()) {
+        if (const auto parsed = parseU32(checkpointIntervalIt->second); parsed.has_value() && *parsed > 0u) {
+            config.checkpointIntervalSteps = *parsed;
+        }
+    }
+
+    if (const auto retentionIt = kv.find("checkpoint.retention"); retentionIt != kv.end()) {
+        if (const auto parsed = parseU64(retentionIt->second); parsed.has_value() && *parsed > 0u) {
+            config.checkpointRetention = static_cast<std::size_t>(*parsed);
+        }
+    }
+
+    if (const auto includeUnspecifiedIt = kv.find("checkpoint.include_unspecified"); includeUnspecifiedIt != kv.end()) {
+        const auto normalized = toLower(trim(includeUnspecifiedIt->second));
+        if (normalized == "true" || normalized == "1" || normalized == "yes" || normalized == "on") {
+            config.checkpointIncludeUnspecifiedVariables = true;
+        } else if (normalized == "false" || normalized == "0" || normalized == "no" || normalized == "off") {
+            config.checkpointIncludeUnspecifiedVariables = false;
+        }
+    }
+
+    config.checkpointVariableIntervalSteps.clear();
+    static constexpr std::string_view kCheckpointVariablePrefix = "checkpoint.variable_interval.";
+    for (const auto& [key, value] : kv) {
+        if (!key.starts_with(kCheckpointVariablePrefix)) {
+            continue;
+        }
+        const std::string variableName = trim(key.substr(kCheckpointVariablePrefix.size()));
+        if (variableName.empty()) {
+            continue;
+        }
+        if (const auto parsed = parseU32(value); parsed.has_value()) {
+            config.checkpointVariableIntervalSteps[variableName] = *parsed;
         }
     }
 
